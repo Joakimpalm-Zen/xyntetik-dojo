@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "xhs": {
+      "args": [
+        "-c",
+        "exec python3 \"$HOME/.xhs/xhs-mcp.py\""
+      ],
+      "command": "sh"
+    }
+  }
+}

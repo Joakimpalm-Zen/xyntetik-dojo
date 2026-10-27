@@ -1,0 +1,107 @@
+{
+  "hooks": {
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "allowedEnvVars": [
+              "XHS_TOKEN"
+            ],
+            "headers": {
+              "X-XHS-Token": "$XHS_TOKEN"
+            },
+            "timeout": 5,
+            "type": "http",
+            "url": "http://127.0.0.1:7788/hook"
+          }
+        ],
+        "matcher": "permission_prompt|idle_prompt|agent_needs_input|elicitation_dialog"
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "allowedEnvVars": [
+              "XHS_TOKEN"
+            ],
+            "headers": {
+              "X-XHS-Token": "$XHS_TOKEN"
+            },
+            "timeout": 5,
+            "type": "http",
+            "url": "http://127.0.0.1:7788/hook"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "allowedEnvVars": [
+              "XHS_TOKEN"
+            ],
+            "headers": {
+              "X-XHS-Token": "$XHS_TOKEN"
+            },
+            "timeout": 5,
+            "type": "http",
+            "url": "http://127.0.0.1:7788/hook"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "allowedEnvVars": [
+              "XHS_TOKEN"
+            ],
+            "headers": {
+              "X-XHS-Token": "$XHS_TOKEN"
+            },
+            "timeout": 5,
+            "type": "http",
+            "url": "http://127.0.0.1:7788/hook"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "allowedEnvVars": [
+              "XHS_TOKEN"
+            ],
+            "headers": {
+              "X-XHS-Token": "$XHS_TOKEN"
+            },
+            "timeout": 5,
+            "type": "http",
+            "url": "http://127.0.0.1:7788/hook"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "allowedEnvVars": [
+              "XHS_TOKEN"
+            ],
+            "headers": {
+              "X-XHS-Token": "$XHS_TOKEN"
+            },
+            "timeout": 5,
+            "type": "http",
+            "url": "http://127.0.0.1:7788/hook"
+          }
+        ]
+      }
+    ]
+  }
+}

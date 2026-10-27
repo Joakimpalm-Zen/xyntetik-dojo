@@ -1,0 +1,254 @@
+import Foundation
+import Security
+
+/// What the bus needs from a terminal pane.
+@MainActor
+public protocol PaneIO: AnyObject {
+    /// Writes bytes into the pane's pty as if typed.
+    func write(_ bytes: [UInt8])
+    /// The screen and scrollback as text, one line per row.
+    func screenText() -> String
+    /// Whether the program in the pane turned on bracketed paste.
+    var bracketedPasteEnabled: Bool { get }
+}
+
+/// The message bus: pane registry, per-pane state, queued messages and the four operations.
+/// Every request carries a pane's token; the token tells the bus who is asking.
+@MainActor
+public final class Bus {
+    public struct Info: Equatable, Sendable {
+        public let name: String
+        public let kind: HarnessKind
+        public let host: String
+        public let state: PaneState
+        public let queued: Int
+        public let model: String
+
+        var json: [String: Any] {
+            ["name": name, "kind": kind.rawValue, "host": host, "state": state.rawValue, "queued": queued, "model": model]
+        }
+    }
+
+    final class Pane {
+        let name: String
+        let kind: HarnessKind
+        let host: String
+        let token: String
+        var model: String
+        var state: PaneState
+        var queue: [String] = []
+        var lastOwnerInput: Date?
+        weak var io: PaneIO?
+
+        init(name: String, kind: HarnessKind, host: String, token: String, model: String, state: PaneState, io: PaneIO?) {
+            self.name = name
+            self.kind = kind
+            self.host = host
+            self.token = token
+            self.model = model
+            self.state = state
+            self.io = io
+        }
+    }
+
+    public static let maxMessageLength = 16_000
+    public static let maxReadLines = 500
+
+    private var panes: [Pane] = []
+    /// Called after any change a pane header shows.
+    public var onChange: (() -> Void)?
+    /// Delay between typing a message and pressing Enter, so the harness sees the paste end first.
+    public var submitDelay: TimeInterval = 0.15
+    /// The bus does not type into a pane the owner typed into this recently.
+    public var ownerQuietInterval: TimeInterval = 3
+    public var now: () -> Date = { Date() }
+
+    public init() {}
+
+    // MARK: registry
+
+    public var names: [String] { panes.map(\.name) }
+    public var all: [Info] { panes.map(info) }
+
+    public func info(_ name: String) -> Info? { pane(named: name).map(info) }
+
+    /// Registers a pane and returns its token. Harness panes start as `starting` and change state from hooks.
+    @discardableResult
+    public func add(name: String, kind: HarnessKind, host: String = "", model: String = "", io: PaneIO? = nil) -> String {
+        precondition(pane(named: name) == nil, "duplicate pane name \(name)")
+        let token = Bus.newToken()
+        let initial: PaneState = kind == .shell ? .idle : .starting
+        panes.append(Pane(name: name, kind: kind, host: host, token: token, model: model, state: initial, io: io))
+        onChange?()
+        return token
+    }
+
+    public func attach(_ io: PaneIO, to name: String) {
+        pane(named: name)?.io = io
+    }
+
+    public func remove(_ name: String) {
+        panes.removeAll { $0.name == name }
+        onChange?()
+    }
+
+    public func setState(_ name: String, _ state: PaneState) {
+        guard let p = pane(named: name), p.state != state else { return }
+        p.state = state
+        onChange?()
+        flush(p)
+    }
+
+    public func setModel(_ name: String, _ model: String) {
+        guard let p = pane(named: name), p.model != model else { return }
+        p.model = model
+        onChange?()
+    }
+
+    /// The owner typed into the pane; hold relayed messages for a moment.
+    public func noteOwnerInput(_ name: String) {
+        pane(named: name)?.lastOwnerInput = now()
+    }
+
+    /// Delivers what can be delivered now. The app calls this once a second.
+    public func tick() {
+        for p in panes { flush(p) }
+    }
+
+    // MARK: HTTP entry point
+
+    /// Handles one request. `path` is the operation: /panes, /send, /read, /state or /hook.
+    public func handle(path: String, token: String?, body: Data) -> (status: Int, body: Data) {
+        guard let token, let sender = panes.first(where: { $0.token == token }) else {
+            return error(401, "unknown or missing X-XHS-Token")
+        }
+        let args: [String: Any]
+        if body.isEmpty {
+            args = [:]
+        } else if let parsed = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] {
+            args = parsed
+        } else {
+            return error(400, "body must be a JSON object")
+        }
+        let op = path.split(separator: "?").first.map { String($0) }?.trimmingCharacters(in: CharacterSet(charactersIn: "/")) ?? ""
+        switch op {
+        case "panes":
+            return ok(["you": sender.name, "panes": panes.map { info($0).json }])
+        case "send":
+            return send(from: sender, args)
+        case "read":
+            return read(args)
+        case "state":
+            guard let target = target(args) else { return noPane(args) }
+            return ok(info(target).json)
+        case "hook":
+            applyHook(sender, args)
+            return (200, Data())
+        default:
+            return error(404, "unknown operation '\(op)'; use panes, send, read or state")
+        }
+    }
+
+    // MARK: operations
+
+    private func send(from sender: Pane, _ args: [String: Any]) -> (status: Int, body: Data) {
+        guard let target = target(args) else { return noPane(args) }
+        guard target.state != .exited else { return error(409, "\(target.name) has exited") }
+        let text = Delivery.sanitize(args["text"] as? String ?? "")
+        guard !text.isEmpty else { return error(400, "text is empty") }
+        guard text.count <= Bus.maxMessageLength else { return error(413, "text is longer than \(Bus.maxMessageLength) characters") }
+        let message = Delivery.line(from: sender.name, text: text)
+        target.queue.append(message)
+        flush(target)
+        let delivered = !target.queue.contains(message)
+        var result: [String: Any] = ["pane": target.name, "delivered": delivered, "queued": target.queue.count, "state": target.state.rawValue]
+        if !delivered {
+            result["note"] = target.state == .prompt
+                ? "\(target.name) is at a prompt; the bus never types into a prompt. Queued until it is idle."
+                : "\(target.name) is \(target.state.rawValue); queued until it is idle."
+        }
+        onChange?()
+        return ok(result)
+    }
+
+    private func read(_ args: [String: Any]) -> (status: Int, body: Data) {
+        guard let target = target(args) else { return noPane(args) }
+        let requested = (args["lines"] as? NSNumber)?.intValue ?? 40
+        let lines = min(max(requested, 1), Bus.maxReadLines)
+        let text = Bus.lastLines(target.io?.screenText() ?? "", lines)
+        return ok(["pane": target.name, "state": target.state.rawValue, "text": text])
+    }
+
+    private func applyHook(_ pane: Pane, _ event: [String: Any]) {
+        if let model = event["model"] as? String, !model.isEmpty, model != pane.model {
+            pane.model = model
+            onChange?()
+        }
+        guard pane.state != .exited,
+              let name = event["hook_event_name"] as? String,
+              let next = HookMapping.next(event: name, notificationType: event["notification_type"] as? String, current: pane.state)
+        else { return }
+        setState(pane.name, next)
+    }
+
+    /// Types the oldest queued message if the pane is idle and the owner is not typing there.
+    private func flush(_ p: Pane) {
+        guard p.state == .idle, !p.queue.isEmpty, let io = p.io else { return }
+        if let last = p.lastOwnerInput, now().timeIntervalSince(last) < ownerQuietInterval { return }
+        let message = p.queue.removeFirst()
+        io.write(Delivery.bytes(message, bracketedPaste: io.bracketedPasteEnabled))
+        if submitDelay > 0 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + submitDelay) { [weak io] in
+                io?.write(Delivery.enter)
+            }
+        } else {
+            io.write(Delivery.enter)
+        }
+        // The harness is busy with the message now; its next idle event releases the next one.
+        if p.kind != .shell { p.state = .running }
+        onChange?()
+    }
+
+    // MARK: helpers
+
+    private func pane(named name: String) -> Pane? { panes.first { $0.name == name } }
+
+    private func target(_ args: [String: Any]) -> Pane? {
+        (args["pane"] as? String).flatMap(pane(named:))
+    }
+
+    private func info(_ p: Pane) -> Info {
+        Info(name: p.name, kind: p.kind, host: p.host, state: p.state, queued: p.queue.count, model: p.model)
+    }
+
+    private func noPane(_ args: [String: Any]) -> (status: Int, body: Data) {
+        let name = args["pane"] as? String ?? ""
+        return error(404, name.isEmpty ? "pane is missing" : "no pane named '\(name)'")
+    }
+
+    private func ok(_ object: [String: Any]) -> (status: Int, body: Data) {
+        (200, (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data())
+    }
+
+    private func error(_ status: Int, _ message: String) -> (status: Int, body: Data) {
+        (status, (try? JSONSerialization.data(withJSONObject: ["error": message], options: [.sortedKeys])) ?? Data())
+    }
+
+    /// The last `count` lines, trailing blanks removed.
+    public static func lastLines(_ text: String, _ count: Int) -> String {
+        var lines = text.components(separatedBy: "\n").map { line in
+            var l = Substring(line)
+            while let c = l.last, c == " " || c == "\r" || c == "\t" { l = l.dropLast() }
+            return String(l)
+        }
+        while let last = lines.last, last.isEmpty { lines.removeLast() }
+        return lines.suffix(count).joined(separator: "\n")
+    }
+
+    static func newToken() -> String {
+        var bytes = [UInt8](repeating: 0, count: 24)
+        let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        precondition(status == errSecSuccess, "no random bytes")
+        return bytes.map { String(format: "%02x", $0) }.joined()
+    }
+}
