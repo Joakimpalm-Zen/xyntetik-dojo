@@ -1,5 +1,151 @@
 # Xyntetik Harness Supervisor
 
-One window of terminals for agent harnesses (Claude Code, Codex, pi on Runner), local and over SSH, with a bus so the harness in any terminal can talk to the others. Built with SwiftPM only; no Xcode needed.
+One window of terminals for agent harnesses: Claude Code, Codex and pi (on a local Runner model), on this Mac or over SSH. The app is also a message bus, so the harness in any terminal can list, read and message the others. Built with SwiftPM only; no Xcode needed.
 
-Status: being built. Nothing usable yet.
+## What it does
+
+- One window with a grid of terminals. The plus button (or Cmd-T) adds one: pick Claude, Codex or pi. An optional host makes it remote. An optional name replaces `claude-1`, `codex-1`, `pi-1`.
+- Each pane is a real terminal (SwiftTerm and a pty). The harness sees an ordinary terminal.
+- Each pane header shows the name, kind, host, model, queued messages and a state colour: grey starting, blue running, green idle, orange prompt, red exited.
+- The app runs a bus on `127.0.0.1:7788`. Every harness in the window can call four operations: `panes`, `send`, `read` and `state`.
+
+## Requirements
+
+- macOS 14 or later. Built and tested on macOS 27 (Apple Silicon) with the Swift 6.4 Command Line Tools.
+- `python3` on every host that runs a harness (the bus shim uses only the standard library).
+- `claude`, `codex` and `pi` on your login shell's PATH, each already logged in.
+- For pi: Runner's OpenAI-compatible server at `http://127.0.0.1:8080/v1` (`runner -m model.gguf --serve`).
+
+## Build and run
+
+```
+make test    # swift test (42 tests) and the shim's Python tests (9)
+make app     # build/XyntetikHarnessSupervisor.app, assembled by hand and ad-hoc signed
+make run     # open the app
+make smoke   # launch proof: one pane runs `echo ok`, the bus answers, the app quits (exit 0)
+```
+
+`XHS_PORT` overrides the bus port. There is no other setting.
+
+## First run
+
+On start the app:
+
+1. Copies `tools/xhs-mcp.py` and `tools/xhs-pi.ts` to `~/.xhs/` and links `~/.xhs/bin/xhs`.
+2. If `~/.codex` exists and `~/.codex/config.toml` has no `[mcp_servers.xhs]`, appends the block in `tools/snippets/codex-config.toml`: the xhs MCP server and six state hooks. It does this once and never edits the file again. Delete the block by hand to remove it.
+
+What needs you, once:
+
+- **Codex hooks.** Codex runs a hook only after you review and trust it. In a Codex pane, run `/hooks` and trust the six xhs hooks. Until then the Codex pane stays `starting`, and messages to it wait in the queue.
+- **Startup dialogs.** Claude and Codex may show their own first-run dialogs in the pane (folder trust, browser tools, an update offer). Answer them there. A pane turns `idle` when its harness reports that its session started.
+- **Tool approval.** Claude and Codex ask before the first xhs tool call. Approve it for good if you want the sessions to talk without asking you each time.
+- Codex shows one startup warning: command-line config overrides run it without the shared background server. The app passes the peer rule with `-c developer_instructions`, which causes it.
+
+## Adding a pane
+
+Press plus, pick Claude, Codex or pi. Leave the host empty for this Mac. Panes start in your home directory, in your login shell (`$SHELL -l -i`), so PATH is the one your terminal has. Close a pane with its x button; that ends the harness.
+
+A local pi pane first asks Runner for its models (`GET /v1/models`), starts pi with the first one and shows it in the header. If Runner does not answer, the pane says so and pi is not started.
+
+## Remote panes
+
+Set up a host once, with one command from this repository:
+
+```
+tar -C tools -cf - xhs-mcp.py xhs-pi.ts | ssh user@box 'mkdir -p ~/.xhs && tar -C ~/.xhs -xf - && python3 ~/.xhs/xhs-mcp.py install'
+```
+
+(`make remote-setup HOST=user@box` runs the same.) It puts the shim and the pi extension in `~/.xhs` on that host, links `xhs`, and adds the Codex entries there if Codex is installed. Nothing else runs on the remote host.
+
+Then press plus and enter `user@box` as the host. The app runs:
+
+```
+ssh -t -R 7788:127.0.0.1:7788 user@box '<harness in the remote login shell>'
+```
+
+The harness runs in the remote login shell (`$SHELL -l -i`), so it needs to be on the PATH that shell sets. The reverse tunnel lets the shim on the remote host reach the bus at `127.0.0.1:7788` there. The remote host's own keys, logins and tokens are used; the app stores none. Use key-based SSH; a password prompt shows up in the pane. A remote pi uses the Runner on that host.
+
+Two remote panes on the same host share the forwarded port: the first pane's tunnel serves both (ssh warns about the second forward). If the first pane closes, the second loses the bus until you reopen it.
+
+## How harnesses talk
+
+The four operations, as MCP tools for Claude and Codex (`mcp__xhs__panes` and so on) and as the `xhs` command for pi and any shell in a pane:
+
+```
+xhs panes                         # name, kind, host, state, queued, model; * marks you
+xhs send codex-1 "please review the diff in src/bus.rs"
+xhs read claude-1 60              # last 60 lines of claude-1's screen
+xhs state pi-1
+```
+
+`send` types `[from: <your pane>] <text>` into the target terminal and presses Enter, so the target harness gets it as typed input. Ask any harness to do it in plain words: "send codex-1 a summary of what you changed".
+
+| Harness | Bus tools | State | Peer rule |
+|---|---|---|---|
+| Claude Code | `--mcp-config` at launch | http hooks via `--settings` at launch: SessionStart, UserPromptSubmit, PermissionRequest, PostToolUse, Stop, Notification (`permission_prompt`, `idle_prompt`, `agent_needs_input`, `elicitation_dialog`) | `--append-system-prompt` |
+| Codex | `[mcp_servers.xhs]` in `~/.codex/config.toml` | command hooks in the same file (`xhs hook`): SessionStart, UserPromptSubmit, PermissionRequest, PostToolUse, Stop, Interrupt | `-c developer_instructions` |
+| pi | the `xhs` command (pi has no MCP by design; it runs `xhs` with its bash tool) | the `xhs-pi.ts` extension: session_start, agent_start, agent_settled, ui_prompt_start, ui_prompt_end | `--append-system-prompt` |
+
+The pi extension also registers Runner as pi's `runner` provider.
+
+## Safety rules
+
+- **A relayed message never answers a prompt.** The bus types only into a pane that is `idle`. A pane at a permission prompt or question dialog (`prompt`), busy (`running`) or not yet started (`starting`) gets the message queued. Queued messages go out one at a time, each when the pane turns idle again.
+- **Every message carries its sender.** The sender is taken from the calling pane's token, not from the message text.
+- **No control characters.** The bus strips escape sequences and other control characters. Where the harness supports bracketed paste, a message arrives as one paste; otherwise line breaks become spaces.
+- **The owner comes first.** The bus holds messages for a pane you typed into in the last 3 seconds.
+- **Peer messages are not approval.** Each harness is told at launch that `[from: ...]` lines are messages from other sessions, to weigh as information and never as the owner's approval.
+- **Local and token-checked.** The bus listens on the loopback interface only. Each pane gets a random token for this run of the app; every bus request needs one.
+- The app stores no keys, tokens or SSH credentials.
+
+To install the peer rule permanently as well (for sessions started outside the app):
+
+| Snippet | Where it goes |
+|---|---|
+| `tools/snippets/CLAUDE.md-snippet.md` | `~/.claude/CLAUDE.md` or a project's `CLAUDE.md` |
+| `tools/snippets/codex-AGENTS.md-snippet.md` | `~/.codex/AGENTS.md` or a project's `AGENTS.md` |
+| `tools/snippets/pi-APPEND_SYSTEM.md` | `~/.pi/agent/APPEND_SYSTEM.md` |
+
+`tools/snippets/claude-settings.json` and `tools/snippets/claude-mcp.json` are exactly what the app passes to Claude at launch (tests keep them equal). You do not need to install them. A by-hand equivalent of the MCP part is `claude mcp add --scope user xhs -- sh -c 'exec python3 "$HOME/.xhs/xhs-mcp.py"'`; the tools only work in a pane, where `XHS_TOKEN` is set.
+
+## What was verified, and what needs a human
+
+Verified without a human:
+
+- `swift test`, 42 tests: the bus operations, the `[from: ...]` prefix, refusal and queueing at a prompt, one message per idle, the owner-typing hold, control-character stripping, the HTTP server over loopback, the local and ssh command lines (parsed back by a real POSIX shell), and the snippets equal to what the app passes.
+- Python tests, 9: the shim speaking MCP (initialize, tools/list, tools/call, errors) over pipes, the CLI, `xhs hook` and `xhs install`.
+- `make smoke`: the bundled app opens a pane running `echo ok`, sees `ok` on its screen, gets an answer from its own bus, and quits with exit code 0.
+- Probes against a stand-in bus (not part of the test suite), on this Mac:
+  - Claude Code 2.1.311: `claude -p` with the app's `--settings` and `--mcp-config` POSTed hook events with the pane token, and the xhs `panes` tool reached the bus.
+  - Codex 0.163.0: command hooks receive `XHS_TOKEN` (hook trust bypassed for the probe only), and the shim gets `XHS_TOKEN` through `env_vars` and reaches the bus.
+  - pi 0.85.1, with the app's exact launch line: the extension registers Runner's models and picks the one given; it reports session start, prompt submit and settle; a message typed as bracketed paste plus Enter arrives as one multi-line user message.
+
+Needs a human click-through:
+
+- The window: adding and closing panes, the grid, header colours, the picker, dark mode switching.
+- Claude, Codex and pi panes messaging each other in the real window, including a message queued at a real permission prompt.
+- The first-run Codex config append and trusting the hooks with `/hooks`.
+- A remote pane over SSH with the reverse tunnel, and a real Runner.
+
+## Not built
+
+- Remembering the layout: panes are not restored on restart, because restarting harnesses unasked is worse than an empty window.
+- Resizing, reordering or tabbing panes, and a per-pane working directory (all panes start in your home directory).
+- An activity heuristic for state: all three harnesses have hooks, so it was not needed.
+- A settings window or preferences file.
+
+## Files
+
+- `Sources/XHSCore/`: the bus, HTTP server, hook mapping, message delivery and launch commands. No UI; all tested.
+- `Sources/XHSApp/`: the window (SwiftUI and AppKit, SwiftTerm panes). View state uses ObservableObjects because `@State` is a macro whose plugin ships only with Xcode.
+- `tools/xhs-mcp.py`: the shim (MCP server, `xhs` command, `xhs hook`, `xhs install`). `tools/xhs-pi.ts`: the pi extension.
+- `tools/snippets/`: peer-rule paragraphs and the hook and MCP config.
+- `packaging/Info.plist`, `Makefile`.
+- `Package.swift` passes the swift-testing macro plugin path to the test target. Without it, test builds with the Command Line Tools fail on about every other run.
+
+## Troubleshooting
+
+- Red banner "The bus could not listen": another copy is running, or the port is taken. Quit the other copy or set `XHS_PORT`.
+- A pane stays `starting`: a startup dialog waits for you, or the Codex hooks are not trusted yet.
+- A pane turns red at once: the harness is not on your login shell's PATH (the pane shows the error), or the ssh connection failed.
+- `xhs: not inside Xyntetik Harness Supervisor`: `XHS_TOKEN` is set only in panes the app started.
