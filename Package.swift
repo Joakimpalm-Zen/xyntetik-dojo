@@ -4,6 +4,9 @@ import PackageDescription
 let package = Package(
     name: "XyntetikHarnessSupervisor",
     platforms: [.macOS(.v14)],
+    products: [
+        .executable(name: "XyntetikHarnessSupervisor", targets: ["XHSApp"]),
+    ],
     dependencies: [
         .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", exact: "1.99.1"),
     ],
