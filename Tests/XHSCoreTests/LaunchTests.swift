@@ -25,7 +25,8 @@ import Testing
         #expect(Array(plan.args.prefix(3)) == ["-l", "-i", "-c"])
         #expect(plan.environment == ["XHS_PANE": "claude-1", "XHS_PORT": "7788", "XHS_TOKEN": "tok"])
         let argv = shellArgs(plan.args[3], home: home)
-        #expect(argv.prefix(3) == ["env", "PATH=/home/tester/.xhs/bin:/usr/bin:/bin", "claude"])
+        #expect(argv.prefix(4) == ["env", "PATH=/home/tester/.xhs/bin:/usr/bin:/bin", "claude",
+                                   "--dangerously-skip-permissions"])
         let settings = try #require(argv.firstIndex(of: "--settings"))
         let parsed = try JSONSerialization.jsonObject(with: Data(argv[settings + 1].utf8)) as! NSDictionary
         #expect(parsed == Launcher.claudeSettings(port: 7788) as NSDictionary)
@@ -49,8 +50,8 @@ import Testing
         let harness = shellArgs(remote[4], home: "/remote/home")
         #expect(Array(harness.prefix(6)) == ["env", "XHS_PANE=codex-2", "XHS_PORT=7788", "XHS_TOKEN=tok",
                                              "PATH=/remote/home/.xhs/bin:/usr/bin:/bin", "codex"])
-        #expect(harness[6] == "-c")
-        #expect(harness[7] == "developer_instructions=" + Shell.toml(PeerRule.launchPrompt(paneName: "codex-2")))
+        #expect(Array(harness[6...8]) == ["--yolo", "--dangerously-bypass-hook-trust", "-c"])
+        #expect(harness[9] == "developer_instructions=" + Shell.toml(PeerRule.launchPrompt(paneName: "codex-2")))
     }
 
     @Test func remoteUsesTheConfiguredPort() {

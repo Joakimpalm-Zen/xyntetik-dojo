@@ -97,13 +97,17 @@ public enum Launcher {
         let prompt = PeerRule.launchPrompt(paneName: paneName)
         switch kind {
         case .claude:
-            return [.literal("claude"),
+            // Owner default: no permission prompts in a supervised pane.
+            return [.literal("claude"), .literal("--dangerously-skip-permissions"),
                     .literal("--settings"), .literal(json(claudeSettings(port: port))),
                     .literal("--append-system-prompt"), .literal(prompt),
                     .literal("--mcp-config"), .literal(json(claudeMCP()))]
         case .codex:
             // MCP server and hooks live in ~/.codex/config.toml (written by "xhs install").
-            return [.literal("codex"), .literal("-c"), .literal("developer_instructions=" + Shell.toml(prompt))]
+            // Owner default: --yolo (no approvals, no sandbox); the hook-trust bypass
+            // means the pane's state hooks run without a /hooks confirmation.
+            return [.literal("codex"), .literal("--yolo"), .literal("--dangerously-bypass-hook-trust"),
+                    .literal("-c"), .literal("developer_instructions=" + Shell.toml(prompt))]
         case .pi:
             var words: [ShellWord] = [.literal("pi"), .literal("-e"), .raw(#""$HOME/.xhs/xhs-pi.ts""#),
                                       .literal("--provider"), .literal("runner")]

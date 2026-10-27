@@ -36,9 +36,8 @@ On start the app:
 
 What needs you, once:
 
-- **Codex hooks.** Codex runs a hook only after you review and trust it. In a Codex pane, run `/hooks` and trust the six xhs hooks. Until then the Codex pane stays `starting`, and messages to it wait in the queue.
+- **No permission prompts by default.** A Claude pane runs `claude --dangerously-skip-permissions` and a Codex pane runs `codex --yolo --dangerously-bypass-hook-trust` (no approvals, no sandbox, the six xhs state hooks trusted without a `/hooks` confirmation). That is the owner's choice for a supervised window; the harness in a pane can do anything your user can. Keep the window to work you would approve anyway.
 - **Startup dialogs.** Claude and Codex may show their own first-run dialogs in the pane (folder trust, browser tools, an update offer). Answer them there. A pane turns `idle` when its harness reports that its session started.
-- **Tool approval.** Claude and Codex ask before the first xhs tool call. Approve it for good if you want the sessions to talk without asking you each time.
 - Codex shows one startup warning: command-line config overrides run it without the shared background server. The app passes the peer rule with `-c developer_instructions`, which causes it.
 
 ## Adding a pane
@@ -124,7 +123,7 @@ Needs a human click-through:
 
 - The window: adding and closing panes, the grid, header colours, the picker, dark mode switching.
 - Claude, Codex and pi panes messaging each other in the real window, including a message queued at a real permission prompt.
-- The first-run Codex config append and trusting the hooks with `/hooks`.
+- The first-run Codex config append and the hook-trust bypass taking effect.
 - A remote pane over SSH with the reverse tunnel, and a real Runner.
 
 ## Not built
@@ -146,6 +145,6 @@ Needs a human click-through:
 ## Troubleshooting
 
 - Red banner "The bus could not listen": another copy is running, or the port is taken. Quit the other copy or set `XHS_PORT`.
-- A pane stays `starting`: a startup dialog waits for you, or the Codex hooks are not trusted yet.
+- A pane stays `starting`: a startup dialog waits for you, or the harness has not reported its session start yet.
 - A pane turns red at once: the harness is not on your login shell's PATH (the pane shows the error), or the ssh connection failed.
 - `xhs: not inside Xyntetik Harness Supervisor`: `XHS_TOKEN` is set only in panes the app started.
