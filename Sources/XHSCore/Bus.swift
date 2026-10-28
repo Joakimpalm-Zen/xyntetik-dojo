@@ -203,7 +203,8 @@ public final class Bus {
     }
 
     private func applyHook(_ pane: Pane, _ event: [String: Any]) {
-        if let model = event["model"] as? String, !model.isEmpty, model != pane.model {
+        // SessionStart may carry `model`; Claude Code's PostModelSwitch carries the new one as `to_model`.
+        if let model = (event["to_model"] ?? event["model"]) as? String, !model.isEmpty, model != pane.model {
             pane.model = model
             onChange?()
         }

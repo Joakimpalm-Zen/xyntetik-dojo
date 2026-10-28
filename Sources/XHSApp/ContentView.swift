@@ -180,12 +180,16 @@ struct PickerSheet: View {
                 .font(.callout)
                 .lineLimit(1)
             }
+            let remote = !form.host.trimmingCharacters(in: .whitespaces).isEmpty
             HStack(spacing: 6) {
-                TextField("Folder (empty for your home folder)", text: $form.folder)
+                TextField(remote ? "Folder on that host (empty for its home folder)" : "Folder (empty for your home folder)",
+                          text: $form.folder)
+                // The folder panel and the recent folders are this Mac's; on a host, type the path as it is there.
                 Button("Choose") { if let path = AppModel.chooseFolder() { form.folder = path } }
                     .tint(Color(Theme.teal))
+                    .disabled(remote)
             }
-            if !model.recentFolders.isEmpty {
+            if !model.recentFolders.isEmpty, !remote {
                 HStack(spacing: 6) {
                     Text("Recent").foregroundStyle(.secondary)
                     ForEach(model.recentFolders, id: \.self) { folder in

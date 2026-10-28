@@ -35,6 +35,17 @@
         ]
       }
     ],
+    "PostModelSwitch": [
+      {
+        "hooks": [
+          {
+            "command": "python3 \"$HOME/.xhs/xhs-mcp.py\" hook",
+            "timeout": 5,
+            "type": "command"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "hooks": [
