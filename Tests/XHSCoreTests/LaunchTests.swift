@@ -60,14 +60,18 @@ import Testing
         #expect(shellArgs(plan.args[3]).prefix(4) == ["ssh", "-t", "-R", "9001:127.0.0.1:9001"])
     }
 
-    @Test func piUsesRunnerProviderAndTheFirstModel() {
+    @Test func piUsesRunnerProviderAndTheFirstModel() throws {
         let local = Launcher.plan(kind: .pi, paneName: "pi-1", host: nil, port: 7788, token: "t",
                                   runnerModel: "qwen3-8b", loginShell: "/bin/zsh")
         let argv = shellArgs(local.args[3], home: home)
         #expect(Array(argv[2...7]) == ["pi", "-e", "/home/tester/.xhs/xhs-pi.ts", "--provider", "runner", "--model"])
         #expect(argv[8] == "qwen3-8b")
+        // Tools are passed explicitly: the owner's pi settings may turn them all off, and xhs needs bash.
+        let tools = try #require(argv.firstIndex(of: "--tools"))
+        #expect(argv[tools + 1] == "read,bash,edit,write")
         let remote = Launcher.harnessWords(kind: .pi, paneName: "pi-1", port: 7788, runnerModel: nil)
         #expect(!remote.contains(.literal("--model")))
+        #expect(remote.contains(.literal("--tools")))
     }
 
     @Test func windowsHostRunsTheSameInnerCommandInMsysBash() throws {
