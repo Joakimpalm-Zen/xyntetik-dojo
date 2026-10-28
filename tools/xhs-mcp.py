@@ -188,12 +188,13 @@ CODEX_HOOK = '''
 [[hooks.%s.hooks]]
 type = "command"
 command = "python3 \\"$HOME/.xhs/xhs-mcp.py\\" hook"
-timeout = 5
+timeout = %d
 '''
 
 
 def codex_block():
-    return CODEX_BLOCK + "".join(CODEX_HOOK % (e, e) for e in CODEX_HOOK_EVENTS)
+    # Codex allows an Interrupt hook at most 3 seconds and warns at startup about more.
+    return CODEX_BLOCK + "".join(CODEX_HOOK % (e, e, 3 if e == "Interrupt" else 5) for e in CODEX_HOOK_EVENTS)
 
 
 WRAPPER = "#!/bin/sh\n%s\nexec \"%s\" %s\"$@\"\n"
