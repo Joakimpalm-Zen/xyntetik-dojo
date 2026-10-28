@@ -2,7 +2,7 @@
 APP := build/XyntetikHarnessSupervisor.app
 BIN := .build/release/XyntetikHarnessSupervisor
 
-.PHONY: build test app run smoke remote-setup clean
+.PHONY: build test icon app run smoke remote-setup clean
 
 build:
 	swift build -c release
@@ -11,12 +11,21 @@ test:
 	swift test
 	python3 -m unittest discover -s tools -p 'test_*.py'
 
-app: build
+# The app icon: the Ensō from packaging/make-icon.swift, rendered at every size and packed into an icns.
+build/AppIcon.icns: packaging/make-icon.swift
+	rm -rf build/AppIcon.iconset
+	swift packaging/make-icon.swift build/AppIcon.iconset
+	iconutil -c icns build/AppIcon.iconset -o $@
+
+icon: build/AppIcon.icns
+
+app: build build/AppIcon.icns
 	rm -rf $(APP)
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources/tools
 	cp $(BIN) $(APP)/Contents/MacOS/
 	cp tools/xhs-mcp.py tools/xhs-pi.ts $(APP)/Contents/Resources/tools/
 	cp packaging/Info.plist $(APP)/Contents/Info.plist
+	cp build/AppIcon.icns $(APP)/Contents/Resources/AppIcon.icns
 	codesign --force --sign - $(APP)
 
 run: app

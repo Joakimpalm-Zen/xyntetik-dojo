@@ -4,7 +4,8 @@ One window of terminals for agent harnesses: Claude Code, Codex and pi (on a loc
 
 ## What it does
 
-- One window with a grid of terminals. The plus button (or Cmd-T) adds one: pick Claude, Codex or pi. An optional host makes it remote (a Linux, Mac or Windows box over ssh); hosts you used before are one click away. An optional name replaces `claude-1`, `codex-1`, `pi-1`.
+- One window with a grid of terminals. The plus button (or Cmd-T) adds one: pick Claude, Codex or pi. An optional host makes it remote (a Linux, Mac or Windows box over ssh). An optional folder is where the session starts (a repo root, a book folder); empty means your home folder. Hosts and folders you used before are one click away. An optional name replaces `claude-1`, `codex-1`, `pi-1`.
+- It looks like a Xyntetik product: the site's colours in light and dark, the Ensō as the app icon and in the window. The icon is drawn by `packaging/make-icon.swift` at build time; no image file is checked in.
 - Each pane is a real terminal (SwiftTerm and a pty). The harness sees an ordinary terminal.
 - Each pane header shows the name, kind, host, model, queued messages and a state colour: grey starting, blue running, green idle, orange prompt, red exited.
 - The app runs a bus on `127.0.0.1:7788`. Every harness in the window can call four operations: `panes`, `send`, `read` and `state`.
@@ -26,7 +27,7 @@ make smoke   # launch proof: one pane runs `echo ok`, the bus answers, the app q
 make smoke HOST=user@box   # the same, with the pane on that host over ssh
 ```
 
-`XHS_PORT` overrides the bus port. There is no other setting. The only file the app keeps is `~/.xhs/hosts`, the hosts you used for remote panes, latest first, one per line; edit or delete it by hand.
+`XHS_PORT` overrides the bus port. There is no other setting. The only files the app keeps are `~/.xhs/hosts` and `~/.xhs/folders`, the hosts and start folders you used, latest first, one per line; edit or delete them by hand.
 
 ## First run
 
@@ -43,7 +44,7 @@ What needs you, once:
 
 ## Adding a pane
 
-Press plus, pick Claude, Codex or pi. Leave the host empty for this Mac. Panes start in your home directory, in your login shell (`$SHELL -l -i`), so PATH is the one your terminal has. A pane never inherits `CLAUDE*` variables from the process that opened the app (so `make run` from inside a Claude Code session does not make the pane's Claude a child session). Close a pane with its x button; that ends the harness.
+Press plus, pick Claude, Codex or pi. Leave the host empty for this Mac. A pane starts in the folder you give (type it, press Choose, or click a recent one), or in your home directory; on a host the folder is on that host, as you would type it there. It runs in your login shell (`$SHELL -l -i`), so PATH is the one your terminal has. A pane never inherits `CLAUDE*` variables from the process that opened the app (so `make run` from inside a Claude Code session does not make the pane's Claude a child session). Close a pane with its x button; that ends the harness.
 
 A local pi pane first asks Runner for its models (`GET /v1/models`), starts pi with the first one and shows it in the header. If Runner does not answer, the pane says so and pi is not started.
 
@@ -139,7 +140,7 @@ Needs a human click-through:
 ## Not built
 
 - Remembering the layout: panes are not restored on restart, because restarting harnesses unasked is worse than an empty window.
-- Resizing, reordering or tabbing panes, and a per-pane working directory (all panes start in your home directory).
+- Resizing, reordering or tabbing panes.
 - Attaching to a session that was started outside the app (in a web terminal or on another screen). A pane is a session the app starts.
 - A full activity heuristic for state: hooks carry the state, and the only heuristic is the 15 second still-screen rule that recovers a `running` pane from a lost Stop.
 - A settings window or preferences file.
@@ -150,14 +151,14 @@ Needs a human click-through:
 - `Sources/XHSApp/`: the window (SwiftUI and AppKit, SwiftTerm panes). View state uses ObservableObjects because `@State` is a macro whose plugin ships only with Xcode.
 - `tools/xhs-mcp.py`: the shim (MCP server, `xhs` command, `xhs hook`, `xhs install`). `tools/xhs-pi.ts`: the pi extension.
 - `tools/snippets/`: peer-rule paragraphs and the hook and MCP config. `tools/remote-setup.sh`: the one-time install on an ssh host, POSIX or Windows.
-- `packaging/Info.plist`, `Makefile`.
+- `packaging/Info.plist`, `packaging/make-icon.swift` (the icon), `Makefile`. `Sources/XHSApp/Theme.swift` holds the brand colours and the Ensō.
 - `Package.swift` passes the swift-testing macro plugin path to the test target. Without it, test builds with the Command Line Tools fail on about every other run.
 
 ## Troubleshooting
 
 - Red banner "The bus could not listen": another copy is running, or the port is taken. Quit the other copy or set `XHS_PORT`.
 - A pane stays `starting`: a startup dialog waits for you, or the harness has not reported its session start yet. Your first prompt in that pane clears it (its Stop makes it `idle`).
-- `/resume` in a pane lists other sessions than your terminal does: panes start in your home folder, and Claude Code lists sessions per folder.
+- `/resume` in a pane lists other sessions than your terminal does: Claude Code lists sessions per folder, so give the pane the same start folder.
 - A pane turns red at once: the harness is not on your login shell's PATH (the pane shows the error), or the ssh connection failed.
 - A Windows pane shows `bash.exe is not recognized`: MSYS2 is not at `C:\msys64`. The app looks only there.
 - `xhs: not inside Xyntetik Harness Supervisor`: `XHS_TOKEN` is set only in panes the app started.
