@@ -78,7 +78,8 @@ public enum Launcher {
     /// The shim as the harness runs it; $HOME is expanded on the host the harness runs on.
     public static let shimCommand = #"exec python3 "$HOME/.xhs/xhs-mcp.py""#
 
-    /// Claude Code settings passed with --settings: http hooks that report state to the bus.
+    /// Claude Code settings passed with --settings: hooks that report state to the bus.
+    /// SessionStart is a command hook through the shim: Claude Code does not run http hooks for that event.
     public static func claudeSettings(port: Int) -> [String: Any] {
         let hook: [String: Any] = [
             "type": "http",
@@ -88,8 +89,9 @@ public enum Launcher {
             "allowedEnvVars": ["XHS_TOKEN"],
         ]
         let group: [[String: Any]] = [["hooks": [hook]]]
+        let command: [String: Any] = ["type": "command", "command": shimCommand.replacingOccurrences(of: "exec ", with: "") + " hook", "timeout": 5]
         return ["hooks": [
-            "SessionStart": group,
+            "SessionStart": [["hooks": [command]]],
             "UserPromptSubmit": group,
             "PermissionRequest": group,
             "PostToolUse": group,
@@ -211,6 +213,19 @@ public enum Launcher {
     public static func sshWords(host: String, port: Int, remoteCommand: String) -> [ShellWord] {
         [.literal("ssh"), .literal("-t"), .literal("-R"), .literal("\(port):127.0.0.1:\(port)"),
          .literal(host), .literal(remoteCommand)]
+    }
+
+    /// The environment a pane's process gets: the app's own, minus anything a Claude Code session that
+    /// launched the app (`make run` from a session, `open` from its shell) would otherwise hand down.
+    /// With those inherited, the pane's Claude thinks it is a child session and stops saving its transcript.
+    /// The login shell the pane runs re-sets what the owner's profile exports.
+    public static func paneEnvironment(from base: [String: String], adding extra: [String: String]) -> [String: String] {
+        var env = base.filter { !$0.key.hasPrefix("CLAUDE") }
+        env["TERM"] = "xterm-256color"
+        env["COLORTERM"] = "truecolor"
+        if env["LANG"] == nil { env["LANG"] = "en_US.UTF-8" }
+        for (key, value) in extra { env[key] = value }
+        return env
     }
 
     /// What a local pi pane shows when Runner does not answer.

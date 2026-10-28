@@ -107,12 +107,7 @@ final class AppModel: NSObject, ObservableObject, LocalProcessTerminalViewDelega
     }
 
     private func start(_ view: TerminalPane, _ plan: LaunchPlan) {
-        var env = ProcessInfo.processInfo.environment
-        env["TERM"] = "xterm-256color"
-        env["COLORTERM"] = "truecolor"
-        if env["LANG"] == nil { env["LANG"] = "en_US.UTF-8" }
-        env.removeValue(forKey: "CLAUDECODE")
-        for (key, value) in plan.environment { env[key] = value }
+        let env = Launcher.paneEnvironment(from: ProcessInfo.processInfo.environment, adding: plan.environment)
         view.startProcess(executable: plan.executable, args: plan.args,
                           environment: env.map { "\($0.key)=\($0.value)" }.sorted(),
                           execName: nil, currentDirectory: NSHomeDirectory())

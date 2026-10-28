@@ -38,6 +38,9 @@ public final class Bus {
         var state: PaneState
         var queue: [String] = []
         var lastOwnerInput: Date?
+        /// The screen as last seen by `tick`, and since when it has looked like that.
+        var screenHash = 0
+        var quietSince: Date?
         weak var io: PaneIO?
 
         init(name: String, kind: HarnessKind, host: String, token: String, model: String, state: PaneState, io: PaneIO?) {
@@ -61,6 +64,9 @@ public final class Bus {
     public var submitDelay: TimeInterval = 0.15
     /// The bus does not type into a pane the owner typed into this recently.
     public var ownerQuietInterval: TimeInterval = 3
+    /// A `running` pane whose screen has not changed for this long is idle again: its turn ended without
+    /// a Stop hook (an API error, a lost hook). Every harness animates a spinner while it works.
+    public var idleAfterQuiet: TimeInterval = 15
     public var now: () -> Date = { Date() }
 
     public init() {}
@@ -110,9 +116,26 @@ public final class Bus {
         pane(named: name)?.lastOwnerInput = now()
     }
 
-    /// Delivers what can be delivered now. The app calls this once a second.
+    /// Delivers what can be delivered now and notices turns that ended without a Stop hook.
+    /// The app calls this once a second.
     public func tick() {
-        for p in panes { flush(p) }
+        for p in panes {
+            if p.state == .running { watchQuiet(p) }
+            flush(p)
+        }
+    }
+
+    private func watchQuiet(_ p: Pane) {
+        guard let io = p.io else { return }
+        let hash = String(io.screenText().suffix(4000)).hashValue
+        if hash != p.screenHash || p.quietSince == nil {
+            p.screenHash = hash
+            p.quietSince = now()
+            return
+        }
+        if now().timeIntervalSince(p.quietSince!) >= idleAfterQuiet {
+            setState(p.name, .idle)
+        }
     }
 
     // MARK: HTTP entry point
@@ -184,6 +207,7 @@ public final class Bus {
             pane.model = model
             onChange?()
         }
+        pane.quietSince = nil
         guard pane.state != .exited,
               let name = event["hook_event_name"] as? String,
               let next = HookMapping.next(event: name, notificationType: event["notification_type"] as? String, current: pane.state)
