@@ -17,6 +17,8 @@ enum Theme {
     static let coralInk = dynamic(light: 0xC8532F, dark: 0xFFA48D)
     static let blue = dynamic(light: 0x4F6BD8, dark: 0x6E8AEE)
     static let codeBg = dynamic(light: 0xF3F4F2, dark: 0x0B1213)
+    /// The Xyntetik green for the name in the title bar: the site's teal in light, the mark's bright end in dark.
+    static let brand = dynamic(light: 0x14A08F, dark: 0x3ED2BD)
 
     /// The mark's own colours, the same in both appearances.
     static let markTealStart = color(0x159A89)
@@ -48,15 +50,16 @@ enum Theme {
         static let strokeWidth: CGFloat = 9
         static let dots: [(x: CGFloat, y: CGFloat, r: CGFloat)] = [(70.5, 14.9, 5.4), (77.8, 9.2, 2.7), (82.6, 4.8, 1.6)]
 
-        /// Points along the arc, one per degree, y down as in the SVG. The stroke goes the long way round
-        /// (the SVG's large-arc flag), so the end angle is a full turn past the start side.
+        /// Points along the arc, one per degree, y down as in the SVG. From the upper left down the left
+        /// side, along the bottom and up to the upper right: the long way round, with the angle decreasing
+        /// (the SVG's sweep flag), leaving the break at the top.
         static var points: [CGPoint] {
             var degrees = startDegrees
             var out: [CGPoint] = []
-            while degrees <= endDegrees + 360 {
+            while degrees >= endDegrees - 360 {
                 let a = degrees * .pi / 180
                 out.append(CGPoint(x: center.x + radius * cos(a), y: center.y + radius * sin(a)))
-                degrees += 1
+                degrees -= 1
             }
             return out
         }
