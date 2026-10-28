@@ -48,6 +48,22 @@ public enum Shell {
     }
 }
 
+/// The shell an ssh host hands a remote command to.
+public enum RemoteShell: Equatable, Sendable {
+    /// A POSIX login shell: the harness runs in `"$SHELL" -l -i -c`.
+    case posix
+    /// Windows OpenSSH with cmd.exe as its shell: the harness runs in MSYS2 bash at C:\msys64.
+    case windows
+
+    /// The command the app runs over ssh before a remote pane starts.
+    /// cmd.exe expands %OS% to Windows_NT; a POSIX shell echoes it as written.
+    public static let probe = "echo %OS%"
+
+    public static func detect(probeOutput: String) -> RemoteShell {
+        probeOutput.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("Windows_NT") ? .windows : .posix
+    }
+}
+
 /// How to start a pane: the program, its arguments and the environment it adds.
 public struct LaunchPlan: Equatable, Sendable {
     public var executable: String
@@ -120,23 +136,75 @@ public enum Launcher {
 
     /// The plan for a pane. Local panes run in the owner's login shell so PATH matches their terminal.
     /// Remote panes run `ssh -t -R port:127.0.0.1:port host` with the same harness command in the remote login shell.
+    /// A Windows host (cmd.exe over OpenSSH) runs the same inner command in MSYS2 bash; see `windowsRemoteCommand`.
     public static func plan(kind: HarnessKind, paneName: String, host: String?, port: Int, token: String,
-                            runnerModel: String?, loginShell: String) -> LaunchPlan {
+                            runnerModel: String?, loginShell: String, remoteShell: RemoteShell = .posix) -> LaunchPlan {
         let env = ["XHS_PANE": paneName, "XHS_PORT": String(port), "XHS_TOKEN": token]
-        if kind == .shell {
+        let local = host == nil || host!.isEmpty
+        if kind == .shell, local {
             return LaunchPlan(executable: "/bin/sh", args: ["-c", "echo ok"], environment: env)
         }
         let harness = harnessWords(kind: kind, paneName: paneName, port: port, runnerModel: runnerModel)
         let path: ShellWord = .raw(#"PATH="$HOME/.xhs/bin:$PATH""#)
-        guard let host, !host.isEmpty else {
+        guard let host, !local else {
             let line = "exec " + Shell.line([.literal("env"), path] + harness)
             return LaunchPlan(executable: loginShell, args: ["-l", "-i", "-c", line], environment: env)
         }
         let assignments: [ShellWord] = ["XHS_PANE", "XHS_PORT", "XHS_TOKEN"].map { .literal("\($0)=\(env[$0]!)") }
         let inner = "exec " + Shell.line([.literal("env")] + assignments + [path] + harness)
-        let remote = #"exec "$SHELL" -l -i -c "# + Shell.quote(inner)
+        let remote: String
+        switch remoteShell {
+        case .posix: remote = #"exec "$SHELL" -l -i -c "# + Shell.quote(inner)
+        case .windows: remote = windowsRemoteCommand(inner: inner)
+        }
         let ssh = sshWords(host: host, port: port, remoteCommand: remote)
         return LaunchPlan(executable: loginShell, args: ["-l", "-i", "-c", "exec " + Shell.line(ssh)], environment: env)
+    }
+
+    /// MSYS2's bash on a Windows host. The standard MSYS2 install location.
+    public static let msysBash = #"C:\msys64\usr\bin\bash.exe"#
+
+    /// The remote command for a Windows host, parsed by cmd.exe and then by bash.exe.
+    /// The inner POSIX line travels as base64 so that cmd.exe never sees a quote, a pipe or a percent sign
+    /// from it. `^` escapes the characters cmd.exe would otherwise act on, and `\"` is a quote for bash.exe.
+    /// MSYS2_PATH_TYPE=inherit keeps the user's Windows PATH (claude, codex, python) in the login shell.
+    public static func windowsRemoteCommand(inner: String) -> String {
+        let encoded = Data(inner.utf8).base64EncodedString()
+        return "set MSYS2_PATH_TYPE=inherit&& " + msysBash
+            + #" -lc "eval \"$^(echo "# + encoded + #" ^| base64 -d^)\"""#
+    }
+
+    /// The inner command a Windows remote command carries, for tests and troubleshooting.
+    public static func windowsInnerCommand(_ remote: String) -> String? {
+        guard let start = remote.range(of: "echo "), let end = remote.range(of: " ^|", range: start.upperBound..<remote.endIndex),
+              let data = Data(base64Encoded: String(remote[start.upperBound..<end.lowerBound])) else { return nil }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// `ssh host 'echo %OS%'` without a tty, to find out which shell the host runs commands in.
+    public static func probeWords(host: String) -> [ShellWord] {
+        [.literal("ssh"), .literal("-o"), .literal("BatchMode=yes"), .literal("-o"), .literal("ConnectTimeout=5"),
+         .literal(host), .literal(RemoteShell.probe)]
+    }
+
+    /// Runs the probe; `.posix` when the host does not answer (the pane then shows the ssh error).
+    public static func probeRemoteShell(host: String) async -> RemoteShell {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+        process.arguments = probeWords(host: host).dropFirst().compactMap { if case .literal(let s) = $0 { return s } else { return nil } }
+        process.standardInput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        do { try process.run() } catch { return .posix }
+        let output: String = await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                process.waitUntilExit()
+                continuation.resume(returning: String(decoding: data, as: UTF8.self))
+            }
+        }
+        return RemoteShell.detect(probeOutput: output)
     }
 
     /// ssh with a reverse tunnel so the shim on the remote host reaches the bus at 127.0.0.1:port there.
