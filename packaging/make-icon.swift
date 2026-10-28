@@ -16,8 +16,10 @@ func rgb(_ v: UInt32, _ a: CGFloat = 1) -> CGColor {
 enum Enso {
     static let center = CGPoint(x: 50, y: 50)
     static let radius: CGFloat = 40
+    /// From the upper left (245) down the left side, along the bottom and up to the upper right (300),
+    /// the long way round: the angle decreases, as the SVG's sweep flag says.
     static let startDegrees: CGFloat = 245
-    static let endDegrees: CGFloat = 300 + 360
+    static let endDegrees: CGFloat = 300 - 360
     static let strokeWidth: CGFloat = 9
     static let dots: [(x: CGFloat, y: CGFloat, r: CGFloat, color: UInt32)] =
         [(70.5, 14.9, 5.4, 0xFF7A5C), (77.8, 9.2, 2.7, 0xFF9A80), (82.6, 4.8, 1.6, 0xFFBBA8)]
@@ -56,22 +58,23 @@ func draw(size: Int) -> CGImage {
 
     let arc = CGMutablePath()
     var degrees = Enso.startDegrees
-    while degrees <= Enso.endDegrees {
+    while degrees >= Enso.endDegrees {
         let a = degrees * .pi / 180
         let p = point(Enso.center.x + Enso.radius * cos(a), Enso.center.y + Enso.radius * sin(a))
         if degrees == Enso.startDegrees { arc.move(to: p) } else { arc.addLine(to: p) }
-        degrees += 1
+        degrees -= 1
     }
     let teal = CGGradient(colorsSpace: space, colors: [rgb(0x159A89), rgb(0x2FD0B9)] as CFArray, locations: [0, 1])!
     let gradientStart = CGPoint(x: origin.x + 10 * scale, y: origin.y)
     let gradientEnd = CGPoint(x: origin.x + 90 * scale, y: origin.y)
 
-    // The glow the dark mark has on the site: a wide, faint stroke.
-    for (width, alpha) in [(2.4, 0.06), (1.9, 0.08), (1.45, 0.10)] {
+    // The glow the dark mark has on the site: a wide, faint stroke. Flat ends, so the glow never
+    // reaches into the break of the circle.
+    for (width, alpha) in [(2.0, 0.05), (1.6, 0.07), (1.3, 0.09)] {
         ctx.saveGState()
         ctx.addPath(arc)
         ctx.setLineWidth(Enso.strokeWidth * scale * width)
-        ctx.setLineCap(.round)
+        ctx.setLineCap(.butt)
         ctx.replacePathWithStrokedPath()
         ctx.clip()
         ctx.setAlpha(alpha)
