@@ -40,4 +40,30 @@ final class TerminalPane: LocalProcessTerminalView, PaneIO {
         super.viewDidChangeEffectiveAppearance()
         applyTheme()
     }
+
+    // MARK: relayed messages in the brand green
+
+    /// Bytes from the harness that might be the start of a `[from: <name>]` tag, held for the next chunk.
+    private var carry: [UInt8] = []
+    private var flush: DispatchWorkItem?
+
+    /// Every `[from: <name>]` tag the harness paints is wrapped in the Xyntetik green on its way to the screen.
+    override func dataReceived(slice: ArraySlice<UInt8>) {
+        flush?.cancel()
+        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let color = dark ? Highlight.foreground(red: 0x3E, green: 0xD2, blue: 0xBD) : Highlight.foreground(red: 0x14, green: 0xA0, blue: 0x8F)
+        let out = Highlight.tagged(Array(slice), carry: &carry, color: color)
+        if !out.isEmpty { feed(byteArray: out[...]) }
+        if !carry.isEmpty {
+            // A chunk ended inside a possible tag; if nothing follows at once, show the bytes as they are.
+            let item = DispatchWorkItem { [weak self] in
+                guard let self, !self.carry.isEmpty else { return }
+                let held = self.carry
+                self.carry = []
+                self.feed(byteArray: held[...])
+            }
+            flush = item
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: item)
+        }
+    }
 }
