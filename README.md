@@ -4,7 +4,7 @@ One window of terminals for agent harnesses: Claude Code, Codex and pi (on a loc
 
 ## What it does
 
-- One window with a grid of terminals. The plus button (or Cmd-T) adds one: pick Claude, Codex or pi. An optional host makes it remote. An optional name replaces `claude-1`, `codex-1`, `pi-1`.
+- One window with a grid of terminals. The plus button (or Cmd-T) adds one: pick Claude, Codex or pi. An optional host makes it remote (a Linux, Mac or Windows box over ssh); hosts you used before are one click away. An optional name replaces `claude-1`, `codex-1`, `pi-1`.
 - Each pane is a real terminal (SwiftTerm and a pty). The harness sees an ordinary terminal.
 - Each pane header shows the name, kind, host, model, queued messages and a state colour: grey starting, blue running, green idle, orange prompt, red exited.
 - The app runs a bus on `127.0.0.1:7788`. Every harness in the window can call four operations: `panes`, `send`, `read` and `state`.
@@ -19,13 +19,14 @@ One window of terminals for agent harnesses: Claude Code, Codex and pi (on a loc
 ## Build and run
 
 ```
-make test    # swift test (42 tests) and the shim's Python tests (9)
+make test    # swift test (46 tests) and the shim's Python tests (10)
 make app     # build/XyntetikHarnessSupervisor.app, assembled by hand and ad-hoc signed
 make run     # open the app
 make smoke   # launch proof: one pane runs `echo ok`, the bus answers, the app quits (exit 0)
+make smoke HOST=user@box   # the same, with the pane on that host over ssh
 ```
 
-`XHS_PORT` overrides the bus port. There is no other setting.
+`XHS_PORT` overrides the bus port. There is no other setting. The only file the app keeps is `~/.xhs/hosts`, the hosts you used for remote panes, latest first, one per line; edit or delete it by hand.
 
 ## First run
 
@@ -56,13 +57,21 @@ tar -C tools -cf - xhs-mcp.py xhs-pi.ts | ssh user@box 'mkdir -p ~/.xhs && tar -
 
 (`make remote-setup HOST=user@box` runs the same.) It puts the shim and the pi extension in `~/.xhs` on that host, links `xhs`, and adds the Codex entries there if Codex is installed. Nothing else runs on the remote host.
 
-Then press plus and enter `user@box` as the host. The app runs:
+Then press plus and enter `user@box` as the host (or click it under Recent once you have used it). The app first asks the host which shell it runs commands in (`ssh host 'echo %OS%'`), then runs:
 
 ```
 ssh -t -R 7788:127.0.0.1:7788 user@box '<harness in the remote login shell>'
 ```
 
 The harness runs in the remote login shell (`$SHELL -l -i`), so it needs to be on the PATH that shell sets. The reverse tunnel lets the shim on the remote host reach the bus at `127.0.0.1:7788` there. The remote host's own keys, logins and tokens are used; the app stores none. Use key-based SSH; a password prompt shows up in the pane. A remote pi uses the Runner on that host.
+
+### Windows hosts
+
+A Windows host with OpenSSH Server and MSYS2 at `C:\msys64` works the same way. The probe sees cmd.exe answer `Windows_NT`, and the pane then runs the same harness command in MSYS2's bash (`bash.exe -l`, with your Windows PATH inherited, so `claude` and `codex` are found where you installed them). The command travels to cmd.exe as base64, so none of its quotes, pipes or percent signs are seen by cmd.exe.
+
+`make remote-setup HOST=user@winbox` detects Windows too. There, `xhs install` writes two small sh scripts in `~/.xhs/bin` instead of a symlink: `xhs`, and a `python3` that runs the Python it was installed with (on Windows, `python3` on PATH is usually the Microsoft Store stub). The harness line puts `~/.xhs/bin` first on PATH, so the MCP shim and hooks find a working `python3`.
+
+Verified: a pane on a Windows 11 host over ssh (`make smoke HOST=...`), the remote setup there, and Claude Code on that host reaching the bus through the tunnel. Codex on a Windows host is not verified: its config hooks call `python3 "$HOME/.xhs/xhs-mcp.py" hook`, which depends on the shell Codex uses for hook commands there.
 
 Two remote panes on the same host share the forwarded port: the first pane's tunnel serves both (ssh warns about the second forward). If the first pane closes, the second loses the bus until you reopen it.
 
@@ -130,6 +139,7 @@ Needs a human click-through:
 
 - Remembering the layout: panes are not restored on restart, because restarting harnesses unasked is worse than an empty window.
 - Resizing, reordering or tabbing panes, and a per-pane working directory (all panes start in your home directory).
+- Attaching to a session that was started outside the app (in a web terminal or on another screen). A pane is a session the app starts.
 - An activity heuristic for state: all three harnesses have hooks, so it was not needed.
 - A settings window or preferences file.
 
@@ -138,7 +148,7 @@ Needs a human click-through:
 - `Sources/XHSCore/`: the bus, HTTP server, hook mapping, message delivery and launch commands. No UI; all tested.
 - `Sources/XHSApp/`: the window (SwiftUI and AppKit, SwiftTerm panes). View state uses ObservableObjects because `@State` is a macro whose plugin ships only with Xcode.
 - `tools/xhs-mcp.py`: the shim (MCP server, `xhs` command, `xhs hook`, `xhs install`). `tools/xhs-pi.ts`: the pi extension.
-- `tools/snippets/`: peer-rule paragraphs and the hook and MCP config.
+- `tools/snippets/`: peer-rule paragraphs and the hook and MCP config. `tools/remote-setup.sh`: the one-time install on an ssh host, POSIX or Windows.
 - `packaging/Info.plist`, `Makefile`.
 - `Package.swift` passes the swift-testing macro plugin path to the test target. Without it, test builds with the Command Line Tools fail on about every other run.
 
@@ -147,4 +157,5 @@ Needs a human click-through:
 - Red banner "The bus could not listen": another copy is running, or the port is taken. Quit the other copy or set `XHS_PORT`.
 - A pane stays `starting`: a startup dialog waits for you, or the harness has not reported its session start yet.
 - A pane turns red at once: the harness is not on your login shell's PATH (the pane shows the error), or the ssh connection failed.
+- A Windows pane shows `bash.exe is not recognized`: MSYS2 is not at `C:\msys64`. The app looks only there.
 - `xhs: not inside Xyntetik Harness Supervisor`: `XHS_TOKEN` is set only in panes the app started.
