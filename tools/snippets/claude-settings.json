@@ -56,15 +56,9 @@
       {
         "hooks": [
           {
-            "allowedEnvVars": [
-              "XHS_TOKEN"
-            ],
-            "headers": {
-              "X-XHS-Token": "$XHS_TOKEN"
-            },
+            "command": "python3 \"$HOME/.xhs/xhs-mcp.py\" hook",
             "timeout": 5,
-            "type": "http",
-            "url": "http://127.0.0.1:7788/hook"
+            "type": "command"
           }
         ]
       }

@@ -173,6 +173,47 @@ import Testing
         #expect(targetIO.typed == "[from: claude-1] after\r")
     }
 
+    @Test func runningPaneWithAStillScreenIsIdleAgain() {
+        // A turn that ends without a Stop hook (usage limit, lost hook) must not hold messages forever.
+        var clock = Date(timeIntervalSince1970: 1_000)
+        bus.now = { clock }
+        hook(targetToken, "SessionStart")
+        hook(targetToken, "UserPromptSubmit")
+        targetIO.screen = "Working (1s)"
+        call("send", ["pane": "codex-1", "text": "hi"])
+        #expect(bus.info("codex-1")?.state == .running)
+        #expect(targetIO.written.isEmpty)
+        for s in 1...14 {
+            clock = clock.addingTimeInterval(1)
+            if s < 6 { targetIO.screen = "Working (\(s)s)" }
+            bus.tick()
+            #expect(bus.info("codex-1")?.state == .running, "second \(s)")
+        }
+        // 5 seconds of change, then still: idle after 15 quiet seconds, not before.
+        for _ in 15...19 { clock = clock.addingTimeInterval(1); bus.tick() }
+        #expect(bus.info("codex-1")?.state == .running)
+        clock = clock.addingTimeInterval(1); bus.tick()
+        #expect(bus.info("codex-1")?.state == .idle || bus.info("codex-1")?.state == .running)
+        clock = clock.addingTimeInterval(1); bus.tick()
+        #expect(targetIO.typed.contains("[from: claude-1] hi"))
+        #expect(bus.info("codex-1")?.queued == 0)
+    }
+
+    @Test func hooksRestartTheQuietClockAndPromptIsNeverTimedOut() {
+        var clock = Date(timeIntervalSince1970: 1_000)
+        bus.now = { clock }
+        hook(targetToken, "SessionStart")
+        hook(targetToken, "UserPromptSubmit")
+        targetIO.screen = "still"
+        for _ in 1...10 { clock = clock.addingTimeInterval(1); bus.tick() }
+        hook(targetToken, "PostToolUse")
+        for _ in 1...10 { clock = clock.addingTimeInterval(1); bus.tick() }
+        #expect(bus.info("codex-1")?.state == .running)
+        hook(targetToken, "PermissionRequest")
+        for _ in 1...60 { clock = clock.addingTimeInterval(1); bus.tick() }
+        #expect(bus.info("codex-1")?.state == .prompt)
+    }
+
     @Test func removedPaneIsGone() {
         bus.remove("codex-1")
         #expect(bus.names == ["claude-1"])
