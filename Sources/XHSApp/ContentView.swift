@@ -13,26 +13,34 @@ struct ContentView: View {
             if !model.problem.isEmpty {
                 Text(model.problem)
                     .font(.callout)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Color(Theme.ink))
                     .frame(maxWidth: .infinity)
                     .padding(6)
-                    .background(.red)
+                    .background(Color(Theme.coral))
             }
             if model.items.isEmpty {
-                VStack(spacing: 8) {
-                    Text("No terminals yet").font(.title3)
+                VStack(spacing: 14) {
+                    EnsoMark().frame(width: 96, height: 96)
+                    Wordmark(size: 26)
+                    Text("Harness Supervisor")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(Color(Theme.muted))
                     Text("Press + to add Claude, Codex or pi, here or on another machine.")
-                        .foregroundStyle(.secondary)
+                        .font(.callout)
+                        .foregroundStyle(Color(Theme.muted))
+                        .padding(.top, 10)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 PaneGrid(items: model.items)
             }
         }
+        .background(Color(Theme.bg))
         .frame(minWidth: 640, minHeight: 400)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button { model.picking = true } label: { Image(systemName: "plus") }
+                    .foregroundStyle(Color(Theme.teal))
                     .help("Add a terminal")
                     .keyboardShortcut("t", modifiers: .command)
             }
@@ -59,7 +67,7 @@ struct PaneGrid: View {
                 }
             }
         }
-        .background(Color(nsColor: .separatorColor))
+        .background(Color(Theme.line))
     }
 }
 
@@ -71,37 +79,58 @@ struct PaneCell: View {
         let info = model.bus.info(item.id)
         VStack(spacing: 0) {
             HStack(spacing: 8) {
-                Circle().fill(color(info?.state)).frame(width: 9, height: 9)
-                Text(item.id).font(.system(.callout, design: .monospaced)).bold()
-                Text(info?.kind.title ?? "").foregroundStyle(.secondary)
-                Text(info?.host.isEmpty == false ? info!.host : "local").foregroundStyle(.secondary)
+                StateDot(state: info?.state)
+                Text(item.id).font(.system(.callout, design: .monospaced)).bold().foregroundStyle(Color(Theme.ink))
+                Text(info?.kind.title ?? "").foregroundStyle(Color(Theme.muted))
+                Text(info?.host.isEmpty == false ? info!.host : "local").foregroundStyle(Color(Theme.muted))
+                if !item.directory.isEmpty {
+                    Text((item.directory as NSString).lastPathComponent).foregroundStyle(Color(Theme.muted))
+                        .lineLimit(1).truncationMode(.middle).help(item.directory)
+                }
                 if let m = info?.model, !m.isEmpty {
-                    Text(m).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                    Text(m).foregroundStyle(Color(Theme.muted)).lineLimit(1).truncationMode(.middle)
                 }
                 Spacer(minLength: 4)
                 if let q = info?.queued, q > 0 {
-                    Text("\(q) queued").font(.caption).foregroundStyle(.orange)
+                    Text("\(q) queued").font(.caption).foregroundStyle(Color(Theme.coralInk))
                 }
-                Text(info?.state.rawValue ?? "").font(.caption).foregroundStyle(color(info?.state))
+                Text(info?.state.rawValue ?? "").font(.caption).foregroundStyle(PaneCell.color(info?.state))
                 Button { model.close(item.id) } label: { Image(systemName: "xmark") }
                     .buttonStyle(.borderless)
+                    .foregroundStyle(Color(Theme.muted))
                     .help("Close \(item.id)")
             }
             .font(.callout)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(Color(nsColor: .windowBackgroundColor))
+            .background(Color(Theme.surface))
             TerminalHost(view: item.view)
         }
     }
 
-    private func color(_ state: PaneState?) -> Color {
+    /// The brand's three accents carry the states: teal idle, blue running, coral at a prompt.
+    static func color(_ state: PaneState?) -> Color {
         switch state {
-        case .idle: return .green
-        case .running: return .blue
-        case .prompt: return .orange
-        case .exited: return .red
-        case .starting, .none: return .gray
+        case .idle: return Color(Theme.tealInk)
+        case .running: return Color(Theme.blue)
+        case .prompt: return Color(Theme.coral)
+        case .exited: return Color(Theme.coralInk)
+        case .starting, .none: return Color(Theme.muted)
+        }
+    }
+}
+
+/// A filled dot for a live state, a ring while starting, a hollow ring when exited.
+struct StateDot: View {
+    let state: PaneState?
+
+    var body: some View {
+        let color = PaneCell.color(state)
+        ZStack {
+            Circle().stroke(color, lineWidth: 1.5).frame(width: 9, height: 9)
+            if state == .idle || state == .running || state == .prompt {
+                Circle().fill(color).frame(width: 9, height: 9)
+            }
         }
     }
 }
@@ -116,6 +145,7 @@ struct TerminalHost: NSViewRepresentable {
 final class PickerForm: ObservableObject {
     @Published var host = ""
     @Published var name = ""
+    @Published var folder = ""
     @Published var error = ""
 }
 
@@ -125,11 +155,15 @@ struct PickerSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("New terminal").font(.headline)
+            HStack(spacing: 8) {
+                EnsoMark().frame(width: 22, height: 22)
+                Text("New terminal").font(.headline).foregroundStyle(Color(Theme.ink))
+            }
             HStack(spacing: 10) {
                 ForEach(HarnessKind.pickable, id: \.self) { kind in
                     Button { add(kind) } label: { Text(kind.title).frame(maxWidth: .infinity) }
                         .controlSize(.large)
+                        .tint(Color(Theme.teal))
                 }
             }
             TextField("Host (empty for this Mac)", text: $form.host)
@@ -140,6 +174,26 @@ struct PickerSheet: View {
                         Button(host) { form.host = host }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
+                            .tint(Color(Theme.teal))
+                    }
+                }
+                .font(.callout)
+                .lineLimit(1)
+            }
+            HStack(spacing: 6) {
+                TextField("Folder (empty for your home folder)", text: $form.folder)
+                Button("Choose") { if let path = AppModel.chooseFolder() { form.folder = path } }
+                    .tint(Color(Theme.teal))
+            }
+            if !model.recentFolders.isEmpty {
+                HStack(spacing: 6) {
+                    Text("Recent").foregroundStyle(.secondary)
+                    ForEach(model.recentFolders, id: \.self) { folder in
+                        Button((folder as NSString).lastPathComponent) { form.folder = folder }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .tint(Color(Theme.teal))
+                            .help(folder)
                     }
                 }
                 .font(.callout)
@@ -147,7 +201,7 @@ struct PickerSheet: View {
             }
             TextField("Name (empty for claude-1, codex-1, pi-1 ...)", text: $form.name)
             if !form.error.isEmpty {
-                Text(form.error).font(.caption).foregroundStyle(.red)
+                Text(form.error).font(.caption).foregroundStyle(Color(Theme.coralInk))
             }
             HStack {
                 Spacer()
@@ -156,10 +210,11 @@ struct PickerSheet: View {
         }
         .padding(20)
         .frame(width: 400)
+        .background(Color(Theme.surface))
     }
 
     private func add(_ kind: HarnessKind) {
-        if let problem = model.addPane(kind: kind, host: form.host, name: form.name) {
+        if let problem = model.addPane(kind: kind, host: form.host, name: form.name, directory: form.folder) {
             form.error = problem
         } else {
             model.picking = false

@@ -11,7 +11,15 @@ final class TerminalPane: LocalProcessTerminalView, PaneIO {
         paneName = name
         super.init(frame: NSRect(x: 0, y: 0, width: 640, height: 400))
         font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-        configureNativeColors()
+        applyTheme()
+    }
+
+    /// The brand's page and ink colours for the terminal; the ANSI palette stays the harnesses' own.
+    private func applyTheme() {
+        nativeBackgroundColor = Theme.bg
+        nativeForegroundColor = Theme.ink
+        caretColor = Theme.teal
+        selectedTextBackgroundColor = Theme.teal.withAlphaComponent(0.35)
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
@@ -30,6 +38,6 @@ final class TerminalPane: LocalProcessTerminalView, PaneIO {
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        configureNativeColors()
+        applyTheme()
     }
 }

@@ -10,6 +10,8 @@ final class AppModel: NSObject, ObservableObject, LocalProcessTerminalViewDelega
     struct Item: Identifiable {
         let id: String
         let view: TerminalPane
+        /// The start folder as given, empty for the home folder.
+        let directory: String
     }
 
     @Published private(set) var items: [Item] = []
@@ -21,6 +23,8 @@ final class AppModel: NSObject, ObservableObject, LocalProcessTerminalViewDelega
     @Published var picking = false
     /// Hosts used for remote panes, latest first (~/.xhs/hosts).
     @Published private(set) var recentHosts: [String] = []
+    /// Start folders used before, latest first (~/.xhs/folders).
+    @Published private(set) var recentFolders: [String] = []
 
     let bus = Bus()
     let port: Int
@@ -39,6 +43,7 @@ final class AppModel: NSObject, ObservableObject, LocalProcessTerminalViewDelega
         loginShell = AppModel.userShell()
         super.init()
         recentHosts = RecentHosts.load(AppModel.hostsFile)
+        recentFolders = RecentHosts.load(AppModel.foldersFile, valid: RecentHosts.isFolder)
         bus.onChange = { [weak self] in self?.revision &+= 1 }
         startServer()
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
@@ -59,11 +64,20 @@ final class AppModel: NSObject, ObservableObject, LocalProcessTerminalViewDelega
     // MARK: panes
 
     /// Adds a pane and starts its harness. Returns a message for the picker when the input is not usable.
+    /// `directory` is the start folder: on this Mac it must exist (~ is expanded); on a host it is passed as typed.
     @discardableResult
-    func addPane(kind: HarnessKind, host rawHost: String, name rawName: String) -> String? {
+    func addPane(kind: HarnessKind, host rawHost: String, name rawName: String, directory rawDirectory: String = "") -> String? {
         let host = rawHost.trimmingCharacters(in: .whitespaces)
         if !host.isEmpty, !Hosts.isValid(host) {
             return "Host is an ssh destination such as box or user@box."
+        }
+        var directory = rawDirectory.trimmingCharacters(in: .whitespaces)
+        if host.isEmpty, !directory.isEmpty {
+            directory = (directory as NSString).expandingTildeInPath
+            var isDir: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: directory, isDirectory: &isDir), isDir.boolValue else {
+                return "No folder at \(directory)."
+            }
         }
         var name = rawName.trimmingCharacters(in: .whitespaces).lowercased()
         if name.isEmpty {
@@ -78,13 +92,14 @@ final class AppModel: NSObject, ObservableObject, LocalProcessTerminalViewDelega
         let token = bus.add(name: name, kind: kind, host: host, io: view)
         tokens[name] = token
         if !host.isEmpty { recentHosts = RecentHosts.remember(host, in: AppModel.hostsFile) }
-        items.append(Item(id: name, view: view))
-        Task { await launch(view, kind: kind, host: host, token: token) }
+        if !directory.isEmpty { recentFolders = RecentHosts.remember(directory, in: AppModel.foldersFile, valid: RecentHosts.isFolder) }
+        items.append(Item(id: name, view: view, directory: directory))
+        Task { await launch(view, kind: kind, host: host, token: token, directory: directory) }
         DispatchQueue.main.async { view.window?.makeFirstResponder(view) }
         return nil
     }
 
-    private func launch(_ view: TerminalPane, kind: HarnessKind, host: String, token: String) async {
+    private func launch(_ view: TerminalPane, kind: HarnessKind, host: String, token: String, directory: String) async {
         var model: String?
         if kind == .pi, host.isEmpty {
             model = await Launcher.fetchRunnerModel()
@@ -103,14 +118,15 @@ final class AppModel: NSObject, ObservableObject, LocalProcessTerminalViewDelega
         }
         guard items.contains(where: { $0.id == view.paneName }) else { return }
         start(view, Launcher.plan(kind: kind, paneName: view.paneName, host: host.isEmpty ? nil : host, port: port,
-                                  token: token, runnerModel: model, loginShell: loginShell, remoteShell: remoteShell))
+                                  token: token, runnerModel: model, loginShell: loginShell, remoteShell: remoteShell,
+                                  directory: directory))
     }
 
     private func start(_ view: TerminalPane, _ plan: LaunchPlan) {
         let env = Launcher.paneEnvironment(from: ProcessInfo.processInfo.environment, adding: plan.environment)
         view.startProcess(executable: plan.executable, args: plan.args,
                           environment: env.map { "\($0.key)=\($0.value)" }.sorted(),
-                          execName: nil, currentDirectory: NSHomeDirectory())
+                          execName: nil, currentDirectory: plan.directory ?? NSHomeDirectory())
     }
 
     func close(_ name: String) {
@@ -206,6 +222,17 @@ final class AppModel: NSObject, ObservableObject, LocalProcessTerminalViewDelega
     }
 
     static let hostsFile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".xhs/hosts")
+    static let foldersFile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".xhs/folders")
+
+    /// A folder picker for the New terminal sheet; nil when cancelled.
+    static func chooseFolder() -> String? {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Use folder"
+        return panel.runModal() == .OK ? panel.url?.path : nil
+    }
 
     private static func userShell() -> String {
         if let entry = getpwuid(getuid()), let shell = entry.pointee.pw_shell {

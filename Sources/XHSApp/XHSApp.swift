@@ -17,6 +17,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         MainActor.assumeIsolated {
             NSApp.setActivationPolicy(.regular)
+            for window in NSApp.windows {
+                window.backgroundColor = Theme.bg
+                window.titlebarAppearsTransparent = true
+            }
             let model = AppModel.shared
             if model.smoke {
                 model.runSmoke()
