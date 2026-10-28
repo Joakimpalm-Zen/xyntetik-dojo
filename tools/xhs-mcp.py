@@ -193,8 +193,19 @@ def codex_block():
     return CODEX_BLOCK + "".join(CODEX_HOOK % (e, e) for e in CODEX_HOOK_EVENTS)
 
 
-def install(home=None, out=sys.stdout):
+WRAPPER = "#!/bin/sh\n%s\nexec \"%s\" %s\"$@\"\n"
+
+
+def write_wrapper(path, python, script_args="", prelude=""):
+    """A small sh script (for MSYS2's sh) that runs this Python with the given arguments first."""
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(WRAPPER % (prelude, python.replace("\\", "/"), script_args))
+    os.chmod(path, 0o755)
+
+
+def install(home=None, out=sys.stdout, windows=None):
     home = home or os.path.expanduser("~")
+    windows = sys.platform == "win32" if windows is None else windows
     xhs_dir = os.path.join(home, ".xhs")
     script = os.path.join(xhs_dir, "xhs-mcp.py")
     if not os.path.exists(script):
@@ -206,8 +217,15 @@ def install(home=None, out=sys.stdout):
     link = os.path.join(bin_dir, "xhs")
     if os.path.lexists(link):
         os.remove(link)
-    os.symlink("../xhs-mcp.py", link)
-    out.write("xhs install: %s\n" % link)
+    if windows:
+        # No symlinks without privileges, and "python3" is the Microsoft Store stub there. The harness line
+        # puts ~/.xhs/bin first on PATH, so these two scripts give MSYS2's sh a python3 and an xhs that work.
+        write_wrapper(os.path.join(bin_dir, "python3"), sys.executable)
+        write_wrapper(link, sys.executable, '"$(dirname "$0")/../xhs-mcp.py" ', '[ $# -eq 0 ] && set -- help')
+        out.write("xhs install: %s and %s (Windows: sh wrappers around %s)\n" % (link, os.path.join(bin_dir, "python3"), sys.executable))
+    else:
+        os.symlink("../xhs-mcp.py", link)
+        out.write("xhs install: %s\n" % link)
     codex_dir = os.path.join(home, ".codex")
     if os.path.isdir(codex_dir):
         config = os.path.join(codex_dir, "config.toml")
