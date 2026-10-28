@@ -8,6 +8,8 @@
 	<string>Xyntetik Harness Supervisor</string>
 	<key>CFBundleDisplayName</key>
 	<string>Xyntetik Harness Supervisor</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleExecutable</key>
 	<string>XyntetikHarnessSupervisor</string>
 	<key>CFBundlePackageType</key>
