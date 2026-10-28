@@ -3,6 +3,7 @@
 Run: python3 -m unittest discover -s tools -p 'test_*.py'
 """
 import http.server
+import io
 import json
 import os
 import shutil
@@ -60,6 +61,14 @@ class FakeBus:
     def close(self):
         self.server.shutdown()
         self.server.server_close()
+
+
+def load_shim():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("xhs_mcp", SHIM)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 class ShimTest(unittest.TestCase):
@@ -203,11 +212,39 @@ class ShimTest(unittest.TestCase):
         finally:
             shutil.rmtree(home)
 
+    def test_install_on_windows_writes_sh_wrappers(self):
+        mod = load_shim()
+        home = tempfile.mkdtemp()
+        try:
+            os.makedirs(os.path.join(home, ".xhs"))
+            shutil.copy(SHIM, os.path.join(home, ".xhs", "xhs-mcp.py"))
+            out = io.StringIO()
+            for _ in range(2):
+                self.assertEqual(mod.install(home=home, out=out, windows=True), 0)
+            bin_dir = os.path.join(home, ".xhs", "bin")
+            for name in ("xhs", "python3"):
+                path = os.path.join(bin_dir, name)
+                self.assertFalse(os.path.islink(path))
+                with open(path) as f:
+                    text = f.read()
+                self.assertTrue(text.startswith("#!/bin/sh\n"), text)
+                self.assertIn(sys.executable.replace("\\", "/"), text)
+                self.assertNotIn("\r", text)
+            env = dict(self.env, HOME=home, PATH=bin_dir + os.pathsep + os.environ.get("PATH", ""))
+            r = subprocess.run(["sh", os.path.join(bin_dir, "python3"), "-c", "import sys; print(sys.version_info[0])"],
+                               capture_output=True, text=True, env=env)
+            self.assertEqual((r.returncode, r.stdout.strip()), (0, "3"), r.stderr)
+            r = subprocess.run(["sh", os.path.join(bin_dir, "xhs")], capture_output=True, text=True, env=env)
+            self.assertEqual(r.returncode, 2, r.stderr)
+            self.assertIn("usage:", r.stderr)
+            r = subprocess.run(["sh", os.path.join(bin_dir, "xhs"), "panes"], capture_output=True, text=True, env=env)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("* claude-1", r.stdout)
+        finally:
+            shutil.rmtree(home)
+
     def test_codex_snippet_matches_install_block(self):
-        import importlib.util
-        spec = importlib.util.spec_from_file_location("xhs_mcp", SHIM)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
+        mod = load_shim()
         with open(os.path.join(os.path.dirname(SHIM), "snippets", "codex-config.toml")) as f:
             self.assertEqual(f.read(), mod.codex_block().lstrip("\n"))
 

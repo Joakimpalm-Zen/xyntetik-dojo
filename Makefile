@@ -23,13 +23,14 @@ run: app
 	open $(APP)
 
 # Launch proof without a human: one local pane runs `echo ok`, the bus answers, the app quits.
+# With HOST=user@box the pane runs `echo ok` on that host over ssh instead (POSIX or Windows).
 smoke: app
-	XHS_SMOKE=1 XHS_PORT=7799 $(APP)/Contents/MacOS/XyntetikHarnessSupervisor
+	XHS_SMOKE=1 XHS_SMOKE_HOST=$(HOST) XHS_PORT=7799 $(APP)/Contents/MacOS/XyntetikHarnessSupervisor
 
-# Install the shim and the pi extension on a remote host: make remote-setup HOST=user@box
+# Install the shim and the pi extension on a remote host (POSIX or Windows): make remote-setup HOST=user@box
 remote-setup:
 	@test -n "$(HOST)" || (echo "usage: make remote-setup HOST=user@box" && exit 2)
-	tar -C tools -cf - xhs-mcp.py xhs-pi.ts | ssh $(HOST) 'mkdir -p ~/.xhs && tar -C ~/.xhs -xf - && python3 ~/.xhs/xhs-mcp.py install'
+	tools/remote-setup.sh $(HOST)
 
 clean:
 	rm -rf build .build
