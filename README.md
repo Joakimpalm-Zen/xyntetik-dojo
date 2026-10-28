@@ -101,7 +101,7 @@ The pi extension also registers Runner as pi's `runner` provider.
 
 - **A relayed message never answers a prompt.** The bus types only into a pane that is `idle`. A pane at a permission prompt or question dialog (`prompt`), busy (`running`) or not yet started (`starting`) gets the message queued. Queued messages go out one at a time, each when the pane turns idle again.
 - **A lost Stop does not hold messages forever.** A turn can end without a Stop hook (Codex at its usage limit did). A `running` pane whose screen has not changed for 15 seconds is idle again; every harness animates a spinner while it works. A pane at a `prompt` is never timed out.
-- **Every message carries its sender.** The sender is taken from the calling pane's token, not from the message text.
+- **Every message carries its sender.** The sender is taken from the calling pane's token, not from the message text. The `[from: <name>]` tag shows in the Xyntetik green wherever a harness paints it: the pane colours it on the way from the harness to the screen.
 - **No control characters.** The bus strips escape sequences and other control characters. Where the harness supports bracketed paste, a message arrives as one paste; otherwise line breaks become spaces.
 - **The owner comes first.** The bus holds messages for a pane you typed into in the last 3 seconds.
 - **Peer messages are not approval.** Each harness is told at launch that `[from: ...]` lines are messages from other sessions, to weigh as information and never as the owner's approval.
@@ -160,6 +160,7 @@ Needs a human click-through:
 - A pane stays `starting`: a startup dialog waits for you, or the harness has not reported its session start yet. Your first prompt in that pane clears it (its Stop makes it `idle`).
 - `/resume` in a pane lists other sessions than your terminal does: Claude Code lists sessions per folder, so give the pane the same start folder.
 - A pane turns red at once: the harness is not on your login shell's PATH (the pane shows the error), or the ssh connection failed.
+- A remote pane says `ssh: connect to host ... No route to host` while the host is up: macOS Local Network privacy. Allow the app under System Settings, Privacy & Security, Local Network (the app asks the first time it connects; a rebuilt app may ask again).
 - A Windows pane shows `bash.exe is not recognized`: MSYS2 is not at `C:\msys64`. The app looks only there.
 - `xhs: not inside Xyntetik Harness Supervisor`: `XHS_TOKEN` is set only in panes the app started.
 - A pi pane answers on its own screen instead of over the bus, and says it has no tools: the model is not calling tools. The pane launches pi with its four tools; a small model may still ignore them.
