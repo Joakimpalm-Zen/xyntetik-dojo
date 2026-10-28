@@ -207,6 +207,27 @@ import Testing
         #expect(bus.info("codex-1")?.queued == 0)
     }
 
+    @Test func aFreshCodexPaneIsIdleOnceItsComposerIsOnScreen() {
+        var clock = Date(timeIntervalSince1970: 1_000)
+        bus.now = { clock }
+        call("send", ["pane": "codex-1", "text": "hi"])
+        #expect(bus.info("codex-1")?.state == .starting)
+        targetIO.screen = ">_ OpenAI Codex (v0.165.0)\nloading"
+        for _ in 1...5 { clock = clock.addingTimeInterval(1); bus.tick() }
+        #expect(bus.info("codex-1")?.state == .starting)
+        targetIO.screen = ">_ OpenAI Codex (v0.165.0)\n\n› Ask Codex to do anything\n? for shortcuts"
+        for _ in 1...2 { clock = clock.addingTimeInterval(1); bus.tick() }
+        #expect(bus.info("codex-1")?.state == .starting)
+        for _ in 1...3 { clock = clock.addingTimeInterval(1); bus.tick() }
+        #expect(targetIO.typed.contains("[from: claude-1] hi"))
+        // A Claude pane has no fingerprint: it announces its own session start.
+        let claudeIO = MockIO()
+        bus.add(name: "claude-2", kind: .claude, io: claudeIO)
+        claudeIO.screen = "Ask Codex to do anything"
+        for _ in 1...10 { clock = clock.addingTimeInterval(1); bus.tick() }
+        #expect(bus.info("claude-2")?.state == .starting)
+    }
+
     @Test func hooksRestartTheQuietClockAndPromptIsNeverTimedOut() {
         var clock = Date(timeIntervalSince1970: 1_000)
         bus.now = { clock }

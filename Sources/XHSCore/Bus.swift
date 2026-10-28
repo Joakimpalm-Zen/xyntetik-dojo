@@ -67,6 +67,9 @@ public final class Bus {
     /// A `running` pane whose screen has not changed for this long is idle again: its turn ended without
     /// a Stop hook (an API error, a lost hook). Every harness animates a spinner while it works.
     public var idleAfterQuiet: TimeInterval = 15
+    /// A `starting` pane of a harness with an idle fingerprint is idle once its screen shows the fingerprint
+    /// and has not changed for this long.
+    public var readyAfterQuiet: TimeInterval = 3
     public var now: () -> Date = { Date() }
 
     public init() {}
@@ -120,21 +123,30 @@ public final class Bus {
     /// The app calls this once a second.
     public func tick() {
         for p in panes {
-            if p.state == .running { watchQuiet(p) }
+            if p.state == .running || p.state == .starting { watchQuiet(p) }
             flush(p)
         }
     }
 
     private func watchQuiet(_ p: Pane) {
         guard let io = p.io else { return }
-        let hash = String(io.screenText().suffix(4000)).hashValue
+        let screen = String(io.screenText().suffix(4000))
+        let hash = screen.hashValue
         if hash != p.screenHash || p.quietSince == nil {
             p.screenHash = hash
             p.quietSince = now()
             return
         }
-        if now().timeIntervalSince(p.quietSince!) >= idleAfterQuiet {
+        let quiet = now().timeIntervalSince(p.quietSince!)
+        switch p.state {
+        case .running where quiet >= idleAfterQuiet:
             setState(p.name, .idle)
+        case .starting where quiet >= readyAfterQuiet:
+            if let fingerprint = IdleFingerprint.text(for: p.kind), screen.contains(fingerprint) {
+                setState(p.name, .idle)
+            }
+        default:
+            break
         }
     }
 
