@@ -142,6 +142,9 @@ class ShimTest(unittest.TestCase):
         replies = self.mcp([{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "panes", "arguments": {}}}], env=env)
         self.assertTrue(replies[0]["result"]["isError"])
         self.assertIn("401", replies[0]["result"]["content"][0]["text"])
+        # A refusal names the tool and the arguments the call carried.
+        replies = self.mcp([{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "state", "arguments": {"name": "codex-1"}}}], env=env)
+        self.assertIn('tool state called with {"name": "codex-1"}', replies[0]["result"]["content"][0]["text"])
 
     def run_cli(self, *args, stdin="", env=None):
         return subprocess.run([sys.executable, SHIM, *args], input=stdin, capture_output=True, text=True,

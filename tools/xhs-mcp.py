@@ -140,15 +140,18 @@ def handle(msg):
         name = params.get("name")
         if name not in TOOL_NAMES:
             return {"jsonrpc": "2.0", "id": mid, "error": {"code": -32602, "message": "Unknown tool: %s" % name}}
+        arguments = params.get("arguments") or {}
         try:
-            out = bus_call(name, tool_payload(name, params.get("arguments") or {}))
+            out = bus_call(name, tool_payload(name, arguments))
             if name == "read":
                 text = out.get("text", "")
             else:
                 text = json.dumps(out, indent=2)
             result = {"content": [{"type": "text", "text": text}], "isError": False}
         except (BusError, ValueError) as e:
-            result = {"content": [{"type": "text", "text": str(e)}], "isError": True}
+            # The arguments as received, so a refusal says what the call carried.
+            text = "%s (tool %s called with %s)" % (e, name, json.dumps(arguments, sort_keys=True)[:300])
+            result = {"content": [{"type": "text", "text": text}], "isError": True}
     else:
         return {"jsonrpc": "2.0", "id": mid, "error": {"code": -32601, "message": "Method not found: %s" % method}}
     return {"jsonrpc": "2.0", "id": mid, "result": result}

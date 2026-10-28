@@ -22,9 +22,18 @@ public enum Delivery {
         return String(out).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// The message as it appears in the target terminal.
+    /// The message as it appears in the target terminal. A harness that puts its own `[from: ...]` tag
+    /// at the front of its text loses it: the tag is the bus's, from the token, never from the text.
     public static func line(from sender: String, text: String) -> String {
-        "[from: \(sender)] \(text)"
+        "[from: \(sender)] \(stripLeadingTags(text))"
+    }
+
+    static func stripLeadingTags(_ text: String) -> String {
+        var t = Substring(text)
+        while t.hasPrefix("[from: "), let close = t.firstIndex(of: "]"), !t[t.index(t.startIndex, offsetBy: 7)..<close].contains("[") {
+            t = t[t.index(after: close)...].drop(while: { $0 == " " })
+        }
+        return String(t)
     }
 
     /// The keystrokes for a message, without the final Enter.
