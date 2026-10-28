@@ -73,3 +73,44 @@ import Testing
         #expect(!Hosts.isValid(""))
     }
 }
+
+@Suite struct HighlightTests {
+    let color = Highlight.foreground(red: 62, green: 210, blue: 189)
+    func run(_ chunks: [String]) -> (String, String) {
+        var carry: [UInt8] = []
+        var out: [UInt8] = []
+        for c in chunks { out += Highlight.tagged(Array(c.utf8), carry: &carry, color: color) }
+        return (String(decoding: out, as: UTF8.self), String(decoding: carry, as: UTF8.self))
+    }
+
+    @Test func wrapsATagInTheColourAndResets() {
+        let (out, carry) = run(["> [from: claude-1] hello there\r\n"])
+        #expect(out == "> \u{1b}[38;2;62;210;189m[from: claude-1]\u{1b}[39m hello there\r\n")
+        #expect(carry.isEmpty)
+    }
+
+    @Test func leavesOtherBracketsAlone() {
+        for text in ["[1;32mgreen", "[from] x", "[from: ] y", "[from: Bad Name] z", "[from: \u{1b}[0m]", "plain"] {
+            let (out, carry) = run([text])
+            #expect(out == text, Comment(rawValue: text))
+            #expect(carry.isEmpty, Comment(rawValue: text))
+        }
+    }
+
+    @Test func aTagSplitAcrossChunksIsStillWrapped() {
+        let (out, carry) = run(["abc [fr", "om: co", "dex-1] hi"])
+        #expect(out == "abc \u{1b}[38;2;62;210;189m[from: codex-1]\u{1b}[39m hi")
+        #expect(carry.isEmpty)
+    }
+
+    @Test func onlyAPossibleTagIsHeldBack() {
+        let (out, carry) = run(["line [from: pi-"])
+        #expect(out == "line ")
+        #expect(carry == "[from: pi-")
+        let (out2, carry2) = run(["[", "x"])
+        #expect(out2 == "[x")
+        #expect(carry2.isEmpty)
+        let (out3, _) = run(["[from: " + String(repeating: "a", count: 40)])
+        #expect(out3.hasPrefix("[from: aaaa"))
+    }
+}
