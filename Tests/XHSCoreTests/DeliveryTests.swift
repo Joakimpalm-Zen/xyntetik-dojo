@@ -6,6 +6,13 @@ import Testing
         #expect(Delivery.line(from: "claude-1", text: "hi") == "[from: claude-1] hi")
     }
 
+    @Test func aSendersOwnTagIsNotDoubled() {
+        #expect(Delivery.line(from: "codex-1", text: "[from: codex-1] ACK") == "[from: codex-1] ACK")
+        #expect(Delivery.line(from: "codex-1", text: "[from: claude-1] [from: codex-1] ACK") == "[from: codex-1] ACK")
+        #expect(Delivery.line(from: "codex-1", text: "ACK [from: codex-1]") == "[from: codex-1] ACK [from: codex-1]")
+        #expect(Delivery.line(from: "codex-1", text: "[from: codex-1]") == "[from: codex-1] ")
+    }
+
     @Test func sanitizeDropsTerminalControls() {
         let hostile = "ok\u{1b}[201~\r\u{1b}]0;title\u{07}\u{9b}31m\u{7f}\tend\u{0}"
         let clean = Delivery.sanitize(hostile)
