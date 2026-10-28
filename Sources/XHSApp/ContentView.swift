@@ -133,6 +133,18 @@ struct PickerSheet: View {
                 }
             }
             TextField("Host (empty for this Mac)", text: $form.host)
+            if !model.recentHosts.isEmpty {
+                HStack(spacing: 6) {
+                    Text("Recent").foregroundStyle(.secondary)
+                    ForEach(model.recentHosts, id: \.self) { host in
+                        Button(host) { form.host = host }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                    }
+                }
+                .font(.callout)
+                .lineLimit(1)
+            }
             TextField("Name (empty for claude-1, codex-1, pi-1 ...)", text: $form.name)
             if !form.error.isEmpty {
                 Text(form.error).font(.caption).foregroundStyle(.red)
