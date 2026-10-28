@@ -70,6 +70,62 @@ import Testing
         #expect(!remote.contains(.literal("--model")))
     }
 
+    @Test func windowsHostRunsTheSameInnerCommandInMsysBash() throws {
+        let posix = Launcher.plan(kind: .claude, paneName: "claude-3", host: "zen@box", port: 7788, token: "tok",
+                                  runnerModel: nil, loginShell: "/bin/zsh")
+        let windows = Launcher.plan(kind: .claude, paneName: "claude-3", host: "zen@box", port: 7788, token: "tok",
+                                    runnerModel: nil, loginShell: "/bin/zsh", remoteShell: .windows)
+        let ssh = shellArgs(windows.args[3], home: home)
+        #expect(Array(ssh.prefix(5)) == ["ssh", "-t", "-R", "7788:127.0.0.1:7788", "zen@box"])
+        #expect(ssh.count == 6)
+        let remote = ssh[5]
+        let head = #"set MSYS2_PATH_TYPE=inherit&& C:\msys64\usr\bin\bash.exe -lc "eval \"$^(echo "#
+        let tail = #" ^| base64 -d^)\"""#
+        #expect(remote.hasPrefix(head))
+        #expect(remote.hasSuffix(tail))
+        // cmd.exe sees no quote, pipe, percent or parenthesis from the harness line: it travels as base64.
+        let payload = remote.dropFirst(head.count).dropLast(tail.count)
+        #expect(!payload.isEmpty)
+        #expect(payload.allSatisfy { $0.isLetter || $0.isNumber || "+/=".contains($0) })
+        // bash.exe then runs exactly the line a POSIX host's login shell gets.
+        let posixInner = shellArgs(shellArgs(posix.args[3], home: home)[5], home: "/remote/home")[4]
+        #expect(Launcher.windowsInnerCommand(remote) == posixInner)
+        let harness = shellArgs(try #require(Launcher.windowsInnerCommand(remote)), home: "/c/Users/zen")
+        #expect(Array(harness.prefix(6)) == ["env", "XHS_PANE=claude-3", "XHS_PORT=7788", "XHS_TOKEN=tok",
+                                             "PATH=/c/Users/zen/.xhs/bin:/usr/bin:/bin", "claude"])
+    }
+
+    @Test func remoteShellProbe() {
+        #expect(RemoteShell.detect(probeOutput: "Windows_NT \r\n") == .windows)
+        #expect(RemoteShell.detect(probeOutput: "%OS%\n") == .posix)
+        #expect(RemoteShell.detect(probeOutput: "") == .posix)
+        #expect(shellArgs(Shell.line(Launcher.probeWords(host: "zen@box")))
+                == ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "zen@box", "echo %OS%"])
+    }
+
+    @Test func remoteSmokeShellGoesOverSSH() {
+        let plan = Launcher.plan(kind: .shell, paneName: "shell-1", host: "box", port: 7799, token: "t",
+                                 runnerModel: nil, loginShell: "/bin/zsh")
+        #expect(plan.executable == "/bin/zsh")
+        let ssh = shellArgs(plan.args[3], home: home)
+        #expect(Array(ssh.prefix(2)) == ["ssh", "-t"])
+        #expect(shellArgs(shellArgs(ssh[5], home: "/remote/home")[4], home: "/remote/home").suffix(3) == ["/bin/sh", "-c", "echo ok"])
+    }
+
+    @Test func recentHostsRememberTheLatestFirst() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("xhs-hosts-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: file) }
+        #expect(RecentHosts.load(file) == [])
+        #expect(RecentHosts.remember("zen@box", in: file) == ["zen@box"])
+        #expect(RecentHosts.remember("lab", in: file) == ["lab", "zen@box"])
+        #expect(RecentHosts.remember("zen@box", in: file) == ["zen@box", "lab"])
+        #expect(RecentHosts.load(file) == ["zen@box", "lab"])
+        for i in 0..<20 { RecentHosts.remember("h\(i)", in: file) }
+        #expect(RecentHosts.load(file).count == RecentHosts.limit)
+        try "  \n-bad\nok-host\n\n".write(to: file, atomically: true, encoding: .utf8)
+        #expect(RecentHosts.load(file) == ["ok-host"])
+    }
+
     @Test func smokeShellPlan() {
         let plan = Launcher.plan(kind: .shell, paneName: "shell-1", host: nil, port: 7788, token: "t",
                                  runnerModel: nil, loginShell: "/bin/zsh")
