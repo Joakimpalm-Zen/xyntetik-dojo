@@ -47,3 +47,29 @@ public enum Hosts {
         return host.unicodeScalars.allSatisfy { allowed.contains($0) }
     }
 }
+
+/// Hosts the owner used for remote panes, latest first, one per line in ~/.xhs/hosts.
+/// The picker offers them so an address is typed once.
+public enum RecentHosts {
+    public static let limit = 8
+
+    public static func load(_ file: URL) -> [String] {
+        guard let text = try? String(contentsOf: file, encoding: .utf8) else { return [] }
+        var seen = Set<String>()
+        return text.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { Hosts.isValid($0) && seen.insert($0).inserted }
+            .prefix(limit).map { $0 }
+    }
+
+    /// Puts `host` first and writes the file. Returns the new list.
+    @discardableResult
+    public static func remember(_ host: String, in file: URL) -> [String] {
+        var hosts = load(file).filter { $0 != host }
+        hosts.insert(host, at: 0)
+        hosts = Array(hosts.prefix(limit))
+        try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? (hosts.joined(separator: "\n") + "\n").write(to: file, atomically: true, encoding: .utf8)
+        return hosts
+    }
+}
