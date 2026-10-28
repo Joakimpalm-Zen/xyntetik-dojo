@@ -154,6 +154,14 @@ import Testing
         #expect(call("read", ["pane": "codex-1", "lines": 0]).1["text"] as? String == "three")
     }
 
+    @Test func modelSwitchUpdatesTheHeader() {
+        hook(targetToken, "SessionStart", ["model": "claude-opus-5-5"])
+        #expect(bus.info("codex-1")?.model == "claude-opus-5-5")
+        hook(targetToken, "PostModelSwitch", ["from_model": "claude-opus-5-5", "to_model": "claude-sonnet-5-5"])
+        #expect(bus.info("codex-1")?.model == "claude-sonnet-5-5")
+        #expect(bus.info("codex-1")?.state == .idle)
+    }
+
     @Test func stateReportsQueueAndModel() {
         hook(targetToken, "SessionStart", ["model": "gpt-x"])
         hook(targetToken, "UserPromptSubmit")
