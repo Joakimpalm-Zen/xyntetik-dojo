@@ -43,7 +43,7 @@ What needs you, once:
 
 ## Adding a pane
 
-Press plus, pick Claude, Codex or pi. Leave the host empty for this Mac. Panes start in your home directory, in your login shell (`$SHELL -l -i`), so PATH is the one your terminal has. Close a pane with its x button; that ends the harness.
+Press plus, pick Claude, Codex or pi. Leave the host empty for this Mac. Panes start in your home directory, in your login shell (`$SHELL -l -i`), so PATH is the one your terminal has. A pane never inherits `CLAUDE*` variables from the process that opened the app (so `make run` from inside a Claude Code session does not make the pane's Claude a child session). Close a pane with its x button; that ends the harness.
 
 A local pi pane first asks Runner for its models (`GET /v1/models`), starts pi with the first one and shows it in the header. If Runner does not answer, the pane says so and pi is not started.
 
@@ -90,7 +90,7 @@ xhs state pi-1
 
 | Harness | Bus tools | State | Peer rule |
 |---|---|---|---|
-| Claude Code | `--mcp-config` at launch | http hooks via `--settings` at launch: SessionStart, UserPromptSubmit, PermissionRequest, PostToolUse, Stop, Notification (`permission_prompt`, `idle_prompt`, `agent_needs_input`, `elicitation_dialog`) | `--append-system-prompt` |
+| Claude Code | `--mcp-config` at launch | hooks via `--settings` at launch: SessionStart as a command hook (`xhs hook`; Claude Code runs no http hooks for that event), http hooks for UserPromptSubmit, PermissionRequest, PostToolUse, Stop, Notification (`permission_prompt`, `idle_prompt`, `agent_needs_input`, `elicitation_dialog`) | `--append-system-prompt` |
 | Codex | `[mcp_servers.xhs]` in `~/.codex/config.toml` | command hooks in the same file (`xhs hook`): SessionStart, UserPromptSubmit, PermissionRequest, PostToolUse, Stop, Interrupt | `-c developer_instructions` |
 | pi | the `xhs` command (pi has no MCP by design; it runs `xhs` with its bash tool) | the `xhs-pi.ts` extension: session_start, agent_start, agent_settled, ui_prompt_start, ui_prompt_end | `--append-system-prompt` |
 
@@ -99,6 +99,7 @@ The pi extension also registers Runner as pi's `runner` provider.
 ## Safety rules
 
 - **A relayed message never answers a prompt.** The bus types only into a pane that is `idle`. A pane at a permission prompt or question dialog (`prompt`), busy (`running`) or not yet started (`starting`) gets the message queued. Queued messages go out one at a time, each when the pane turns idle again.
+- **A lost Stop does not hold messages forever.** A turn can end without a Stop hook (Codex at its usage limit did). A `running` pane whose screen has not changed for 15 seconds is idle again; every harness animates a spinner while it works. A pane at a `prompt` is never timed out.
 - **Every message carries its sender.** The sender is taken from the calling pane's token, not from the message text.
 - **No control characters.** The bus strips escape sequences and other control characters. Where the harness supports bracketed paste, a message arrives as one paste; otherwise line breaks become spaces.
 - **The owner comes first.** The bus holds messages for a pane you typed into in the last 3 seconds.
@@ -140,7 +141,7 @@ Needs a human click-through:
 - Remembering the layout: panes are not restored on restart, because restarting harnesses unasked is worse than an empty window.
 - Resizing, reordering or tabbing panes, and a per-pane working directory (all panes start in your home directory).
 - Attaching to a session that was started outside the app (in a web terminal or on another screen). A pane is a session the app starts.
-- An activity heuristic for state: all three harnesses have hooks, so it was not needed.
+- A full activity heuristic for state: hooks carry the state, and the only heuristic is the 15 second still-screen rule that recovers a `running` pane from a lost Stop.
 - A settings window or preferences file.
 
 ## Files
@@ -155,7 +156,8 @@ Needs a human click-through:
 ## Troubleshooting
 
 - Red banner "The bus could not listen": another copy is running, or the port is taken. Quit the other copy or set `XHS_PORT`.
-- A pane stays `starting`: a startup dialog waits for you, or the harness has not reported its session start yet.
+- A pane stays `starting`: a startup dialog waits for you, or the harness has not reported its session start yet. Your first prompt in that pane clears it (its Stop makes it `idle`).
+- `/resume` in a pane lists other sessions than your terminal does: panes start in your home folder, and Claude Code lists sessions per folder.
 - A pane turns red at once: the harness is not on your login shell's PATH (the pane shows the error), or the ssh connection failed.
 - A Windows pane shows `bash.exe is not recognized`: MSYS2 is not at `C:\msys64`. The app looks only there.
 - `xhs: not inside Xyntetik Harness Supervisor`: `XHS_TOKEN` is set only in panes the app started.
