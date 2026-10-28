@@ -19,12 +19,15 @@ final class AppModel: NSObject, ObservableObject, LocalProcessTerminalViewDelega
     @Published private(set) var revision = 0
     /// The plus button's picker is open.
     @Published var picking = false
+    /// Hosts used for remote panes, latest first (~/.xhs/hosts).
+    @Published private(set) var recentHosts: [String] = []
 
     let bus = Bus()
     let port: Int
     let smoke: Bool
     private let loginShell: String
     private var tokens: [String: String] = [:]
+    private var remoteShells: [String: RemoteShell] = [:]
     private var server: BusServer?
     private var timer: Timer?
     private var keyMonitor: Any?
@@ -35,6 +38,7 @@ final class AppModel: NSObject, ObservableObject, LocalProcessTerminalViewDelega
         smoke = env["XHS_SMOKE"] == "1"
         loginShell = AppModel.userShell()
         super.init()
+        recentHosts = RecentHosts.load(AppModel.hostsFile)
         bus.onChange = { [weak self] in self?.revision &+= 1 }
         startServer()
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
@@ -73,6 +77,7 @@ final class AppModel: NSObject, ObservableObject, LocalProcessTerminalViewDelega
         view.processDelegate = self
         let token = bus.add(name: name, kind: kind, host: host, io: view)
         tokens[name] = token
+        if !host.isEmpty { recentHosts = RecentHosts.remember(host, in: AppModel.hostsFile) }
         items.append(Item(id: name, view: view))
         Task { await launch(view, kind: kind, host: host, token: token) }
         DispatchQueue.main.async { view.window?.makeFirstResponder(view) }
@@ -90,8 +95,15 @@ final class AppModel: NSObject, ObservableObject, LocalProcessTerminalViewDelega
             }
             bus.setModel(view.paneName, model)
         }
+        // A remote host is asked which shell it runs commands in: cmd.exe (Windows) or a POSIX shell.
+        var remoteShell = RemoteShell.posix
+        if !host.isEmpty {
+            remoteShell = await Launcher.probeRemoteShell(host: host)
+            remoteShells[view.paneName] = remoteShell
+        }
+        guard items.contains(where: { $0.id == view.paneName }) else { return }
         start(view, Launcher.plan(kind: kind, paneName: view.paneName, host: host.isEmpty ? nil : host, port: port,
-                                  token: token, runnerModel: model, loginShell: loginShell))
+                                  token: token, runnerModel: model, loginShell: loginShell, remoteShell: remoteShell))
     }
 
     private func start(_ view: TerminalPane, _ plan: LaunchPlan) {
@@ -112,6 +124,7 @@ final class AppModel: NSObject, ObservableObject, LocalProcessTerminalViewDelega
         item.view.terminate()
         bus.remove(name)
         tokens[name] = nil
+        remoteShells[name] = nil
         items.removeAll { $0.id == name }
     }
 
@@ -152,10 +165,15 @@ final class AppModel: NSObject, ObservableObject, LocalProcessTerminalViewDelega
 
     // MARK: smoke test
 
-    /// XHS_SMOKE=1: open one local pane running /bin/sh -c 'echo ok', check its screen and the bus, then quit.
+    /// XHS_SMOKE=1: open one pane running `echo ok` (locally, or on XHS_SMOKE_HOST over ssh), check its screen
+    /// and the bus, then quit.
     func runSmoke() {
         let name = "shell-1"
-        addPane(kind: .shell, host: "", name: name)
+        let host = ProcessInfo.processInfo.environment["XHS_SMOKE_HOST"] ?? ""
+        if let problem = addPane(kind: .shell, host: host, name: name) {
+            print("XHS_SMOKE failed: \(problem)")
+            exit(1)
+        }
         let deadline = Date().addingTimeInterval(15)
         Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] timer in
             MainActor.assumeIsolated {
@@ -185,10 +203,14 @@ final class AppModel: NSObject, ObservableObject, LocalProcessTerminalViewDelega
             print("XHS_SMOKE failed: the bus did not answer on 127.0.0.1:\(port)")
             exit(1)
         }
-        print("XHS_SMOKE ok: pane \(name) printed ok, the bus answered on 127.0.0.1:\(port)")
+        let host = bus.info(name)?.host ?? ""
+        let location = host.isEmpty ? "locally" : "on \(host) (\(remoteShells[name] == .windows ? "Windows" : "POSIX") shell)"
+        print("XHS_SMOKE ok: pane \(name) printed ok \(location), the bus answered on 127.0.0.1:\(port)")
         closeAll()
         exit(0)
     }
+
+    static let hostsFile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".xhs/hosts")
 
     private static func userShell() -> String {
         if let entry = getpwuid(getuid()), let shell = entry.pointee.pw_shell {
