@@ -216,7 +216,8 @@ final class AppModel: NSObject, ObservableObject, LocalProcessTerminalViewDelega
         }
         let host = bus.info(name)?.host ?? ""
         let location = host.isEmpty ? "locally" : "on \(host) (\(remoteShells[name] == .windows ? "Windows" : "POSIX") shell)"
-        print("XHS_SMOKE ok: pane \(name) printed ok \(location), the bus answered on 127.0.0.1:\(port)")
+        let dims = items.first?.view.terminalDimensions
+        print("XHS_SMOKE ok: pane \(name) printed ok \(location), the bus answered on 127.0.0.1:\(port), terminal \(dims?.cols ?? 0)x\(dims?.rows ?? 0)")
         closeAll()
         exit(0)
     }

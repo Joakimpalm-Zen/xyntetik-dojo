@@ -87,6 +87,7 @@ public enum Launcher {
 
     /// Claude Code settings passed with --settings: hooks that report state to the bus.
     /// SessionStart is a command hook through the shim: Claude Code does not run http hooks for that event.
+    /// PostModelSwitch (after /model) goes the same way and carries the new model name for the header.
     public static func claudeSettings(port: Int) -> [String: Any] {
         let hook: [String: Any] = [
             "type": "http",
@@ -99,6 +100,7 @@ public enum Launcher {
         let command: [String: Any] = ["type": "command", "command": shimCommand.replacingOccurrences(of: "exec ", with: "") + " hook", "timeout": 5]
         return ["hooks": [
             "SessionStart": [["hooks": [command]]],
+            "PostModelSwitch": [["hooks": [command]]],
             "UserPromptSubmit": group,
             "PermissionRequest": group,
             "PostToolUse": group,
