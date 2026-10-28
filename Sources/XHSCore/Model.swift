@@ -48,28 +48,31 @@ public enum Hosts {
     }
 }
 
-/// Hosts the owner used for remote panes, latest first, one per line in ~/.xhs/hosts.
-/// The picker offers them so an address is typed once.
+/// Values the owner used before (hosts in ~/.xhs/hosts, folders in ~/.xhs/folders), latest first, one per
+/// line. The picker offers them so an address or a path is typed once.
 public enum RecentHosts {
     public static let limit = 8
 
-    public static func load(_ file: URL) -> [String] {
+    public static func load(_ file: URL, valid: (String) -> Bool = Hosts.isValid) -> [String] {
         guard let text = try? String(contentsOf: file, encoding: .utf8) else { return [] }
         var seen = Set<String>()
         return text.components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { Hosts.isValid($0) && seen.insert($0).inserted }
+            .filter { valid($0) && seen.insert($0).inserted }
             .prefix(limit).map { $0 }
     }
 
-    /// Puts `host` first and writes the file. Returns the new list.
+    /// Puts `value` first and writes the file. Returns the new list.
     @discardableResult
-    public static func remember(_ host: String, in file: URL) -> [String] {
-        var hosts = load(file).filter { $0 != host }
-        hosts.insert(host, at: 0)
-        hosts = Array(hosts.prefix(limit))
+    public static func remember(_ value: String, in file: URL, valid: (String) -> Bool = Hosts.isValid) -> [String] {
+        var values = load(file, valid: valid).filter { $0 != value }
+        values.insert(value, at: 0)
+        values = Array(values.prefix(limit))
         try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? (hosts.joined(separator: "\n") + "\n").write(to: file, atomically: true, encoding: .utf8)
-        return hosts
+        try? (values.joined(separator: "\n") + "\n").write(to: file, atomically: true, encoding: .utf8)
+        return values
     }
+
+    /// A start folder as typed: anything non-empty on one line.
+    public static func isFolder(_ s: String) -> Bool { !s.isEmpty && !s.contains("\n") }
 }
