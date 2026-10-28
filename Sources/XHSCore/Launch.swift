@@ -64,11 +64,13 @@ public enum RemoteShell: Equatable, Sendable {
     }
 }
 
-/// How to start a pane: the program, its arguments and the environment it adds.
+/// How to start a pane: the program, its arguments, the environment it adds and, for a local pane,
+/// the folder it starts in (nil: the home folder). A remote pane changes folder on its host.
 public struct LaunchPlan: Equatable, Sendable {
     public var executable: String
     public var args: [String]
     public var environment: [String: String]
+    public var directory: String? = nil
 }
 
 /// Builds the command for each harness, local or over ssh.
@@ -140,20 +142,23 @@ public enum Launcher {
     /// Remote panes run `ssh -t -R port:127.0.0.1:port host` with the same harness command in the remote login shell.
     /// A Windows host (cmd.exe over OpenSSH) runs the same inner command in MSYS2 bash; see `windowsRemoteCommand`.
     public static func plan(kind: HarnessKind, paneName: String, host: String?, port: Int, token: String,
-                            runnerModel: String?, loginShell: String, remoteShell: RemoteShell = .posix) -> LaunchPlan {
+                            runnerModel: String?, loginShell: String, remoteShell: RemoteShell = .posix,
+                            directory: String? = nil) -> LaunchPlan {
         let env = ["XHS_PANE": paneName, "XHS_PORT": String(port), "XHS_TOKEN": token]
         let local = host == nil || host!.isEmpty
+        let directory = directory?.isEmpty == false ? directory : nil
         if kind == .shell, local {
-            return LaunchPlan(executable: "/bin/sh", args: ["-c", "echo ok"], environment: env)
+            return LaunchPlan(executable: "/bin/sh", args: ["-c", "echo ok"], environment: env, directory: directory)
         }
         let harness = harnessWords(kind: kind, paneName: paneName, port: port, runnerModel: runnerModel)
         let path: ShellWord = .raw(#"PATH="$HOME/.xhs/bin:$PATH""#)
         guard let host, !local else {
             let line = "exec " + Shell.line([.literal("env"), path] + harness)
-            return LaunchPlan(executable: loginShell, args: ["-l", "-i", "-c", line], environment: env)
+            return LaunchPlan(executable: loginShell, args: ["-l", "-i", "-c", line], environment: env, directory: directory)
         }
         let assignments: [ShellWord] = ["XHS_PANE", "XHS_PORT", "XHS_TOKEN"].map { .literal("\($0)=\(env[$0]!)") }
-        let inner = "exec " + Shell.line([.literal("env")] + assignments + [path] + harness)
+        let cd = directory.map { "cd " + Shell.quote($0) + " && " } ?? ""
+        let inner = cd + "exec " + Shell.line([.literal("env")] + assignments + [path] + harness)
         let remote: String
         switch remoteShell {
         case .posix: remote = #"exec "$SHELL" -l -i -c "# + Shell.quote(inner)

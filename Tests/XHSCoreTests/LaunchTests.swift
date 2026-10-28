@@ -112,6 +112,22 @@ import Testing
         #expect(shellArgs(shellArgs(ssh[5], home: "/remote/home")[4], home: "/remote/home").suffix(3) == ["/bin/sh", "-c", "echo ok"])
     }
 
+    @Test func panesStartInTheChosenFolder() {
+        let local = Launcher.plan(kind: .claude, paneName: "claude-1", host: nil, port: 7788, token: "t",
+                                  runnerModel: nil, loginShell: "/bin/zsh", directory: "/home/tester/repo")
+        #expect(local.directory == "/home/tester/repo")
+        #expect(Launcher.plan(kind: .claude, paneName: "c", host: nil, port: 1, token: "t", runnerModel: nil,
+                              loginShell: "/bin/zsh", directory: "").directory == nil)
+        let remote = Launcher.plan(kind: .codex, paneName: "codex-1", host: "box", port: 7788, token: "t",
+                                   runnerModel: nil, loginShell: "/bin/zsh", directory: "/srv/it's here")
+        #expect(remote.directory == nil)
+        let inner = shellArgs(shellArgs(remote.args[3], home: home)[5], home: "/remote/home")[4]
+        #expect(inner.hasPrefix("cd '/srv/it'\\''s here' && exec env "))
+        let windows = Launcher.plan(kind: .codex, paneName: "codex-1", host: "zen@box", port: 7788, token: "t",
+                                    runnerModel: nil, loginShell: "/bin/zsh", remoteShell: .windows, directory: #"C:\Users\zen\repo"#)
+        #expect(Launcher.windowsInnerCommand(shellArgs(windows.args[3], home: home)[5])?.hasPrefix(#"cd 'C:\Users\zen\repo' && exec env "#) == true)
+    }
+
     @Test func recentHostsRememberTheLatestFirst() throws {
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("xhs-hosts-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: file) }
@@ -124,6 +140,8 @@ import Testing
         #expect(RecentHosts.load(file).count == RecentHosts.limit)
         try "  \n-bad\nok-host\n\n".write(to: file, atomically: true, encoding: .utf8)
         #expect(RecentHosts.load(file) == ["ok-host"])
+        RecentHosts.remember("/Users/me/repo", in: file, valid: RecentHosts.isFolder)
+        #expect(RecentHosts.load(file, valid: RecentHosts.isFolder) == ["/Users/me/repo", "-bad", "ok-host"])
     }
 
     @Test func paneEnvironmentDropsWhatAClaudeSessionHandsDown() {
