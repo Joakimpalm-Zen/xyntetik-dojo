@@ -77,6 +77,11 @@ public struct LaunchPlan: Equatable, Sendable {
 public enum Launcher {
     public static let defaultPort = 7788
     public static let runnerURL = "http://127.0.0.1:8080/v1"
+    /// The tools a pi pane runs with: pi's own four. The bus command xhs runs through bash.
+    public static let piTools = "read,bash,edit,write"
+    /// Spelled out for the small local models pi runs on: how to answer a peer.
+    public static let piReplyHint = "You have no xhs tool, only the bash tool. To answer a [from: <name>] message, run the bash command " +
+        "xhs send <name> \"<your reply>\" and then say what you sent."
     /// The shim as the harness runs it; $HOME is expanded on the host the harness runs on.
     public static let shimCommand = #"exec python3 "$HOME/.xhs/xhs-mcp.py""#
 
@@ -129,10 +134,12 @@ public enum Launcher {
             return [.literal("codex"), .literal("--yolo"), .literal("--dangerously-bypass-hook-trust"),
                     .literal("-c"), .literal("developer_instructions=" + Shell.toml(prompt))]
         case .pi:
+            // The pane's pi gets its four coding tools whatever the owner's pi settings say
+            // (a `defaultTools: []` there would leave it without bash, and so without xhs).
             var words: [ShellWord] = [.literal("pi"), .literal("-e"), .raw(#""$HOME/.xhs/xhs-pi.ts""#),
                                       .literal("--provider"), .literal("runner")]
             if let runnerModel { words += [.literal("--model"), .literal(runnerModel)] }
-            return words + [.literal("--append-system-prompt"), .literal(prompt)]
+            return words + [.literal("--tools"), .literal(piTools), .literal("--append-system-prompt"), .literal(prompt + " " + piReplyHint)]
         case .shell:
             return [.literal("/bin/sh"), .literal("-c"), .literal("echo ok")]
         }

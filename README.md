@@ -93,7 +93,7 @@ xhs state pi-1
 |---|---|---|---|
 | Claude Code | `--mcp-config` at launch | hooks via `--settings` at launch: SessionStart as a command hook (`xhs hook`; Claude Code runs no http hooks for that event), http hooks for UserPromptSubmit, PermissionRequest, PostToolUse, Stop, Notification (`permission_prompt`, `idle_prompt`, `agent_needs_input`, `elicitation_dialog`) | `--append-system-prompt` |
 | Codex | `[mcp_servers.xhs]` in `~/.codex/config.toml` | command hooks in the same file (`xhs hook`): SessionStart, UserPromptSubmit, PermissionRequest, PostToolUse, Stop, Interrupt | `-c developer_instructions` |
-| pi | the `xhs` command (pi has no MCP by design; it runs `xhs` with its bash tool) | the `xhs-pi.ts` extension: session_start, agent_start, agent_settled, ui_prompt_start, ui_prompt_end | `--append-system-prompt` |
+| pi | the `xhs` command (pi has no MCP by design; it runs `xhs` with its bash tool). The pane passes `--tools read,bash,edit,write`, so a `defaultTools` setting of yours cannot leave it without bash | the `xhs-pi.ts` extension: session_start, agent_start, agent_settled, ui_prompt_start, ui_prompt_end | `--append-system-prompt` |
 
 The pi extension also registers Runner as pi's `runner` provider.
 
@@ -128,7 +128,7 @@ Verified without a human:
 - Probes against a stand-in bus (not part of the test suite), on this Mac:
   - Claude Code 2.1.311: `claude -p` with the app's `--settings` and `--mcp-config` POSTed hook events with the pane token, and the xhs `panes` tool reached the bus.
   - Codex 0.163.0: command hooks receive `XHS_TOKEN` (hook trust bypassed for the probe only), and the shim gets `XHS_TOKEN` through `env_vars` and reaches the bus.
-  - pi 0.85.1, with the app's exact launch line: the extension registers Runner's models and picks the one given; it reports session start, prompt submit and settle; a message typed as bracketed paste plus Enter arrives as one multi-line user message.
+  - pi 0.85.1 and 1.4.0, with the app's exact launch line: the extension registers Runner's models and picks the one given; it reports session start, prompt submit and settle; a message typed as bracketed paste plus Enter arrives as one multi-line user message. With pi 1.4.0 the extension's five events still fire; a 0.6B model on Runner answered a `[from: claude-1]` line on its own screen rather than with `xhs send`, so the pane spells the command out in pi's launch prompt.
 
 Needs a human click-through:
 
@@ -162,3 +162,4 @@ Needs a human click-through:
 - A pane turns red at once: the harness is not on your login shell's PATH (the pane shows the error), or the ssh connection failed.
 - A Windows pane shows `bash.exe is not recognized`: MSYS2 is not at `C:\msys64`. The app looks only there.
 - `xhs: not inside Xyntetik Harness Supervisor`: `XHS_TOKEN` is set only in panes the app started.
+- A pi pane answers on its own screen instead of over the bus, and says it has no tools: the model is not calling tools. The pane launches pi with its four tools; a small model may still ignore them.
