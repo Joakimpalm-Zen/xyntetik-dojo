@@ -126,6 +126,18 @@ import Testing
         #expect(RecentHosts.load(file) == ["ok-host"])
     }
 
+    @Test func paneEnvironmentDropsWhatAClaudeSessionHandsDown() {
+        let base = ["PATH": "/usr/bin", "CLAUDECODE": "1", "CLAUDE_CODE_CHILD_SESSION": "1", "CLAUDE_CODE_SESSION_ID": "s",
+                    "CLAUDE_PID": "7", "LANG": "sv_SE.UTF-8", "HOME": "/home/tester"]
+        let env = Launcher.paneEnvironment(from: base, adding: ["XHS_TOKEN": "tok"])
+        #expect(env.keys.filter { $0.hasPrefix("CLAUDE") }.isEmpty)
+        #expect(env["PATH"] == "/usr/bin")
+        #expect(env["LANG"] == "sv_SE.UTF-8")
+        #expect(env["TERM"] == "xterm-256color")
+        #expect(env["XHS_TOKEN"] == "tok")
+        #expect(Launcher.paneEnvironment(from: [:], adding: [:])["LANG"] == "en_US.UTF-8")
+    }
+
     @Test func smokeShellPlan() {
         let plan = Launcher.plan(kind: .shell, paneName: "shell-1", host: nil, port: 7788, token: "t",
                                  runnerModel: nil, loginShell: "/bin/zsh")
