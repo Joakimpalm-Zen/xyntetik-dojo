@@ -414,6 +414,37 @@ import Testing
         }
     }
 
+    @Test func aLateSubmissionHookDoesNotUncoverANewerDraft() {
+        // Submit A, start typing B, then A's hook arrives: B is still unsent. A hook only ends the hold
+        // when nothing was typed after the last Enter. pi's slash commands and ! bash lines empty the
+        // editor without a model turn: the extension reports those as UserInputSubmitted.
+        var clock = Date(timeIntervalSince1970: 1000)
+        bus.now = { clock }
+        hook(targetToken, "SessionStart")
+        bus.noteOwnerInput("codex-1", OwnerInput.key(Array("A".utf8)[...]))
+        bus.noteOwnerInput("codex-1", OwnerInput.key([0x0D]))
+        bus.noteOwnerInput("codex-1", OwnerInput.key(Array("B".utf8)[...]))
+        hook(targetToken, "UserPromptSubmit")   // A's hook, late
+        #expect(bus.info("codex-1")?.draft == true, "B is still in the composer")
+        _ = call("send", ["pane": "codex-1", "text": "wait"])
+        clock += 60; bus.tick()
+        #expect(targetIO.written.isEmpty)
+        bus.noteOwnerInput("codex-1", OwnerInput.key([0x0D]))
+        hook(targetToken, "UserPromptSubmit")   // B's hook
+        #expect(bus.info("codex-1")?.draft == false)
+        hook(targetToken, "Stop")
+        clock += 60; bus.tick()
+        #expect(targetIO.typed == "[from: claude-1] wait\r")
+        targetIO.written = []
+        // A slash command: Enter, then the extension's UserInputSubmitted, no turn.
+        bus.noteOwnerInput("codex-1", OwnerInput.key(Array("/session".utf8)[...]))
+        bus.noteOwnerInput("codex-1", OwnerInput.key([0x0D]))
+        let before = bus.info("codex-1")?.state
+        hook(targetToken, "UserInputSubmitted")
+        #expect(bus.info("codex-1")?.draft == false, "the editor was emptied by a local command")
+        #expect(bus.info("codex-1")?.state == before, "a local command is not a model turn")
+    }
+
     @Test func theTerminalsOwnRepliesNeitherHoldNorCancelAnything() {
         var fire: (() -> Void)?
         bus.schedule = { _, work in fire = work }

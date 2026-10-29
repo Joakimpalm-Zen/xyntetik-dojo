@@ -46,9 +46,11 @@ public final class Bus {
         var lastOwnerInput: Date?
         /// The message text is in the composer and its Enter is still to come.
         var enterPending = false
-        /// The owner may have unsent text in the composer: set by any key that can add text, cleared only
-        /// by Enter or Ctrl-C, which send or empty the composer for certain.
+        /// The owner may have unsent text in the composer: set by any key that can add text, cleared by
+        /// Ctrl-C or by the harness reporting a submission that nothing was typed after.
         var hasDraft = false
+        /// Text keys came after the last Enter: a submission hook arriving now is for an earlier prompt.
+        var typedSinceSubmit = false
         /// The screen as last seen by `tick`, and since when it has looked like that.
         var screenHash = 0
         var quietSince: Date?
@@ -161,9 +163,11 @@ public final class Bus {
         p.lastOwnerInput = now()
         let before = p.hasDraft
         switch key {
-        case .text: p.hasDraft = true
-        case .clear: p.hasDraft = false
-        case .submit: if p.kind == .shell || p.kind == .runner { p.hasDraft = false }   // no hooks there: Enter is it
+        case .text: p.hasDraft = true; p.typedSinceSubmit = true
+        case .clear: p.hasDraft = false; p.typedSinceSubmit = false
+        case .submit:
+            p.typedSinceSubmit = false
+            if p.kind == .shell || p.kind == .runner { p.hasDraft = false }   // no hooks there: Enter is it
         case .other, .reply: break
         }
         if before != p.hasDraft { onChange?() }
@@ -282,8 +286,11 @@ public final class Bus {
             onChange?()
         }
         pane.quietSince = nil
-        // The harness took the composer as a prompt: it is empty now, whatever the keys suggested.
-        if event["hook_event_name"] as? String == "UserPromptSubmit", pane.hasDraft {
+        // The harness took the composer (as a prompt, or as a local command or shell line that pi reports
+        // as UserInputSubmitted): it is empty now, unless keys came after the Enter that sent it, in which
+        // case the hook is for an earlier prompt and a newer draft is in the composer.
+        if let name = event["hook_event_name"] as? String, name == "UserPromptSubmit" || name == "UserInputSubmitted",
+           pane.hasDraft, !pane.typedSinceSubmit {
             pane.hasDraft = false
             onChange?()
         }

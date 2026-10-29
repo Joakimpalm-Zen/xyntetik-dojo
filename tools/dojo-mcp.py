@@ -238,6 +238,12 @@ def without_old_block(text):
     # belong to it, so a comment the owner wrote for the next table is not lost with a dropped stanza.
     # A line inside a multi-line string is never a header, and a stanza's header is the line that
     # opened it, never something found in its contents. The top-level stanza has no header.
+    def delimiters(delimiter, line):
+        # Occurrences that open or close a string: in a basic string an escaped quote (\\""") does not.
+        if delimiter == "'''":
+            return line.count(delimiter)
+        return len(re.findall(r'(?<!\\)"""', line.replace("\\\\", "")))
+
     stanzas, pending, in_string = [], [], None
     for line in text.splitlines(keepends=True):
         if in_string:
@@ -245,7 +251,7 @@ def without_old_block(text):
                 stanzas[-1][1].append(line)
             else:
                 stanzas.append(("", [line]))
-            if in_string in line:
+            if delimiters(in_string, line) % 2 == 1:
                 in_string = None
             continue
         if line.lstrip().startswith("["):
@@ -260,8 +266,8 @@ def without_old_block(text):
             stanzas[-1][1].extend(pending)
             pending = []
             stanzas[-1][1].append(line)
-            for delimiter in ('"""', "\'\'\'"):
-                if line.count(delimiter) % 2 == 1:
+            for delimiter in ('"""', "'''"):
+                if delimiters(delimiter, line) % 2 == 1:
                     in_string = delimiter
     if pending:
         if not stanzas:

@@ -53,6 +53,10 @@ export default async function (pi: any) {
     }
   });
   pi.on("agent_start", async () => report("UserPromptSubmit"));
+  // Any input the owner submits empties the editor, a slash command or a ! shell line as much as a
+  // prompt; the bus ends its unsent-text hold on this, a model turn or not.
+  pi.on("input", async (event: any) => { if (event?.source !== "extension") report("UserInputSubmitted"); });
+  pi.on("user_bash", async () => report("UserInputSubmitted"));
   pi.on("agent_settled", async () => report("Stop"));
   pi.on("ui_prompt_start", async () => report("PermissionRequest"));
   pi.on("ui_prompt_end", async () => report("PostToolUse"));

@@ -430,6 +430,33 @@ x = true
             self.assertIn("[mcp_servers.xhs]\nand is gone now.", parsed["developer_instructions"])
             self.assertEqual(list(parsed["mcp_servers"]), ["dojo"])
 
+    def test_an_escaped_triple_quote_does_not_end_the_string(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("dojo_mcp6", SHIM)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        top = (
+            'developer_instructions = """\n'
+            'Quote blocks look like \\""" in this file.\n'
+            'An example table:\n'
+            '[notes.example]\n'
+            'x = 1\n'
+            '"""\n'
+            "\n" + self.OLD[self.OLD.index("# Xyntetik"):]
+        )
+        with tempfile.TemporaryDirectory() as home:
+            os.makedirs(os.path.join(home, ".dojo"))
+            shutil.copy(SHIM, os.path.join(home, ".dojo", "dojo-mcp.py"))
+            os.makedirs(os.path.join(home, ".codex"))
+            config = os.path.join(home, ".codex", "config.toml")
+            with open(config, "w") as f:
+                f.write(top)
+            self.assertEqual(mod.install(home=home, out=io.StringIO(), windows=False), 0)
+            parsed = tomllib.loads(open(config).read())
+            self.assertIn("[notes.example]\nx = 1", parsed["developer_instructions"])
+            self.assertNotIn("notes", parsed)
+            self.assertEqual(list(parsed["mcp_servers"]), ["dojo"])
+
     def test_top_level_settings_before_the_old_block_survive(self):
         import importlib.util
         spec = importlib.util.spec_from_file_location("dojo_mcp3", SHIM)
