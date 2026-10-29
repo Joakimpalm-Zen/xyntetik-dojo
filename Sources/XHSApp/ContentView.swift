@@ -71,16 +71,39 @@ struct PaneGrid: View {
     }
 }
 
+/// The name field while a pane is being renamed.
+final class RenameForm: ObservableObject {
+    @Published var editing = false
+    @Published var draft = ""
+    @Published var error = ""
+}
+
 struct PaneCell: View {
     @EnvironmentObject private var model: AppModel
+    @StateObject private var rename = RenameForm()
     let item: AppModel.Item
 
     var body: some View {
-        let info = model.bus.info(item.id)
+        let info = model.bus.info(item.name)
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 StateDot(state: info?.state)
-                Text(item.id).font(.system(.callout, design: .monospaced)).bold().foregroundStyle(Color(Theme.ink))
+                if rename.editing {
+                    TextField("name", text: $rename.draft)
+                        .font(.system(.callout, design: .monospaced))
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 160)
+                        .onSubmit { commitRename() }
+                        .onExitCommand { rename.editing = false }
+                    if !rename.error.isEmpty {
+                        Text(rename.error).font(.caption).foregroundStyle(Color(Theme.coralInk))
+                    }
+                } else {
+                    Text(item.name).font(.system(.callout, design: .monospaced)).bold().foregroundStyle(Color(Theme.ink))
+                        .help("Double-click to rename")
+                        .onTapGesture(count: 2) { startRename() }
+                        .contextMenu { Button("Rename") { startRename() } }
+                }
                 Text(info?.kind.title ?? "").foregroundStyle(Color(Theme.muted))
                 Text(info?.host.isEmpty == false ? info!.host : "local").foregroundStyle(Color(Theme.muted))
                 if !item.directory.isEmpty {
@@ -95,16 +118,31 @@ struct PaneCell: View {
                     Text("\(q) queued").font(.caption).foregroundStyle(Color(Theme.coralInk))
                 }
                 Text(info?.state.rawValue ?? "").font(.caption).foregroundStyle(PaneCell.color(info?.state))
-                Button { model.close(item.id) } label: { Image(systemName: "xmark") }
+                Button { model.close(item.name) } label: { Image(systemName: "xmark") }
                     .buttonStyle(.borderless)
                     .foregroundStyle(Color(Theme.muted))
-                    .help("Close \(item.id)")
+                    .help("Close \(item.name)")
             }
             .font(.callout)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(Paper(tone: Theme.surface, density: 0.6))
             TerminalHost(view: item.view)
+        }
+    }
+
+    private func startRename() {
+        rename.draft = item.name
+        rename.error = ""
+        rename.editing = true
+    }
+
+    private func commitRename() {
+        if let problem = model.rename(item.name, to: rename.draft) {
+            rename.error = problem
+        } else {
+            rename.editing = false
+            DispatchQueue.main.async { item.view.window?.makeFirstResponder(item.view) }
         }
     }
 
