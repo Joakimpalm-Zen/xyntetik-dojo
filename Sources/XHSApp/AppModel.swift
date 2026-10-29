@@ -165,11 +165,13 @@ final class AppModel: NSObject, ObservableObject {
         }
         // A remote host is asked which shell it runs commands in: cmd.exe (Windows) or a POSIX shell.
         var remoteShell = RemoteShell.posix
+        var note: String?
         if !host.isEmpty {
-            remoteShell = await Launcher.probeRemoteShell(host: host)
+            (remoteShell, note) = await Launcher.probeRemoteShell(host: host)
             remoteShells[view.paneName] = remoteShell
         }
         guard items.contains(where: { $0.view === view }) else { return }
+        if let note { view.feed(text: note + "\r\n\r\n") }
         start(view, Launcher.plan(kind: kind, paneName: view.paneName, host: host.isEmpty ? nil : host, port: port,
                                   token: token, runnerModel: model, loginShell: loginShell, remoteShell: remoteShell,
                                   directory: directory))

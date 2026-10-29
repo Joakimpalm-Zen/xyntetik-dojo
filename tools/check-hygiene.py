@@ -27,6 +27,14 @@ PERSONAL = [
     (re.compile(r"\b(?:192\.168|10\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}\b"), "a private network address"),
     (re.compile(r"@(?:hotmail|gmail|outlook|icloud)\.", re.I), "a personal e-mail address"),
     (re.compile(r"\b(?:zenzombie|zen@|mainbox|blackwell|galaxa|strata)\b", re.I), "a machine or user name"),
+    (re.compile(r"(?<![\w/])/home/(?!me\b|tester\b)[A-Za-z]"), "a Linux home path with a user name"),
+    (re.compile(r"[A-Z]:\\Users\\(?!me\b)[A-Za-z]"), "a Windows home path with a user name"),
+    (re.compile(r"\b100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}\b"), "a Tailscale address"),
+    (re.compile(r"\b(?:fd[0-9a-f]{2}|fe80):[0-9a-f:]+\b", re.I), "a private IPv6 address"),
+    (re.compile(r"\b[a-z0-9-]+\.ts\.net\b", re.I), "a host name on the home network"),
+    (re.compile(r"\b(?:gh[pousr]|github_pat|hf|sk|xox[abp])_[A-Za-z0-9_-]{10,}"), "an access token"),
+    (re.compile(r"://[^/\s:@]+:[^/\s@]+@"), "credentials in a URL"),
+    (re.compile(r"(?<![\w.+-])(?!noreply@)[\w.+-]+@(?!users\.noreply\.github\.com\b)(?![\w.-]*example\.)[\w-]+\.[\w.-]*[A-Za-z]"), "an e-mail address"),
 ]
 PROSE_SUFFIXES = (".md",)
 
@@ -92,9 +100,15 @@ def self_test():
     ok &= any("e-mail" in p for p in check_message("mail me at someone@example.com\n", "mail"))
     ok &= any("em dash" in p for p in check_message("a — b\n", "dash"))
     ok &= check_message("plain words, no trailer\n", "plain") == []
-    for sample, what in [("/Users/someone/x", "home"), ("192.168.1.9", "network"), ("a@hotmail.com", "e-mail"), ("ZENZOMBIE", "name")]:
+    for sample, what in [("/Users/someone/x", "home"), ("192.168.1.9", "network"), ("a@hotmail.com", "e-mail"), ("ZENZOMBIE", "name"),
+                         ("/home/someone/x", "linux home"), ("C:\\Users\\someone\\x", "windows home"), ("100.101.2.3", "tailscale"),
+                         ("fd7a:115c:a1e0::1", "ipv6"), ("mybox.ts.net", "tailnet"), ("ghp_abcdefghijklmnop1234", "token"),
+                         ("https://user:secret@host/x", "url credentials"), ("someone@acme.com", "any e-mail")]:
         ok &= any(p.search(sample) for p, _ in PERSONAL) or print("missed", what) or False
     ok &= not any(p.search("/Users/me/repo") or p.search('home: "/c/Users/me"') for p, _ in PERSONAL)
+    for clean in ["127.0.0.1:7788", "100.1.2.3", "the local network", "/home/me/x", "$tmp/home/heads", "C:\\Users\\me",
+                  "noreply@users.noreply.github.com", "user@lab.example.org", "<noreply@anthropic.com>", "pi-2.local"]:
+        ok &= not any(p.search(clean) for p, _ in PERSONAL) or print("false alarm", clean) or False
     print("check-hygiene self-test", "ok" if ok else "FAILED")
     return 0 if ok else 1
 

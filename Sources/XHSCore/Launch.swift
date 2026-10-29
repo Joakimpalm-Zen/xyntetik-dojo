@@ -13,7 +13,15 @@ public enum ShellWord: Equatable, Sendable {
     }
 }
 
-public enum Shell {
+public enum Shell {    /// A folder as the remote shell should see it: a leading `~` or `~/` is left to the shell to expand,
+    /// the rest is quoted; anything else is quoted whole.
+    public static func homeQuoted(_ path: String) -> String {
+        if path == "~" { return "~" }
+        if path.hasPrefix("~/") { return "~/" + quote(String(path.dropFirst(2))) }
+        return quote(path)
+    }
+
+
     /// POSIX single-quote quoting.
     public static func quote(_ s: String) -> String {
         if !s.isEmpty, s.unicodeScalars.allSatisfy({ CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@%_+=:,./-").contains($0) }) {
@@ -174,7 +182,7 @@ public enum Launcher {
             return LaunchPlan(executable: loginShell, args: ["-l", "-i", "-c", line], environment: env, directory: directory)
         }
         let assignments: [ShellWord] = ["DOJO_PANE", "DOJO_PORT", "DOJO_TOKEN"].map { .literal("\($0)=\(env[$0]!)") }
-        let cd = directory.map { "cd " + Shell.quote($0) + " && " } ?? ""
+        let cd = directory.map { "cd " + Shell.homeQuoted($0) + " && " } ?? ""
         let inner = cd + "exec " + Shell.line([.literal("env")] + assignments + [path] + harness)
         let remote: String
         switch remoteShell {
@@ -211,24 +219,34 @@ public enum Launcher {
          .literal(host), .literal(RemoteShell.probe)]
     }
 
-    /// Runs the probe; `.posix` when the host does not answer (the pane then shows the ssh error).
-    public static func probeRemoteShell(host: String) async -> RemoteShell {
+    /// Runs the probe. When the host does not answer it (an unknown host key under BatchMode, a password
+    /// prompt, no route), the shell is assumed POSIX and `note` says so, for the pane to show first.
+    public static func probeRemoteShell(host: String) async -> (shell: RemoteShell, note: String?) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
         process.arguments = probeWords(host: host).dropFirst().compactMap { if case .literal(let s) = $0 { return s } else { return nil } }
         process.standardInput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        do { try process.run() } catch { return .posix }
-        let output: String = await withCheckedContinuation { continuation in
+        let out = Pipe(), err = Pipe()
+        process.standardOutput = out
+        process.standardError = err
+        do { try process.run() } catch { return (.posix, probeNote(error: "\(error)")) }
+        let (output, errors, status): (String, String, Int32) = await withCheckedContinuation { continuation in
             DispatchQueue.global().async {
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                let data = out.fileHandleForReading.readDataToEndOfFile()
+                let errData = err.fileHandleForReading.readDataToEndOfFile()
                 process.waitUntilExit()
-                continuation.resume(returning: String(decoding: data, as: UTF8.self))
+                continuation.resume(returning: (String(decoding: data, as: UTF8.self), String(decoding: errData, as: UTF8.self), process.terminationStatus))
             }
         }
-        return RemoteShell.detect(probeOutput: output)
+        if status != 0 { return (.posix, probeNote(error: errors)) }
+        return (RemoteShell.detect(probeOutput: output), nil)
+    }
+
+    /// The line a pane shows when its host did not answer the shell probe.
+    public static func probeNote(error: String) -> String {
+        let first = error.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty } ?? "no answer"
+        return "The host did not answer the shell probe (\(first)); assuming a POSIX shell. " +
+            "For a Windows host, connect once from a terminal (ssh host) to accept its key, then add the pane again."
     }
 
     /// ssh with a reverse tunnel so the shim on the remote host reaches the bus at 127.0.0.1:port there.

@@ -131,8 +131,8 @@ import Testing
         let inner = shellArgs(shellArgs(remote.args[3], home: home)[5], home: "/remote/home")[4]
         #expect(inner.hasPrefix("cd '/srv/it'\\''s here' && exec env "))
         let windows = Launcher.plan(kind: .codex, paneName: "codex-1", host: "me@box", port: 7788, token: "t",
-                                    runnerModel: nil, loginShell: "/bin/zsh", remoteShell: .windows, directory: #"C:\Users\zen\repo"#)
-        #expect(Launcher.windowsInnerCommand(shellArgs(windows.args[3], home: home)[5])?.hasPrefix(#"cd 'C:\Users\zen\repo' && exec env "#) == true)
+                                    runnerModel: nil, loginShell: "/bin/zsh", remoteShell: .windows, directory: #"C:\Users\me\repo"#)
+        #expect(Launcher.windowsInnerCommand(shellArgs(windows.args[3], home: home)[5])?.hasPrefix(#"cd 'C:\Users\me\repo' && exec env "#) == true)
     }
 
     @Test func recentHostsRememberTheLatestFirst() throws {
@@ -217,5 +217,15 @@ import Testing
         #expect(fits[0].flags == "-c 16384 --kv q8 --mlock")
         #expect(fits[0].stem == "Nemotron-Bolt-Q4_K_M")
         #expect(RunnerFit.parse("").isEmpty)
+    }
+
+    @Test func aRemoteFolderWithATildeIsLeftToTheRemoteShell() {
+        #expect(Shell.homeQuoted("~") == "~")
+        #expect(Shell.homeQuoted("~/my repo") == "~/" + Shell.quote("my repo"))
+        #expect(Shell.homeQuoted("/srv/x") == Shell.quote("/srv/x"))
+        let plan = Launcher.plan(kind: .claude, paneName: "claude-1", host: "me@box", port: 7788, token: "t",
+                                 runnerModel: nil, loginShell: "/bin/zsh", directory: "~/repo")
+        #expect(plan.args.last?.contains("cd ~/" + Shell.quote("repo") + " && ") == true)
+        #expect(Launcher.probeNote(error: "ssh: connect to host box port 22: No route to host\n").hasPrefix("The host did not answer the shell probe (ssh: connect to host box port 22: No route to host); assuming a POSIX shell."))
     }
 }

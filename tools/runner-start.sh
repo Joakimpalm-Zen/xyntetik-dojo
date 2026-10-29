@@ -12,6 +12,8 @@
 # when its free-RAM verdict says FITS, else at context 16384 with a q8 cache. `--pick` prints the choice
 # and stops.
 set -eu
+# Numbers are compared and sorted as numbers whatever the owner's locale writes decimals with.
+export LC_ALL=C
 mode=${1:-serve}
 home="${DOJO_RUNNER_HOME:-$HOME/.dojo/runner}"
 release="https://github.com/Joakimpalm-Zen/xyntetik-runner/releases/latest"
@@ -38,11 +40,15 @@ download_runner() {
         *) note "No Runner release for $(uname -s) $(uname -m): build it from source and put runner on PATH."; exit 2 ;;
     esac
     note "Downloading Runner $1 ($asset) to $home ..."
-    curl -fL -o "$home/$asset" "$release/download/$asset"
-    curl -fsL -o "$home/SHA256SUMS" "$release/download/SHA256SUMS"
-    (cd "$home" && grep " $asset\$" SHA256SUMS | checksum) >&2
-    mv "$home/$asset" "$home/runner"
-    chmod +x "$home/runner"
+    # Into a part file, and into place only once the checksum line was found and matched.
+    curl -fL -o "$home/$asset.part" "$release/download/$asset" &&
+        curl -fsL -o "$home/SHA256SUMS" "$release/download/SHA256SUMS" &&
+        line=$(grep " $asset\$" "$home/SHA256SUMS" | tr -d '\r' | head -1) && [ -n "$line" ] &&
+        (cd "$home" && printf '%s\n' "${line% *}  $asset.part" | checksum >&2) &&
+        mv "$home/$asset.part" "$home/runner" && chmod +x "$home/runner" && return 0
+    rm -f "$home/$asset.part"
+    note "Runner $1 could not be downloaded and verified."
+    return 1
 }
 
 find_runner() {
@@ -57,7 +63,7 @@ find_runner() {
         have=$("$home/runner" --version 2>/dev/null | awk '{ print $2 }' || true)
         if [ -n "$latest" ] && [ "v$have" != "$latest" ] && [ "$have" != "$latest" ]; then
             note "Runner $have is here; $latest is the latest release."
-            download_runner "$latest"
+            download_runner "$latest" || note "Keeping Runner $have."
         fi
     else
         download_runner "${latest:-latest}"
@@ -72,9 +78,10 @@ total_ram_bytes() {
     else sysctl -n hw.memsize; fi
 }
 
-# Runner's roster, fetched fresh when the network allows, else the kept copy.
+# Runner's roster, fetched fresh when the network allows and it parses, else the kept copy.
 roster_file() {
-    if curl -fsL -o "$home/model-tiers.json.new" "$roster_url" 2>/dev/null; then
+    if curl -fsL -o "$home/model-tiers.json.new" "$roster_url" 2>/dev/null \
+        && python3 -I -c 'import json, sys; json.load(open(sys.argv[1]))["rows"]' "$home/model-tiers.json.new" 2>/dev/null; then
         mv "$home/model-tiers.json.new" "$home/model-tiers.json"
     else
         rm -f "$home/model-tiers.json.new"
@@ -84,25 +91,30 @@ roster_file() {
     say "$home/model-tiers.json"
 }
 
-# One line per candidate: id, repo, first file, total bytes. Tier 1 and 2 text models, each no larger
-# than this machine's RAM, largest first.
+# One line per candidate: id, repo, first file, total bytes, number of files. Tier 1 and 2 text models,
+# each no larger than this machine's RAM, largest first. A row missing a field is skipped.
 candidates() {
     python3 -I - "$1" "$2" <<'PY'
 import json, sys
-rows = json.load(open(sys.argv[1]))["rows"]
+rows = json.load(open(sys.argv[1])).get("rows") or []
 ram = int(sys.argv[2])
 out = []
 for r in rows:
-    if r.get("tier") not in ("tier1", "tier2") or not r.get("files"):
+    files = r.get("files") or []
+    if r.get("tier") not in ("tier1", "tier2") or not files or not r.get("id"):
         continue
     if "text" not in ((r.get("envelope") or {}).get("features") or []):
         continue
-    total = sum(f["bytes"] for f in r["files"])
-    if total > ram:
+    try:
+        total = sum(int(f["bytes"]) for f in files)
+        repo, name = files[0]["repo"], files[0]["name"]
+    except (KeyError, TypeError, ValueError):
         continue
-    out.append((total, r["id"], r["files"][0]["repo"], r["files"][0]["name"]))
-for total, rid, repo, name in sorted(out, reverse=True):
-    print(rid, repo, name, total)
+    if total > ram or "/" in name or not name.endswith(".gguf"):
+        continue
+    out.append((total, r["id"], repo, name, len(files)))
+for total, rid, repo, name, parts in sorted(out, reverse=True):
+    print(rid, repo, name, total, parts)
 PY
 }
 
@@ -123,19 +135,41 @@ list_fits() {
     half=$(awk -v b="$ram" 'BEGIN { printf "%.2f", b / 2 / 1073741824 }')
     note "Half of this machine's RAM is $half GiB; a model's resident weights must fit in that."
     : > "$home/fits.new"
-    candidates "$(roster_file)" "$ram" | while read -r id repo file _; do
+    roster=$(roster_file)
+    candidates "$roster" "$ram" > "$home/candidates" || { note "Runner's model roster could not be read."; exit 4; }
+    while read -r id repo file bytes parts; do
+        spelling="$repo:${file%.gguf}"
+        if [ "$parts" -gt 1 ]; then
+            # A split model: the head is part 1 only, so the roster's total is the resident size and no
+            # verdict is asked; the default context and cache apply if it fits.
+            resident=$(awk -v b="$bytes" 'BEGIN { printf "%.2f", b / 1073741824 }')
+            if awk -v r="$resident" -v h="$half" 'BEGIN { exit !(r <= h) }'; then
+                note "  $id: fits, $resident GiB in $parts parts, wired in"
+                printf '%s\t%s\t%s\t%s\n' "$id" "$spelling" "-c 16384 --kv q8 --mlock" "$resident" >> "$home/fits.new"
+            else
+                note "  $id: $resident GiB in $parts parts, more than half of this machine's RAM"
+            fi
+            continue
+        fi
         head="$home/heads/$(say "$repo" | tr / -)-$file"
         if [ ! -s "$head" ]; then
-            curl -fsL -r 0-16777215 -o "$head" "https://huggingface.co/$repo/resolve/main/$file" \
-                || { rm -f "$head"; note "  $id: could not fetch the file's first 16 MiB, skipped"; continue; }
+            # The first 16 MiB into a part file; it is a head only if it starts with the GGUF magic.
+            if curl -fsL -r 0-16777215 -o "$head.part" "https://huggingface.co/$repo/resolve/main/$file" \
+                && [ "$(head -c 4 "$head.part" 2>/dev/null)" = "GGUF" ]; then
+                mv "$head.part" "$head"
+            else
+                rm -f "$head.part"; note "  $id: could not fetch the file's first 16 MiB, skipped"; continue
+            fi
         fi
         report=$("$runner" -m "$head" --info fit -c 16384 2>/dev/null || true)
         resident=$(resident_gib "$report")
-        if [ -z "$resident" ] || ! awk -v r="$resident" -v h="$half" 'BEGIN { exit !(r <= h) }'; then
-            note "  $id: ${resident:-?} GiB stay resident, more than half of this machine's RAM"
+        if [ -z "$resident" ]; then
+            rm -f "$head"; note "  $id: Runner could not read its head (removed), skipped"; continue
+        fi
+        if ! awk -v r="$resident" -v h="$half" 'BEGIN { exit !(r <= h) }'; then
+            note "  $id: $resident GiB stay resident, more than half of this machine's RAM"
             continue
         fi
-        spelling="$repo:${file%.gguf}"
         flags=""
         for ctx in $contexts; do
             [ "$ctx" = 16384 ] || report=$("$runner" -m "$head" --info fit -c "$ctx" 2>/dev/null || true)
@@ -152,7 +186,7 @@ list_fits() {
             note "  $id: fits, $resident GiB resident, wired in; Runner's free-RAM verdict said it pages right now"
         fi
         printf '%s\t%s\t%s\t%s\n' "$id" "$spelling" "$flags --mlock" "$resident" >> "$home/fits.new"
-    done
+    done < "$home/candidates"
     # Largest resident weights first: what loads is the measure, not the file.
     sort -t "$(printf '\t')" -k4,4nr "$home/fits.new" > "$home/fits"
     rm -f "$home/fits.new"
