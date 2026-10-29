@@ -1,5 +1,5 @@
 // The app icon, drawn from the same numbers as the site's favicon (the Ensō in the brand gradient with
-// three coral dots) on the brand's dark surface. No image file is checked in; `make app` runs this.
+// three coral dots) on a sheet of recycled paper, like the window. No image file is checked in; `make app` runs this.
 //
 //   swift packaging/make-icon.swift build/AppIcon.iconset && iconutil -c icns build/AppIcon.iconset
 import AppKit
@@ -41,14 +41,26 @@ func draw(size: Int) -> CGImage {
     ctx.saveGState()
     ctx.setShadow(offset: CGSize(width: 0, height: -s * 0.012), blur: s * 0.03, color: rgb(0x000000, 0.35))
     ctx.addPath(shape)
-    ctx.setFillColor(rgb(0x131C1E))
+    ctx.setFillColor(rgb(0xECE7DB))
     ctx.fillPath()
     ctx.restoreGState()
     ctx.saveGState()
     ctx.addPath(shape)
     ctx.clip()
-    let bgGradient = CGGradient(colorsSpace: space, colors: [rgb(0x16222A), rgb(0x0B1213)] as CFArray, locations: [0, 1])!
-    ctx.drawLinearGradient(bgGradient, start: CGPoint(x: box.minX, y: box.minY), end: CGPoint(x: box.maxX, y: box.maxY), options: [])
+    let paper = CGGradient(colorsSpace: space, colors: [rgb(0xF1EDE3), rgb(0xE3DED1)] as CFArray, locations: [0, 1])!
+    ctx.drawLinearGradient(paper, start: CGPoint(x: box.minX, y: box.minY), end: CGPoint(x: box.maxX, y: box.maxY), options: [])
+    // The fibre flecks of recycled paper, from a fixed seed so every size gets the same sheet.
+    var state: UInt64 = 0x9E37_79B9_7F4A_7C15
+    func next() -> CGFloat {
+        state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+        return CGFloat(state >> 33) / CGFloat(1 << 31)
+    }
+    for _ in 0..<220 {
+        let x = box.minX + next() * box.width, y = box.minY + next() * box.height
+        let long = (0.8 + next() * 2.2) * s / 100, wide = (0.5 + next() * 0.6) * s / 100
+        ctx.setFillColor(rgb(0x6B5E48, 0.06 + next() * 0.1))
+        ctx.fillEllipse(in: CGRect(x: x, y: y, width: long, height: wide))
+    }
 
     // The mark fills 62% of the box, centred.
     let markSize = box.width * 0.62
@@ -68,19 +80,6 @@ func draw(size: Int) -> CGImage {
     let gradientStart = CGPoint(x: origin.x + 10 * scale, y: origin.y)
     let gradientEnd = CGPoint(x: origin.x + 90 * scale, y: origin.y)
 
-    // The glow the dark mark has on the site: a wide, faint stroke. Flat ends, so the glow never
-    // reaches into the break of the circle.
-    for (width, alpha) in [(2.0, 0.05), (1.6, 0.07), (1.3, 0.09)] {
-        ctx.saveGState()
-        ctx.addPath(arc)
-        ctx.setLineWidth(Enso.strokeWidth * scale * width)
-        ctx.setLineCap(.butt)
-        ctx.replacePathWithStrokedPath()
-        ctx.clip()
-        ctx.setAlpha(alpha)
-        ctx.drawLinearGradient(teal, start: gradientStart, end: gradientEnd, options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
-        ctx.restoreGState()
-    }
     ctx.saveGState()
     ctx.addPath(arc)
     ctx.setLineWidth(Enso.strokeWidth * scale)
