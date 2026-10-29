@@ -16,6 +16,7 @@ the sender from it.
 """
 import json
 import os
+import re
 import shutil
 import sys
 import urllib.error
@@ -235,26 +236,38 @@ def without_old_block(text):
     nl = "\r\n" if "\r\n" in text else "\n"
     # Stanzas: a header line and what follows it. Comment and blank lines directly above a header belong
     # to that header, so a comment the owner wrote for the next table is not lost with a dropped stanza.
-    stanzas, pending = [], []
+    # A line inside a multi-line string ("""...""" or \'\'\'...\'\'\') is never a header.
+    stanzas, pending, in_string = [], [], None
     for line in text.splitlines(keepends=True):
-        if line.lstrip().startswith("["):           # a table header, indented or not
+        if in_string:
+            stanzas[-1].append(line) if stanzas else pending.append(line)
+            if in_string in line:
+                in_string = None
+            continue
+        if line.lstrip().startswith("[") and not in_string:   # a table header, indented or not
             stanzas.append(pending + [line])
             pending = []
         elif line.lstrip().startswith("#") or not line.strip():
             pending.append(line)
         else:
-            # A value line: part of the current stanza, or, before any table, of the top-level stanza,
-            # which has no header and is never dropped.
             if not stanzas:
                 stanzas.append([])
             stanzas[-1].extend(pending)
             pending = []
             stanzas[-1].append(line)
+            for delimiter in ('"""', "\'\'\'"):
+                if line.count(delimiter) % 2 == 1:
+                    in_string = delimiter
     if pending:
         (stanzas[-1] if stanzas else stanzas.append([]) or stanzas[-1]).extend(pending)
 
     def header(st):
-        return next((l.strip() for l in st if l.lstrip().startswith("[")), "")
+        # The table name alone: an inline comment after it does not count.
+        for l in st:
+            m = re.match(r"\s*(\[\[?[^\]]*\]\]?)", l)
+            if m:
+                return m.group(1)
+        return ""
 
     def old_child(st):
         return header(st).startswith("[[hooks.") and header(st).endswith(".hooks]]") and OLD_SCRIPT in "".join(st)

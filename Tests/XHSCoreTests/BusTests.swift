@@ -21,6 +21,12 @@ import Testing
         return (r.status, json(r.body))
     }
 
+    /// Whether a key marks text in the composer, whatever else the case carries.
+    func isText(_ key: Bus.OwnerKey) -> Bool {
+        if case .text = key { return true }
+        return false
+    }
+
     func hook(_ token: String, _ event: String, _ extra: [String: Any] = [:]) {
         var args = extra
         args["hook_event_name"] = event
@@ -118,8 +124,8 @@ import Testing
         var clock = Date(timeIntervalSince1970: 1000)
         bus.now = { clock }
         hook(targetToken, "SessionStart")
-        bus.noteOwnerInput("codex-1", .text(1))
-        bus.noteOwnerInput("codex-1", .text(1))
+        bus.noteOwnerInput("codex-1", .text)
+        bus.noteOwnerInput("codex-1", .text)
         let (_, result) = call("send", ["pane": "codex-1", "text": "wait"])
         #expect(result["delivered"] as? Bool == false)
         #expect((result["note"] as? String)?.contains("unsent text") == true)
@@ -127,17 +133,17 @@ import Testing
         clock += 60
         bus.tick()
         #expect(targetIO.written.isEmpty)
-        bus.noteOwnerInput("codex-1", .delete)
-        bus.noteOwnerInput("codex-1", .other)
+        for _ in 0..<5 { bus.noteOwnerInput("codex-1", .other) }
         clock += 60
         bus.tick()
-        #expect(targetIO.written.isEmpty)
-        bus.noteOwnerInput("codex-1", .delete)
+        #expect(targetIO.written.isEmpty, "deleting never proves the composer empty")
+        #expect(bus.info("codex-1")?.draft == true)
+        bus.noteOwnerInput("codex-1", .clear)
         #expect(bus.info("codex-1")?.draft == false)
         clock += 60
         bus.tick()
         #expect(targetIO.typed == "[from: claude-1] wait\r")
-        bus.noteOwnerInput("codex-1", .text(1))
+        bus.noteOwnerInput("codex-1", .text)
         bus.noteOwnerInput("codex-1", .clear)
         #expect(bus.info("codex-1")?.draft == false)
     }
@@ -224,7 +230,7 @@ import Testing
         hook(targetToken, "SessionStart")
         hook(targetToken, "UserPromptSubmit")
         targetIO.screen = "Working (1s)"
-        bus.noteOwnerInput("codex-1", .text(1))
+        bus.noteOwnerInput("codex-1", .text)
         call("send", ["pane": "codex-1", "text": "hi"])
         #expect(bus.info("codex-1")?.state == .running)
         #expect(targetIO.written.isEmpty)
@@ -323,62 +329,60 @@ import Testing
         #expect(io.written.isEmpty)
     }
 
-    @Test func aPasteCountsEveryCharacterAndKeysAreReadFromBytes() {
-        #expect(OwnerInput.key(Array("a".utf8)[...]) == .text(1))
-        #expect(OwnerInput.key(Array("\u{1b}[200~hello world\u{1b}[201~".utf8)[...]) == .text(11))
-        #expect(OwnerInput.key(Array("på".utf8)[...]) == .text(2))
-        #expect(OwnerInput.key([0x0D]) == .clear)
-        #expect(OwnerInput.key([0x03]) == .clear)
-        #expect(OwnerInput.key([0x0D]) == .clear)
-        #expect(OwnerInput.key([0x7F]) == .delete)
-        #expect(OwnerInput.key(Array("\u{1b}[A".utf8)[...]) == .recall)
-        #expect(OwnerInput.key(Array("\u{1b}[C".utf8)[...]) == .other)
-        #expect(OwnerInput.key([0x1B]) == .other)
-        var clock = Date(timeIntervalSince1970: 1000)
-        bus.now = { clock }
-        hook(targetToken, "SessionStart")
-        bus.noteOwnerInput("codex-1", OwnerInput.key(Array("\u{1b}[200~three\u{1b}[201~".utf8)[...]))
-        _ = call("send", ["pane": "codex-1", "text": "wait"])
-        bus.noteOwnerInput("codex-1", .delete)
-        clock += 60; bus.tick()
-        #expect(targetIO.written.isEmpty, "one Backspace does not release a five-character paste")
-        for _ in 0..<4 { bus.noteOwnerInput("codex-1", .delete) }
-        clock += 60; bus.tick()
-        #expect(targetIO.typed == "[from: claude-1] wait\r")
+    @Test func keysAreClassifiedFromTheBytesTheTerminalSends() {
+        let text = ["a", "p\u{e5}", "\t", "\n", "\u{19}", "\u{1b}[200~hello world\u{1b}[201~", "\u{1b}[A", "\u{1b}[B", "\u{1b}[1;2B",
+                    "\u{1b}[97u", "\u{1b}[13;2u", "\u{1b}[106;5u", "\u{1b}[122;5u", "\u{1b}[97;1:2u", "\u{1b}a", "\u{1b}[57400u"]
+        let clear = ["\r", "\u{3}", "\u{1b}[13u", "\u{1b}[99;5u"]
+        let other = ["\u{7f}", "\u{8}", "\u{1b}", "\u{1b}[C", "\u{1b}[D", "\u{1b}[H", "\u{1b}[F", "\u{1b}[3~", "\u{1b}[5~", "\u{1b}[1;5D",
+                     "\u{1b}OD", "\u{1b}[127u", "\u{1b}[127;1:3u", "\u{1b}[57364u", "\u{1b}[<0;10;5M"]
+        let reply = ["\u{1b}[24;80R", "\u{1b}[?62;c", "\u{1b}[0n", "\u{1b}]11;rgb:f3f3/efef/e6e6\u{1b}\\", "\u{1b}[?1u", "\u{1b}[I", "\u{1b}P1$r\u{1b}\\"]
+        for (keys, expected) in [(text, Bus.OwnerKey.text), (clear, .clear), (other, .other), (reply, .reply)] {
+            for k in keys { #expect(OwnerInput.key(Array(k.utf8)[...]) == expected, Comment(rawValue: k.debugDescription)) }
+        }
     }
 
-    @Test func aRecalledPromptHoldsUntilEnterAndEncodedKeysCount() {
-        #expect(OwnerInput.key(Array("\u{1b}[A".utf8)[...]) == .recall)
-        #expect(OwnerInput.key(Array("\u{1b}[1;2B".utf8)[...]) == .recall)
-        // kitty keyboard protocol: 'a', Enter, Shift-Enter, Backspace, Ctrl-C, Ctrl-U, F1
-        #expect(OwnerInput.key(Array("\u{1b}[97u".utf8)[...]) == .text(1))
-        #expect(OwnerInput.key(Array("\u{1b}[13u".utf8)[...]) == .clear)
-        #expect(OwnerInput.key(Array("\u{1b}[13;2u".utf8)[...]) == .text(1))
-        #expect(OwnerInput.key(Array("\u{1b}[127u".utf8)[...]) == .delete)
-        #expect(OwnerInput.key(Array("\u{1b}[99;5u".utf8)[...]) == .clear)
-        #expect(OwnerInput.key(Array("\u{1b}[57364u".utf8)[...]) == .other)
-        // a key release is not a second press; Ctrl-U and Ctrl-J do not empty the composer; a pasted newline is a character
-        #expect(OwnerInput.key(Array("\u{1b}[127;1:3u".utf8)[...]) == .other)
-        #expect(OwnerInput.key(Array("\u{1b}[97;1:2u".utf8)[...]) == .text(1))
-        #expect(OwnerInput.key([0x15]) == .other)
-        #expect(OwnerInput.key([0x0A]) == .text(1))
-        #expect(OwnerInput.key(Array("\u{1b}[117;5u".utf8)[...]) == .other)
-        #expect(OwnerInput.key(Array("\u{1b}[200~a\nb\u{1b}[201~".utf8)[...]) == .text(3))
-        // the terminal answering the program is nobody typing
-        for reply in ["\u{1b}[24;80R", "\u{1b}[?62;c", "\u{1b}[0n", "\u{1b}]11;rgb:f3f3/efef/e6e6\u{1b}\\", "\u{1b}[?1u", "\u{1b}[I"] {
-            #expect(OwnerInput.key(Array(reply.utf8)[...]) == .reply, Comment(rawValue: reply.debugDescription))
-        }
+    @Test func theHoldStaysUntilEnterOrCtrlCConfirmsTheComposerIsEmpty() {
+        // A terminal cannot tell the app that the composer is empty: Home and three Backspaces leave
+        // "abc" in pi; undo and yank bring text back; a tab pastes as several spaces; Ctrl-J in its
+        // kitty encoding is a newline. Only Enter and Ctrl-C are confirmations.
         var clock = Date(timeIntervalSince1970: 1000)
         bus.now = { clock }
         hook(targetToken, "SessionStart")
-        bus.noteOwnerInput("codex-1", .recall)
+        for key in ["a", "b", "c"] { bus.noteOwnerInput("codex-1", OwnerInput.key(Array(key.utf8)[...])) }
+        bus.noteOwnerInput("codex-1", OwnerInput.key(Array("\u{1b}[H".utf8)[...]))   // Home
+        for _ in 0..<3 { bus.noteOwnerInput("codex-1", OwnerInput.key([0x7F])) }
         _ = call("send", ["pane": "codex-1", "text": "wait"])
-        for _ in 0..<50 { bus.noteOwnerInput("codex-1", .delete) }
         clock += 60; bus.tick()
-        #expect(targetIO.written.isEmpty, "a recalled prompt is held however many Backspaces follow")
-        bus.noteOwnerInput("codex-1", .clear)
+        #expect(targetIO.written.isEmpty, "Backspaces at the start of the line deleted nothing")
+        bus.noteOwnerInput("codex-1", OwnerInput.key([0x03]))
         clock += 60; bus.tick()
         #expect(targetIO.typed == "[from: claude-1] wait\r")
+        targetIO.written = []
+        hook(targetToken, "Stop")
+        // Ctrl-J in the kitty encoding, then one Backspace: the "a" before it is still there.
+        bus.noteOwnerInput("codex-1", OwnerInput.key(Array("a".utf8)[...]))
+        bus.noteOwnerInput("codex-1", OwnerInput.key(Array("\u{1b}[106;5u".utf8)[...]))
+        bus.noteOwnerInput("codex-1", OwnerInput.key([0x7F]))
+        _ = call("send", ["pane": "codex-1", "text": "two"])
+        clock += 60; bus.tick()
+        #expect(targetIO.written.isEmpty, "a newline typed as kitty Ctrl-J is text")
+        bus.noteOwnerInput("codex-1", OwnerInput.key([0x0D]))
+        clock += 60; bus.tick()
+        #expect(targetIO.typed == "[from: claude-1] two\r")
+        targetIO.written = []
+        hook(targetToken, "Stop")
+        // A pasted tab becomes several spaces: two Backspaces leave text.
+        bus.noteOwnerInput("codex-1", OwnerInput.key(Array("\u{1b}[200~a\tb\u{1b}[201~".utf8)[...]))
+        for _ in 0..<2 { bus.noteOwnerInput("codex-1", OwnerInput.key([0x7F])) }
+        _ = call("send", ["pane": "codex-1", "text": "three"])
+        clock += 60; bus.tick()
+        #expect(targetIO.written.isEmpty, "a pasted tab is not one character")
+        // Editing keys that may bring text back (undo, yank) keep the hold; a key release changes nothing.
+        #expect(isText(OwnerInput.key(Array("\u{1b}[122;5u".utf8)[...])), "Ctrl-Z")
+        #expect(isText(OwnerInput.key(Array("\u{1b}[121;5u".utf8)[...])), "Ctrl-Y")
+        #expect(isText(OwnerInput.key([0x19])), "raw Ctrl-Y")
+        #expect(OwnerInput.key(Array("\u{1b}[127;1:3u".utf8)[...]) == .other)
+        #expect(OwnerInput.key(Array("\u{1b}[D".utf8)[...]) == .other, "Left moves only")
     }
 
     @Test func theTerminalsOwnRepliesNeitherHoldNorCancelAnything() {

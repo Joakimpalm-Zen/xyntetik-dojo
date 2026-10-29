@@ -367,6 +367,44 @@ x = true
         "  x = true\r\n"
     )
 
+    def test_table_lines_inside_strings_and_inline_comments_on_the_header(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("dojo_mcp4", SHIM)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        tricky = (
+            '[notes]\n'
+            'example = """\n'
+            'an example that mentions\n'
+            '[mcp_servers.xhs]\n'
+            'in a string\n'
+            '"""\n'
+            "\n"
+            '# Xyntetik Harness Supervisor: bus tools and state hooks (added by "xhs install")\n'
+            '[mcp_servers.xhs]  # the old one\n'
+            'command = "sh"\n'
+            'args = ["-c", "exec python3 \\"$HOME/.xhs/xhs-mcp.py\\""]\n'
+            "\n"
+            "[[hooks.Stop]]\n"
+            "[[hooks.Stop.hooks]]\n"
+            'type = "command"\n'
+            'command = "python3 \\"$HOME/.xhs/xhs-mcp.py\\" hook"\n'
+            "timeout = 5\n"
+        )
+        with tempfile.TemporaryDirectory() as home:
+            os.makedirs(os.path.join(home, ".dojo"))
+            shutil.copy(SHIM, os.path.join(home, ".dojo", "dojo-mcp.py"))
+            os.makedirs(os.path.join(home, ".codex"))
+            config = os.path.join(home, ".codex", "config.toml")
+            with open(config, "w") as f:
+                f.write(tricky)
+            self.assertEqual(mod.install(home=home, out=io.StringIO(), windows=False), 0)
+            text = open(config).read()
+            parsed = tomllib.loads(text)
+            self.assertIn("[mcp_servers.xhs]\nin a string", parsed["notes"]["example"], "the string is untouched")
+            self.assertEqual(list(parsed["mcp_servers"]), ["dojo"], "the real old table, inline comment and all, is gone")
+            self.assertNotIn("xhs-mcp.py", text)
+
     def test_top_level_settings_before_the_old_block_survive(self):
         import importlib.util
         spec = importlib.util.spec_from_file_location("dojo_mcp3", SHIM)
