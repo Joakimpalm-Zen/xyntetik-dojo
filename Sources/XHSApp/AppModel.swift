@@ -28,6 +28,8 @@ final class AppModel: NSObject, ObservableObject {
     @Published var picking = false
     /// The Runner log is open above the bottom strip (it opens while Runner starts, closes once it serves).
     @Published var runnerLogOpen = false
+    /// Every pane's text size, changed by Cmd-plus, Cmd-minus and Cmd-0.
+    @Published private(set) var fontSize: CGFloat = TerminalPane.defaultFontSize
     /// Hosts used for remote panes, latest first (~/.dojo/hosts).
     @Published private(set) var recentHosts: [String] = []
     /// Start folders used before, latest first (~/.dojo/folders).
@@ -149,6 +151,7 @@ final class AppModel: NSObject, ObservableObject {
             return "\(name) is already open."
         }
         let view = TerminalPane(name: name)
+        if fontSize != TerminalPane.defaultFontSize { view.font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular) }
         view.onExit = { [weak self, weak view] _ in if let view { self?.bus.setState(view.paneName, .exited) } }
         // The bus holds relayed messages while the owner types in the pane and while unsent text sits there.
         view.onOwnerInput = { [weak self, weak view] key in if let view { self?.bus.noteOwnerInput(view.paneName, key) } }
@@ -205,6 +208,12 @@ final class AppModel: NSObject, ObservableObject {
         items[index].name = new
         items[index].view.paneName = new
         return nil
+    }
+
+    /// Changes every pane's text size by `step` points, within 8 and 24; nil resets to the default.
+    func zoom(_ step: CGFloat?) {
+        fontSize = step.map { min(24, max(8, fontSize + $0)) } ?? TerminalPane.defaultFontSize
+        for item in items { item.view.font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular) }
     }
 
     /// Swaps two panes' places in the grid.

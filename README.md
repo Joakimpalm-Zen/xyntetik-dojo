@@ -53,6 +53,7 @@ watch, you type, you stay in charge.
 - It looks like a Xyntetik product: the site's colours on a recycled-paper ground (the same by day and night; the system's dark mode does not darken it), the Ensō as the app icon and in the window. The terminals use the text colour and the sixteen colours of Terminal.app's Novel profile on a paper that is greyer than Novel's. A harness paints with those; the one thing the pane changes on the way to the screen is a white background (the band behind a user message in a light theme), which becomes the paper shade. Claude Code and Codex pick their theme themselves; `/theme light` in a Claude pane suits the paper. The icon is drawn by `packaging/make-icon.swift` at build time; no image file is checked in.
 - Each pane is a real terminal (SwiftTerm and a pty the pane runs itself, so every byte from the harness passes the pane on its way to the screen). The harness sees an ordinary terminal.
 - Panes draw on the GPU (SwiftTerm's Metal renderer), so a harness repainting its whole screen keeps up with a plain terminal.
+- The terminals use SF Mono at 11 points. Cmd-plus, Cmd-minus and Cmd-0 change every pane's text size while the app runs (8 to 24 points); the size is not kept between launches.
 - Each pane header shows the name, kind, host, model, queued messages and a state colour: grey starting, blue running, green idle, orange prompt, red exited.
 - The app runs a bus on `127.0.0.1:7788`. Every harness in the window can call four operations: `panes`, `send`, `read` and `state`.
 
