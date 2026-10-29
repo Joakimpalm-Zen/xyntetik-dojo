@@ -164,7 +164,7 @@ import Testing
         let plan = Launcher.plan(kind: .shell, paneName: "shell-1", host: nil, port: 7788, token: "t",
                                  runnerModel: nil, loginShell: "/bin/zsh")
         #expect(plan.executable == "/bin/sh")
-        #expect(plan.args == ["-c", "echo ok"])
+        #expect(plan.args == ["-c", "read line; echo \"ok $line\""])
     }
 
     @Test func runnerModelsResponse() {

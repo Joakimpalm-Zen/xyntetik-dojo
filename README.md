@@ -57,7 +57,7 @@ watch, you type, you stay in charge.
 make test    # swift test (64 tests), the shim's Python tests (10) and the Runner pick test
 make app     # build/XyntetikHarnessSupervisor.app, assembled by hand and ad-hoc signed
 make run     # open the app
-make smoke   # launch proof: one pane runs `echo ok`, the bus answers, the app quits (exit 0)
+make smoke   # launch proof: two panes, swapped as a drag does it; a click focuses the first and typed keys come back from its shell; the bus answers; the app quits (exit 0)
 make smoke HOST=user@box   # the same, with the pane on that host over ssh
 ```
 
