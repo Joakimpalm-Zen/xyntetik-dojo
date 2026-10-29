@@ -2,7 +2,9 @@
 # Starts Xyntetik Runner for the pi panes. Finds the runner binary (on PATH, in ~/.xhs/runner, or the
 # latest release downloaded and checked against its SHA256SUMS), picks the largest of a short list of
 # models that fits this machine (runner --info fit on the first 16 MiB of each, nothing else fetched),
-# at the largest of three context sizes it fits with, and serves it on http://127.0.0.1:8080.
+# at the largest of three context sizes it fits with, and serves it on http://127.0.0.1:8080. A model whose
+# whole file fits in the RAM free right now wins over one that fits by its hot set alone (a mixture of
+# experts whose file exceeds RAM, which Runner rates usable); that one is the fallback.
 # `--pick` prints the choice and stops.
 set -eu
 mode=${1:-serve}
@@ -52,8 +54,16 @@ hub_file() {
         | grep -o '"path":"[^"]*\.gguf"' | sed 's/"path":"//; s/"$//' | grep -i -- "$2" | head -1
 }
 
+# Does the whole file (the weights line) fit in the RAM available right now? Both in GiB; MiB counts as fitting.
+whole_file_fits() {
+    weights=$(printf '%s\n' "$1" | awk '/^ *weights/ { print ($3 == "GiB") ? $2 : 0 }')
+    avail=$(printf '%s\n' "$1" | awk '/^ *available RAM/ { print ($4 == "GiB") ? $3 : 0 }')
+    [ -n "$weights" ] && [ -n "$avail" ] && awk -v w="$weights" -v a="$avail" 'BEGIN { exit !(w <= a) }'
+}
+
 pick_model() {
     runner=$1
+    fallback=""
     mkdir -p "$home/heads"
     for c in $candidates; do
         repo=${c%%:*}
@@ -67,14 +77,26 @@ pick_model() {
                 || { rm -f "$head"; note "  $c: could not fetch the file's first 16 MiB, skipped"; continue; }
         fi
         for ctx in $contexts; do
-            verdict=$("$runner" -m "$head" --info fit -c "$ctx" 2>/dev/null | sed -n 's/^ *verdict *//p' | head -1)
+            report=$("$runner" -m "$head" --info fit -c "$ctx" 2>/dev/null || true)
+            verdict=$(printf '%s\n' "$report" | sed -n 's/^ *verdict *//p' | head -1)
             note "  $c at context $ctx: ${verdict:-no verdict}"
+            choice=""
             case $verdict in
-                "FITS WITH --kv "*) kv=${verdict#FITS WITH --kv }; say "$c -c $ctx --kv ${kv%% *}"; return ;;
-                FITS*) say "$c -c $ctx"; return ;;
+                "FITS WITH --kv "*) kv=${verdict#FITS WITH --kv }; choice="$c -c $ctx --kv ${kv%% *}" ;;
+                FITS*) choice="$c -c $ctx" ;;
             esac
+            [ -n "$choice" ] || continue
+            if whole_file_fits "$report"; then say "$choice"; return; fi
+            note "    the whole file does not fit in the RAM free right now; kept as the fallback"
+            [ -n "$fallback" ] || fallback=$choice
+            break
         done
     done
+    if [ -n "$fallback" ]; then
+        note "No model's whole file fits in the RAM free right now (quit what you are not using and try again); serving the one Runner rates usable by its hot set."
+        say "$fallback"
+        return
+    fi
     note "None of the candidate models fits this machine, even at context 4096."
     exit 3
 }
