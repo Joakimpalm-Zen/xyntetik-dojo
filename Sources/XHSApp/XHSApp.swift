@@ -17,6 +17,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         MainActor.assumeIsolated {
             NSApp.setActivationPolicy(.regular)
+            // Paper is the same colour by night: the controls stay in their light form under dark mode.
+            NSApp.appearance = NSAppearance(named: .aqua)
             for window in NSApp.windows {
                 window.backgroundColor = Theme.bg
                 window.titlebarAppearsTransparent = true

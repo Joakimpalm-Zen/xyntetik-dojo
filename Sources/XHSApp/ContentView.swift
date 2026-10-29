@@ -35,7 +35,7 @@ struct ContentView: View {
                 PaneGrid(items: model.items)
             }
         }
-        .background(Color(Theme.bg))
+        .background(Paper())
         .frame(minWidth: 640, minHeight: 400)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -103,7 +103,7 @@ struct PaneCell: View {
             .font(.callout)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(Color(Theme.surface))
+            .background(Paper(tone: Theme.surface, density: 0.6))
             TerminalHost(view: item.view)
         }
     }
@@ -214,7 +214,7 @@ struct PickerSheet: View {
         }
         .padding(20)
         .frame(width: 400)
-        .background(Color(Theme.surface))
+        .background(Paper(tone: Theme.surface, density: 0.6))
     }
 
     private func add(_ kind: HarnessKind) {
