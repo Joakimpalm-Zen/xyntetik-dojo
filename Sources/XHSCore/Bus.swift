@@ -173,6 +173,9 @@ public final class Bus {
     private func watchQuiet(_ p: Pane) {
         guard let io = p.io else { return }
         let screen = io.visibleText()
+        if p.kind == .runner, p.state == .starting, p.model.isEmpty, let fetching = Bus.servingLine(screen) {
+            setModel(p.name, "fetching \(fetching)")
+        }
         let hash = screen.hashValue
         if hash != p.screenHash || p.quietSince == nil {
             p.screenHash = hash
@@ -322,6 +325,13 @@ public final class Bus {
 
     private func error(_ status: Int, _ message: String) -> (status: Int, body: Data) {
         (status, (try? JSONSerialization.data(withJSONObject: ["error": message], options: [.sortedKeys])) ?? Data())
+    }
+
+    /// What the Runner start script says it serves ("Serving REPO[:TAG] ..."), as the file's own name.
+    static func servingLine(_ screen: String) -> String? {
+        guard let line = screen.split(separator: "\n").first(where: { $0.hasPrefix("Serving ") }),
+              let repo = line.dropFirst("Serving ".count).split(separator: " ").first else { return nil }
+        return String(repo.split(separator: "/").last ?? repo)
     }
 
     /// The last `count` lines, trailing blanks removed.

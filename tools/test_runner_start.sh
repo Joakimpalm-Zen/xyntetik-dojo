@@ -32,14 +32,14 @@ esac
 STUB
 chmod +x "$tmp/bin/runner" "$tmp/bin/curl"
 got=$(XHS_RUNNER_HOME="$tmp/home" PATH="$tmp/bin:$PATH" sh "$here/runner-start.sh" --pick 2>"$tmp/log")
-want="Serving ibm-granite/granite-4.2-8b-GGUF:Q4_K_M -c 8192 --kv q8"
+want="Serving ibm-granite/granite-4.2-8b-GGUF:Q4_K_M -c 8192 --kv q8 --mlock"
 if [ "$got" != "$want" ]; then
     echo "runner-start --pick: got '$got', want '$want'"; cat "$tmp/log"; exit 1
 fi
 grep -q "Qwen3-Coder-30B.*context 8192: FITS WITH" "$tmp/log" || { echo "the 30B verdict is missing from the log"; cat "$tmp/log"; exit 1; }
 # With little RAM free, nothing fits whole: the hot-set fit is served as the fallback.
 got=$(STUB_AVAIL=2.31 XHS_RUNNER_HOME="$tmp/home" PATH="$tmp/bin:$PATH" sh "$here/runner-start.sh" --pick 2>"$tmp/log")
-want="Serving Joakimpalm-Zen/Qwen3-Coder-30B-A3B-Instruct-keep120-Q4_K_M-GGUF -c 8192 --kv fp4"
+want="Serving Joakimpalm-Zen/Qwen3-Coder-30B-A3B-Instruct-keep120-Q4_K_M-GGUF -c 8192 --kv fp4 --mlock"
 if [ "$got" != "$want" ]; then
     echo "runner-start --pick (little RAM): got '$got', want '$want'"; cat "$tmp/log"; exit 1
 fi
