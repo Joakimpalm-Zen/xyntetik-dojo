@@ -11,6 +11,7 @@ final class AppModel: NSObject, ObservableObject {
         /// The pane's identity for the grid: the terminal view, which outlives a rename.
         var id: ObjectIdentifier { ObjectIdentifier(view) }
         var name: String
+        let kind: HarnessKind
         let view: TerminalPane
         /// The start folder as given, empty for the home folder.
         let directory: String
@@ -23,6 +24,8 @@ final class AppModel: NSObject, ObservableObject {
     @Published private(set) var revision = 0
     /// The plus button's picker is open.
     @Published var picking = false
+    /// The Runner log is open above the bottom strip (it opens while Runner starts, closes once it serves).
+    @Published var runnerLogOpen = false
     /// Hosts used for remote panes, latest first (~/.xhs/hosts).
     @Published private(set) var recentHosts: [String] = []
     /// Start folders used before, latest first (~/.xhs/folders).
@@ -164,7 +167,7 @@ final class AppModel: NSObject, ObservableObject {
         tokens[name] = token
         if !host.isEmpty { recentHosts = RecentHosts.remember(host, in: AppModel.hostsFile) }
         if !directory.isEmpty { recentFolders = RecentHosts.remember(directory, in: AppModel.foldersFile, valid: RecentHosts.isFolder) }
-        items.append(Item(name: name, view: view, directory: directory))
+        items.append(Item(name: name, kind: kind, view: view, directory: directory))
         Task { await launch(view, kind: kind, host: host, token: token, directory: directory) }
         DispatchQueue.main.async { view.window?.makeFirstResponder(view) }
         return nil
