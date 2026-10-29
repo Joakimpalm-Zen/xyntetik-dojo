@@ -8,6 +8,8 @@ public protocol PaneIO: AnyObject {
     func write(_ bytes: [UInt8])
     /// The screen and scrollback as text, one line per row.
     func screenText() -> String
+    /// The rows on screen right now, without the scrollback; what `tick` watches for change.
+    func visibleText() -> String
     /// Whether the program in the pane turned on bracketed paste.
     var bracketedPasteEnabled: Bool { get }
 }
@@ -23,9 +25,12 @@ public final class Bus {
         public let state: PaneState
         public let queued: Int
         public let model: String
+        /// The owner has unsent text in the pane; the bus holds its queue until that is sent or cleared.
+        public let draft: Bool
 
         var json: [String: Any] {
-            ["name": name, "kind": kind.rawValue, "host": host, "state": state.rawValue, "queued": queued, "model": model]
+            ["name": name, "kind": kind.rawValue, "host": host, "state": state.rawValue, "queued": queued, "model": model,
+             "draft": draft]
         }
     }
 
@@ -38,6 +43,8 @@ public final class Bus {
         var state: PaneState
         var queue: [String] = []
         var lastOwnerInput: Date?
+        /// Keystrokes of the owner's unsent text, as counted by `noteOwnerInput`.
+        var draft = 0
         /// The screen as last seen by `tick`, and since when it has looked like that.
         var screenHash = 0
         var quietSince: Date?
@@ -126,9 +133,32 @@ public final class Bus {
         onChange?()
     }
 
-    /// The owner typed into the pane; hold relayed messages for a moment.
-    public func noteOwnerInput(_ name: String) {
-        pane(named: name)?.lastOwnerInput = now()
+    /// What an owner keystroke did to the pane's composer.
+    public enum OwnerKey {
+        /// Added text (a character, a paste, a newline inside the composer).
+        case text
+        /// Removed a character.
+        case delete
+        /// Sent the composer (Enter) or emptied it (Ctrl-C, Ctrl-U).
+        case clear
+        /// Moved around or did something else.
+        case other
+    }
+
+    /// The owner typed into the pane: hold relayed messages for a moment, and while unsent text remains.
+    /// The count is a keystroke tally, so a word deleted at once can leave it high; Enter on an empty
+    /// composer resets it.
+    public func noteOwnerInput(_ name: String, _ key: OwnerKey = .text) {
+        guard let p = pane(named: name) else { return }
+        p.lastOwnerInput = now()
+        let before = p.draft
+        switch key {
+        case .text: p.draft += 1
+        case .delete: p.draft = max(0, p.draft - 1)
+        case .clear: p.draft = 0
+        case .other: break
+        }
+        if (before == 0) != (p.draft == 0) { onChange?() }
     }
 
     /// Delivers what can be delivered now and notices turns that ended without a Stop hook.
@@ -142,7 +172,7 @@ public final class Bus {
 
     private func watchQuiet(_ p: Pane) {
         guard let io = p.io else { return }
-        let screen = String(io.screenText().suffix(4000))
+        let screen = io.visibleText()
         let hash = screen.hashValue
         if hash != p.screenHash || p.quietSince == nil {
             p.screenHash = hash
@@ -151,11 +181,12 @@ public final class Bus {
         }
         let quiet = now().timeIntervalSince(p.quietSince!)
         switch p.state {
-        case .running where quiet >= idleAfterQuiet:
+        case .running where quiet >= idleAfterQuiet && p.kind != .runner:
             setState(p.name, .idle)
         case .starting where quiet >= readyAfterQuiet:
             if let fingerprint = IdleFingerprint.text(for: p.kind), screen.contains(fingerprint) {
-                setState(p.name, .idle)
+                // A server that listens is running for good; a harness showing its composer is idle.
+                setState(p.name, p.kind == .runner ? .running : .idle)
             }
         default:
             break
@@ -201,6 +232,7 @@ public final class Bus {
     private func send(from sender: Pane, _ args: [String: Any]) -> (status: Int, body: Data) {
         guard let target = target(args) else { return noPane(args) }
         guard target.state != .exited else { return error(409, "\(target.name) has exited") }
+        guard target.kind != .runner else { return error(409, "\(target.name) is the model server, not a harness") }
         let text = Delivery.sanitize(args["text"] as? String ?? "")
         guard !text.isEmpty else { return error(400, "text is empty") }
         guard text.count <= Bus.maxMessageLength else { return error(413, "text is longer than \(Bus.maxMessageLength) characters") }
@@ -209,10 +241,16 @@ public final class Bus {
         flush(target)
         let delivered = !target.queue.contains(message)
         var result: [String: Any] = ["pane": target.name, "delivered": delivered, "queued": target.queue.count, "state": target.state.rawValue]
-        if !delivered {
-            result["note"] = target.state == .prompt
-                ? "\(target.name) is at a prompt; the bus never types into a prompt. Queued until it is idle."
-                : "\(target.name) is \(target.state.rawValue); queued until it is idle."
+        if delivered {
+            if target.state == .running {
+                result["note"] = "\(target.name) is busy; the message is in its input and it reads it when its current step ends."
+            }
+        } else if target.state == .prompt {
+            result["note"] = "\(target.name) is at a prompt; the bus never types into a prompt. Queued until it is idle."
+        } else if target.draft > 0 {
+            result["note"] = "the owner has unsent text in \(target.name); queued until that is sent."
+        } else {
+            result["note"] = "\(target.name) is \(target.state.rawValue); queued until it is idle."
         }
         onChange?()
         return ok(result)
@@ -240,11 +278,14 @@ public final class Bus {
         setState(pane.name, next)
     }
 
-    /// Types the oldest queued message if the pane is idle and the owner is not typing there.
+    /// Types the whole queue as one input if the pane is idle or running and the owner is not typing
+    /// there and has nothing unsent. A running harness keeps the input in its own queue and reads it
+    /// when its current step ends, which is sooner than the end of its turn.
     private func flush(_ p: Pane) {
-        guard p.state == .idle, !p.queue.isEmpty, let io = p.io else { return }
+        guard p.state == .idle || p.state == .running, !p.queue.isEmpty, p.draft == 0, let io = p.io else { return }
         if let last = p.lastOwnerInput, now().timeIntervalSince(last) < ownerQuietInterval { return }
-        let message = p.queue.removeFirst()
+        let message = p.queue.joined(separator: "\n")
+        p.queue.removeAll()
         io.write(Delivery.bytes(message, bracketedPaste: io.bracketedPasteEnabled))
         if submitDelay > 0 {
             DispatchQueue.main.asyncAfter(deadline: .now() + submitDelay) { [weak io] in
@@ -267,7 +308,7 @@ public final class Bus {
     }
 
     private func info(_ p: Pane) -> Info {
-        Info(name: p.name, kind: p.kind, host: p.host, state: p.state, queued: p.queue.count, model: p.model)
+        Info(name: p.name, kind: p.kind, host: p.host, state: p.state, queued: p.queue.count, model: p.model, draft: p.draft > 0)
     }
 
     private func noPane(_ args: [String: Any]) -> (status: Int, body: Data) {
