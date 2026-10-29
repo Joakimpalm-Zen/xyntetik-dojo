@@ -99,7 +99,8 @@ The pi extension also registers Runner as pi's `runner` provider.
 
 ## Safety rules
 
-- **A relayed message never answers a prompt.** The bus types only into a pane that is `idle`. A pane at a permission prompt or question dialog (`prompt`), busy (`running`) or not yet started (`starting`) gets the message queued. Queued messages go out one at a time, each when the pane turns idle again.
+- **A relayed message never answers a prompt.** The bus types into a pane that is `idle` or `running`; a busy harness keeps the input in its own queue and reads it when its current step ends, sooner than the end of its turn. A pane at a permission prompt or question dialog (`prompt`) or not yet started (`starting`) gets the message queued. Whatever has queued goes out as one input, each message on its own line, the moment the pane can take it.
+- **Your unsent text is never sent for you.** The bus holds a pane's queue while you have typed into it in the last 3 seconds and while unsent text sits in its composer (the header says "unsent text here"). Enter sends your text and releases the queue; Ctrl-C or Ctrl-U clearing it does the same. The hold counts keystrokes, so a word deleted at once can leave it on; Enter on the empty composer turns it off.
 - **A fresh Codex pane is ready without a hello.** Codex sends SessionStart with the first prompt, not at startup, so the bus treats a `starting` Codex pane as idle once its screen shows the composer ("Ask Codex to do anything") and has been still for 3 seconds. A Codex startup dialog covers the composer, so the bus does not type into one. Claude and pi announce their start themselves.
 - **A lost Stop does not hold messages forever.** A turn can end without a Stop hook (Codex at its usage limit did). A `running` pane whose screen has not changed for 15 seconds is idle again; every harness animates a spinner while it works. A pane at a `prompt` is never timed out.
 - **Every message carries its sender.** The sender is taken from the calling pane's token, not from the message text; a `[from: ...]` tag a harness puts at the front of its own text is dropped, so the tag is never doubled or faked. The `[from: <name>]` tag shows in the Xyntetik green wherever a harness paints it: the pane colours it on the way from the harness to the screen.
@@ -123,7 +124,7 @@ To install the peer rule permanently as well (for sessions started outside the a
 
 Verified without a human:
 
-- `swift test`, 42 tests: the bus operations, the `[from: ...]` prefix, refusal and queueing at a prompt, one message per idle, the owner-typing hold, control-character stripping, the HTTP server over loopback, the local and ssh command lines (parsed back by a real POSIX shell), and the snippets equal to what the app passes.
+- `swift test`, 42 tests: the bus operations, the `[from: ...]` prefix, refusal and queueing at a prompt, delivery into a running pane and the queue as one input, the owner-typing and unsent-text holds, control-character stripping, the HTTP server over loopback, the local and ssh command lines (parsed back by a real POSIX shell), and the snippets equal to what the app passes.
 - Python tests, 9: the shim speaking MCP (initialize, tools/list, tools/call, errors) over pipes, the CLI, `xhs hook` and `xhs install`.
 - `make smoke`: the bundled app opens a pane running `echo ok`, sees `ok` on its screen, gets an answer from its own bus, and quits with exit code 0.
 - Probes against a stand-in bus (not part of the test suite), on this Mac:
