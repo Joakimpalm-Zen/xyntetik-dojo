@@ -363,8 +363,8 @@ x = true
         "timeout = 5\r\n"
         "\r\n"
         "# the owner's own table\r\n"
-        "[features]\r\n"
-        "x = true\r\n"
+        "  [features]\r\n"
+        "  x = true\r\n"
     )
 
     def test_top_level_settings_before_the_old_block_survive(self):
@@ -407,7 +407,8 @@ x = true
             self.assertEqual([h["hooks"][0]["command"] for h in parsed["hooks"]["Stop"] if "say done" in h["hooks"][0]["command"]], ["say done"])
             self.assertEqual(len(parsed["hooks"]["Stop"]), 2, "the owner's Stop hook and ours")
             self.assertIn("# my fast profile\r\n[profiles.fast]", text)
-            self.assertIn("# the owner's own table\r\n[features]", text)
+            self.assertIn("# the owner's own table\r\n  [features]", text)
+            self.assertEqual(parsed["features"], {"x": True}, "an indented table after the old block survives")
             self.assertIn("\r\n", text, "line endings kept")
             with open(config + ".before-dojo", "rb") as f:
                 self.assertEqual(f.read(), self.MIXED.encode())

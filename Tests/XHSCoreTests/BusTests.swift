@@ -329,6 +329,7 @@ import Testing
         #expect(OwnerInput.key(Array("på".utf8)[...]) == .text(2))
         #expect(OwnerInput.key([0x0D]) == .clear)
         #expect(OwnerInput.key([0x03]) == .clear)
+        #expect(OwnerInput.key([0x0D]) == .clear)
         #expect(OwnerInput.key([0x7F]) == .delete)
         #expect(OwnerInput.key(Array("\u{1b}[A".utf8)[...]) == .recall)
         #expect(OwnerInput.key(Array("\u{1b}[C".utf8)[...]) == .other)
@@ -355,8 +356,14 @@ import Testing
         #expect(OwnerInput.key(Array("\u{1b}[13;2u".utf8)[...]) == .text(1))
         #expect(OwnerInput.key(Array("\u{1b}[127u".utf8)[...]) == .delete)
         #expect(OwnerInput.key(Array("\u{1b}[99;5u".utf8)[...]) == .clear)
-        #expect(OwnerInput.key(Array("\u{1b}[117;5u".utf8)[...]) == .clear)
         #expect(OwnerInput.key(Array("\u{1b}[57364u".utf8)[...]) == .other)
+        // a key release is not a second press; Ctrl-U and Ctrl-J do not empty the composer; a pasted newline is a character
+        #expect(OwnerInput.key(Array("\u{1b}[127;1:3u".utf8)[...]) == .other)
+        #expect(OwnerInput.key(Array("\u{1b}[97;1:2u".utf8)[...]) == .text(1))
+        #expect(OwnerInput.key([0x15]) == .other)
+        #expect(OwnerInput.key([0x0A]) == .text(1))
+        #expect(OwnerInput.key(Array("\u{1b}[117;5u".utf8)[...]) == .other)
+        #expect(OwnerInput.key(Array("\u{1b}[200~a\nb\u{1b}[201~".utf8)[...]) == .text(3))
         // the terminal answering the program is nobody typing
         for reply in ["\u{1b}[24;80R", "\u{1b}[?62;c", "\u{1b}[0n", "\u{1b}]11;rgb:f3f3/efef/e6e6\u{1b}\\", "\u{1b}[?1u", "\u{1b}[I"] {
             #expect(OwnerInput.key(Array(reply.utf8)[...]) == .reply, Comment(rawValue: reply.debugDescription))

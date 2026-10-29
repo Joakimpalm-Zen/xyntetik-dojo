@@ -237,7 +237,7 @@ def without_old_block(text):
     # to that header, so a comment the owner wrote for the next table is not lost with a dropped stanza.
     stanzas, pending = [], []
     for line in text.splitlines(keepends=True):
-        if line.startswith("["):
+        if line.lstrip().startswith("["):           # a table header, indented or not
             stanzas.append(pending + [line])
             pending = []
         elif line.lstrip().startswith("#") or not line.strip():
@@ -254,7 +254,7 @@ def without_old_block(text):
         (stanzas[-1] if stanzas else stanzas.append([]) or stanzas[-1]).extend(pending)
 
     def header(st):
-        return next((l.strip() for l in st if l.startswith("[")), "")
+        return next((l.strip() for l in st if l.lstrip().startswith("[")), "")
 
     def old_child(st):
         return header(st).startswith("[[hooks.") and header(st).endswith(".hooks]]") and OLD_SCRIPT in "".join(st)
