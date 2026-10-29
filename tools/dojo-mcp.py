@@ -229,11 +229,8 @@ OLD_SERVER = "[mcp_servers.xhs]"
 OLD_SCRIPT = "xhs-mcp.py"
 
 
-def without_old_block(text):
-    """The config text with the old name's server table (its subtables too), marker and hook stanzas
-    removed. A [[hooks.X]] group goes only when every hook in it is the old shim's; a comment above a
-    table belongs to that table. Line endings are kept."""
-    nl = "\r\n" if "\r\n" in text else "\n"
+def toml_stanzas(text, strip_old_marker=False):
+    """Return normalized table headers and their original source lines, including the root stanza."""
     # Keep source lines intact, but recognize tables only outside strings, comments and arrays.
     # A lexical scan matters here: counting triple quotes also counts examples and inline comments.
     def scan(line, quote, depth):
@@ -295,7 +292,7 @@ def without_old_block(text):
             pending = []
             continue
         if outside and (line.lstrip().startswith("#") or not line.strip()):
-            if not line.lstrip().startswith(OLD_MARKER):
+            if not (strip_old_marker and line.lstrip().startswith(OLD_MARKER)):
                 pending.append(line)
             continue
         if not stanzas:
@@ -308,6 +305,13 @@ def without_old_block(text):
         if not stanzas:
             stanzas.append(("", []))
         stanzas[-1][1].extend(pending)
+
+    return stanzas
+
+
+def without_old_block(text):
+    """Remove the old bus tables and hook groups while preserving every other source line."""
+    stanzas = toml_stanzas(text, strip_old_marker=True)
 
     def header(st):
         return st[0]
@@ -333,7 +337,7 @@ def without_old_block(text):
             if children and all(old_child(stanzas[j]) for j in children):
                 drop.add(i)
     kept = [l for i, st in enumerate(stanzas) if i not in drop for l in st[1]]
-    return "".join(kept).rstrip("\r\n") + nl
+    return "".join(kept)
 
 
 def install(home=None, out=sys.stdout, windows=None):
@@ -366,13 +370,15 @@ def install(home=None, out=sys.stdout, windows=None):
         if os.path.exists(config):
             with open(config, encoding="utf-8", newline="") as f:
                 text = f.read()
-        if OLD_SERVER in text:
-            shutil.copy2(config, config + ".before-dojo")  # the file as it was, byte for byte
+        headers = {header for header, _ in toml_stanzas(text)}
+        if any(h == OLD_SERVER or h.startswith(OLD_SERVER[:-1] + ".") for h in headers):
+            if not os.path.exists(config + ".before-dojo"):
+                shutil.copy2(config, config + ".before-dojo")  # preserve the first backup, byte for byte
             text = without_old_block(text)
             with open(config, "w", encoding="utf-8", newline="") as f:
                 f.write(text)
             out.write("dojo install: removed the old xhs block from %s (the file as it was: %s.before-dojo)\n" % (config, config))
-        if "[mcp_servers.dojo]" in text:
+        if "[mcp_servers.dojo]" in headers:
             out.write("dojo install: %s already has [mcp_servers.dojo], left as is\n" % config)
         else:
             with open(config, "a", encoding="utf-8") as f:

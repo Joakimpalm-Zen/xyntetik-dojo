@@ -477,6 +477,28 @@ x = true
                 self.assertEqual(list(migrated["mcp_servers"]), ["dojo"])
                 self.assertEqual(migrated["projects"], expected["projects"])
 
+    def test_install_uses_real_tables_and_preserves_the_original_backup(self):
+        mod = load_shim()
+        for spelling in ("[mcp_servers.xhs]", '[mcp_servers."xhs"]'):
+            with self.subTest(spelling=spelling), tempfile.TemporaryDirectory() as home:
+                root = os.path.join(home, ".dojo")
+                os.makedirs(root)
+                shutil.copy(SHIM, os.path.join(root, "dojo-mcp.py"))
+                os.makedirs(os.path.join(home, ".codex"))
+                config = os.path.join(home, ".codex", "config.toml")
+                original = ('developer_instructions = """\n'
+                            '[mcp_servers.xhs] and [mcp_servers.dojo] are examples.\n'
+                            '"""\n' + self.OLD.replace("[mcp_servers.xhs]", spelling))
+                with open(config, "w") as f:
+                    f.write(original)
+                for _ in range(2):
+                    self.assertEqual(mod.install(home=home, out=io.StringIO(), windows=False), 0)
+                    with open(config) as f:
+                        parsed = tomllib.loads(f.read())
+                    self.assertEqual(list(parsed["mcp_servers"]), ["dojo"])
+                    with open(config + ".before-dojo") as f:
+                        self.assertEqual(f.read(), original)
+
     def test_top_level_settings_before_the_old_block_survive(self):
         import importlib.util
         spec = importlib.util.spec_from_file_location("dojo_mcp3", SHIM)
