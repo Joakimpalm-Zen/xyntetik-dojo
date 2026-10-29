@@ -243,6 +243,25 @@ import Testing
         #expect(bus.info("codex-1")?.state == .prompt)
     }
 
+    @Test func renamedPaneKeepsItsTokenAndQueueAndCarriesTheNewName() {
+        hook(senderToken, "SessionStart")
+        hook(targetToken, "SessionStart")
+        hook(targetToken, "UserPromptSubmit")
+        #expect(call("send", ["pane": "codex-1", "text": "later"]).0 == 200)
+        #expect(bus.rename("codex-1", to: "builder") == nil)
+        #expect(bus.names == ["claude-1", "builder"])
+        #expect(call("send", ["pane": "codex-1", "text": "x"]).0 == 404)
+        #expect(bus.info("builder")?.queued == 1)
+        hook(targetToken, "Stop")
+        #expect(targetIO.typed == "[from: claude-1] later\r")
+        #expect(call("send", ["pane": "claude-1", "text": "hi"], token: targetToken).0 == 200)
+        #expect(senderIO.typed == "[from: builder] hi\r")
+        #expect(bus.rename("builder", to: "Builder") == PaneNames.rule)
+        #expect(bus.rename("builder", to: "claude-1") == "claude-1 is already open.")
+        #expect(bus.rename("builder", to: "builder") == nil)
+        #expect(bus.rename("codex-1", to: "other") == "no pane named 'codex-1'")
+    }
+
     @Test func removedPaneIsGone() {
         bus.remove("codex-1")
         #expect(bus.names == ["claude-1"])

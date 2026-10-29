@@ -30,7 +30,7 @@ public final class Bus {
     }
 
     final class Pane {
-        let name: String
+        var name: String
         let kind: HarnessKind
         let host: String
         let token: String
@@ -94,6 +94,18 @@ public final class Bus {
 
     public func attach(_ io: PaneIO, to name: String) {
         pane(named: name)?.io = io
+    }
+
+    /// Gives a pane a new name. Its token, state and queue stay; from now on its messages carry the new name
+    /// and others reach it by the new name only. Returns a reason when the name is not usable.
+    public func rename(_ name: String, to new: String) -> String? {
+        guard let p = pane(named: name) else { return "no pane named '\(name)'" }
+        guard PaneNames.isValid(new) else { return PaneNames.rule }
+        if new == name { return nil }
+        guard pane(named: new) == nil else { return "\(new) is already open." }
+        p.name = new
+        onChange?()
+        return nil
     }
 
     public func remove(_ name: String) {
