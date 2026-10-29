@@ -35,7 +35,16 @@ watch, you type, you stay in charge.
 - **A local model, fitted.** A Runner pane fetches Xyntetik Runner if needed, asks it about seven models from the first 16 MiB of each, and serves the largest whose resident weights fit in half of this Mac's RAM, wired in, for the pi panes.
 - **Small on purpose.** SwiftPM only, no Xcode. One port, two text files of recent hosts and folders, nothing else kept. Apache 2.0.
 
-**On this page:** [Install](#install) · [Requirements](#requirements) · [Build and run](#build-and-run) · [First run](#first-run) · [Adding a pane](#adding-a-pane) · [Remote panes](#remote-panes) · [How harnesses talk](#how-harnesses-talk) · [Safety rules](#safety-rules) · [Not built](#not-built) · [Files](#files) · [Troubleshooting](#troubleshooting) · [License](#license)
+<p align="center">
+  <a href="https://buy.stripe.com/9B69AUddpdx9auHgP27N600"><img src="packaging/readme/support-button.svg" alt="Support this work" height="44"></a>
+</p>
+<p align="center">
+  If Dojo saves you a desk full of terminals, a contribution funds the hardware time behind the next thing.<br>
+  <a href="https://github.com/Joakimpalm-Zen/xyntetik-dojo/issues/new">Report a bug or ask for something</a> ·
+  <a href="https://github.com/Joakimpalm-Zen/xyntetik-runner">Xyntetik Runner, the engine behind the pi panes</a>
+</p>
+
+**On this page:** [Install](#install) · [Requirements](#requirements) · [Build and run](#build-and-run) · [First run](#first-run) · [Adding a pane](#adding-a-pane) · [Remote panes](#remote-panes) · [How harnesses talk](#how-harnesses-talk) · [Safety rules](#safety-rules) · [Not built](#not-built) · [Files](#files) · [Troubleshooting](#troubleshooting) · [Support the project](#support-the-project) · [License](#license)
 
 <a id="what-it-does"></a>
 ## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> What it does
@@ -243,6 +252,17 @@ To install the peer rule permanently as well (for sessions started outside the a
 - Claude Code on a Windows host draws its prompt near the top of the pane rather than at the bottom. That is how it renders on a Windows console; the pane passes the right size (`make smoke HOST=...` prints it) and resizes reach the host.
 - `dojo: not inside Xyntetik Dojo`: `DOJO_TOKEN` is set only in panes the app started.
 - A pi pane answers on its own screen instead of over the bus, and says it has no tools: the model is not calling tools. The pane launches pi with its four tools; a small model may still ignore them.
+
+<a id="support-the-project"></a>
+## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> Support the project
+
+Xyntetik Dojo is independent, built in Sweden, and **free forever under Apache 2.0**, like [Xyntetik Runner](https://github.com/Joakimpalm-Zen/xyntetik-runner). If it is useful to you, a contribution funds the hardware and measurement time behind the next thing: one-off, through Stripe, with no tiers and no gated features. [What contributions enable](https://xyntetik.com/support/)
+
+<p align="center">
+  <a href="https://buy.stripe.com/9B69AUddpdx9auHgP27N600"><img src="packaging/readme/support-button.svg" alt="Support this work" height="44"></a>
+</p>
+
+Found a problem? Open an [issue](https://github.com/Joakimpalm-Zen/xyntetik-dojo/issues/new) with the harness and its version, what the pane showed and what you expected; a bus question is best with the output of `dojo panes`.
 
 <a id="license"></a>
 ## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> License
