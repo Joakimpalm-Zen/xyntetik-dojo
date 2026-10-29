@@ -5,7 +5,7 @@ One window of terminals for agent harnesses: Claude Code, Codex and pi (on a loc
 ## What it does
 
 - One window with a grid of terminals. The plus button (or Cmd-T) adds one: pick Claude, Codex or pi. An optional host makes it remote (a Linux, Mac or Windows box over ssh). An optional folder is where the session starts (a repo root, a book folder); empty means your home folder. Hosts and folders you used before are one click away. An optional name replaces `claude-1`, `codex-1`, `pi-1`.
-- It looks like a Xyntetik product: the site's colours in light and dark, the Ensō as the app icon and in the window. The icon is drawn by `packaging/make-icon.swift` at build time; no image file is checked in.
+- It looks like a Xyntetik product: the site's colours on a recycled-paper ground (the same by day and night; the system's dark mode does not darken it), the Ensō as the app icon and in the window. The icon is drawn by `packaging/make-icon.swift` at build time; no image file is checked in.
 - Each pane is a real terminal (SwiftTerm and a pty). The harness sees an ordinary terminal.
 - Each pane header shows the name, kind, host, model, queued messages and a state colour: grey starting, blue running, green idle, orange prompt, red exited.
 - The app runs a bus on `127.0.0.1:7788`. Every harness in the window can call four operations: `panes`, `send`, `read` and `state`.
@@ -133,7 +133,7 @@ Verified without a human:
 
 Needs a human click-through:
 
-- The window: adding and closing panes, the grid, header colours, the picker, dark mode switching.
+- The window: adding and closing panes, the grid, header colours, the picker, the paper ground under dark mode.
 - Claude, Codex and pi panes messaging each other in the real window, including a message queued at a real permission prompt.
 - The first-run Codex config append and the hook-trust bypass taking effect.
 - A remote pane over SSH with the reverse tunnel, and a real Runner.
