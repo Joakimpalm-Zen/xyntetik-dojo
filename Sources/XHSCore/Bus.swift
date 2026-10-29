@@ -46,11 +46,9 @@ public final class Bus {
         var lastOwnerInput: Date?
         /// The message text is in the composer and its Enter is still to come.
         var enterPending = false
-        /// Keystrokes of the owner's unsent text, as counted by `noteOwnerInput`.
-        var draft = 0
-        /// Unsent text of unknown length (a recalled prompt); only Enter or a clear ends it.
-        var draftUnknown = false
-        var hasDraft: Bool { draft > 0 || draftUnknown }
+        /// The owner may have unsent text in the composer: set by any key that can add text, cleared only
+        /// by Enter or Ctrl-C, which send or empty the composer for certain.
+        var hasDraft = false
         /// The screen as last seen by `tick`, and since when it has looked like that.
         var screenHash = 0
         var quietSince: Date?
@@ -145,32 +143,27 @@ public final class Bus {
 
     /// What an owner keystroke did to the pane's composer.
     public enum OwnerKey: Equatable {
-        /// Added this many characters (a key, a paste, an input-method commit).
-        case text(Int)
-        /// Recalled an earlier prompt into the composer: unsent text of unknown length, there until it is sent or cleared.
-        case recall
-        /// Removed a character.
-        case delete
-        /// Sent the composer (Enter) or emptied it (Ctrl-C, Ctrl-U).
+        /// May have put text in the composer: a character, a paste, a recalled prompt, an editing chord.
+        case text
+        /// Enter: a submission in a shell; in a harness only its UserPromptSubmit hook proves one.
+        case submit
+        /// Emptied the composer (Ctrl-C): known empty.
         case clear
-        /// Moved around or did something else.
+        /// Moved or deleted: whatever was there may still be there.
         case other
         /// Not the owner at all: the terminal answering the program's query.
         case reply
     }
 
-    /// The owner typed into the pane: hold relayed messages for a moment, and while unsent text remains.
-    /// The count is a keystroke tally, so a word deleted at once can leave it high; Enter on an empty
-    /// composer resets it.
-    public func noteOwnerInput(_ name: String, _ key: OwnerKey = .text(1)) {
+    /// The owner typed into the pane: hold relayed messages for a moment, and while text may be unsent.
+    public func noteOwnerInput(_ name: String, _ key: OwnerKey = .text) {
         guard let p = pane(named: name), key != .reply else { return }
         p.lastOwnerInput = now()
         let before = p.hasDraft
         switch key {
-        case .text(let n): p.draft += max(1, n)
-        case .recall: p.draftUnknown = true
-        case .delete: p.draft = max(0, p.draft - 1)
-        case .clear: p.draft = 0; p.draftUnknown = false
+        case .text: p.hasDraft = true
+        case .clear: p.hasDraft = false
+        case .submit: if p.kind == .shell || p.kind == .runner { p.hasDraft = false }   // no hooks there: Enter is it
         case .other, .reply: break
         }
         if before != p.hasDraft { onChange?() }
@@ -289,6 +282,11 @@ public final class Bus {
             onChange?()
         }
         pane.quietSince = nil
+        // The harness took the composer as a prompt: it is empty now, whatever the keys suggested.
+        if event["hook_event_name"] as? String == "UserPromptSubmit", pane.hasDraft {
+            pane.hasDraft = false
+            onChange?()
+        }
         guard pane.state != .exited,
               let name = event["hook_event_name"] as? String,
               let next = HookMapping.next(event: name, notificationType: event["notification_type"] as? String, current: pane.state)
