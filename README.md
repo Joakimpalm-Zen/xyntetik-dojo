@@ -141,7 +141,7 @@ xhs state pi-1
 |---|---|---|---|
 | Claude Code | `--mcp-config` at launch | hooks via `--settings` at launch: SessionStart and PostModelSwitch as command hooks (`xhs hook`; Claude Code runs no http hooks for SessionStart; PostModelSwitch carries the new model for the header), http hooks for UserPromptSubmit, PermissionRequest, PostToolUse, Stop, Notification (`permission_prompt`, `idle_prompt`, `agent_needs_input`, `elicitation_dialog`) | `--append-system-prompt` |
 | Codex | `[mcp_servers.xhs]` in `~/.codex/config.toml` | command hooks in the same file (`xhs hook`): SessionStart, UserPromptSubmit, PermissionRequest, PostToolUse, Stop, Interrupt | `-c developer_instructions` |
-| pi | the `xhs` command (pi has no MCP by design; it runs `xhs` with its bash tool). The pane passes `--tools read,bash,edit,write`, so a `defaultTools` setting of yours cannot leave it without bash | the `xhs-pi.ts` extension: session_start, agent_start, agent_settled, ui_prompt_start, ui_prompt_end | `--append-system-prompt` |
+| pi | the `xhs` command (pi has no MCP by design; it runs `xhs` with its bash tool). The pane passes `--tools read,bash,edit,write`, so a `defaultTools` setting of yours cannot leave it without bash, and `--tui-mode fullscreen`, so the composer sits at the bottom of the pane whatever your `tuiMode` setting says | the `xhs-pi.ts` extension: session_start, agent_start, agent_settled, ui_prompt_start, ui_prompt_end | `--append-system-prompt` |
 
 The pi extension also registers Runner as pi's `runner` provider.
 
