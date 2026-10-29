@@ -330,7 +330,7 @@ import Testing
         #expect(OwnerInput.key([0x0D]) == .clear)
         #expect(OwnerInput.key([0x03]) == .clear)
         #expect(OwnerInput.key([0x7F]) == .delete)
-        #expect(OwnerInput.key(Array("\u{1b}[A".utf8)[...]) == .text(1))
+        #expect(OwnerInput.key(Array("\u{1b}[A".utf8)[...]) == .recall)
         #expect(OwnerInput.key(Array("\u{1b}[C".utf8)[...]) == .other)
         #expect(OwnerInput.key([0x1B]) == .other)
         var clock = Date(timeIntervalSince1970: 1000)
@@ -344,6 +344,49 @@ import Testing
         for _ in 0..<4 { bus.noteOwnerInput("codex-1", .delete) }
         clock += 60; bus.tick()
         #expect(targetIO.typed == "[from: claude-1] wait\r")
+    }
+
+    @Test func aRecalledPromptHoldsUntilEnterAndEncodedKeysCount() {
+        #expect(OwnerInput.key(Array("\u{1b}[A".utf8)[...]) == .recall)
+        #expect(OwnerInput.key(Array("\u{1b}[1;2B".utf8)[...]) == .recall)
+        // kitty keyboard protocol: 'a', Enter, Shift-Enter, Backspace, Ctrl-C, Ctrl-U, F1
+        #expect(OwnerInput.key(Array("\u{1b}[97u".utf8)[...]) == .text(1))
+        #expect(OwnerInput.key(Array("\u{1b}[13u".utf8)[...]) == .clear)
+        #expect(OwnerInput.key(Array("\u{1b}[13;2u".utf8)[...]) == .text(1))
+        #expect(OwnerInput.key(Array("\u{1b}[127u".utf8)[...]) == .delete)
+        #expect(OwnerInput.key(Array("\u{1b}[99;5u".utf8)[...]) == .clear)
+        #expect(OwnerInput.key(Array("\u{1b}[117;5u".utf8)[...]) == .clear)
+        #expect(OwnerInput.key(Array("\u{1b}[57364u".utf8)[...]) == .other)
+        // the terminal answering the program is nobody typing
+        for reply in ["\u{1b}[24;80R", "\u{1b}[?62;c", "\u{1b}[0n", "\u{1b}]11;rgb:f3f3/efef/e6e6\u{1b}\\", "\u{1b}[?1u", "\u{1b}[I"] {
+            #expect(OwnerInput.key(Array(reply.utf8)[...]) == .reply, Comment(rawValue: reply.debugDescription))
+        }
+        var clock = Date(timeIntervalSince1970: 1000)
+        bus.now = { clock }
+        hook(targetToken, "SessionStart")
+        bus.noteOwnerInput("codex-1", .recall)
+        _ = call("send", ["pane": "codex-1", "text": "wait"])
+        for _ in 0..<50 { bus.noteOwnerInput("codex-1", .delete) }
+        clock += 60; bus.tick()
+        #expect(targetIO.written.isEmpty, "a recalled prompt is held however many Backspaces follow")
+        bus.noteOwnerInput("codex-1", .clear)
+        clock += 60; bus.tick()
+        #expect(targetIO.typed == "[from: claude-1] wait\r")
+    }
+
+    @Test func theTerminalsOwnRepliesNeitherHoldNorCancelAnything() {
+        var fire: (() -> Void)?
+        bus.schedule = { _, work in fire = work }
+        bus.submitDelay = 0.15
+        var clock = Date(timeIntervalSince1970: 1000)
+        bus.now = { clock }
+        hook(targetToken, "SessionStart")
+        _ = call("send", ["pane": "codex-1", "text": "one"])
+        clock += 0.1
+        bus.noteOwnerInput("codex-1", .reply)   // a cursor-position answer during the delay
+        fire?()
+        #expect(targetIO.typed == "[from: claude-1] one\r")
+        #expect(bus.info("codex-1")?.draft == false)
     }
 
     @Test func enterWaitsForTheDelayAndIsDroppedIfAPromptOpensMeanwhile() {

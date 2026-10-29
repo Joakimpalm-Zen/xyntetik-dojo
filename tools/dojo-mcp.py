@@ -242,12 +242,14 @@ def without_old_block(text):
             pending = []
         elif line.lstrip().startswith("#") or not line.strip():
             pending.append(line)
-        elif stanzas:
+        else:
+            # A value line: part of the current stanza, or, before any table, of the top-level stanza,
+            # which has no header and is never dropped.
+            if not stanzas:
+                stanzas.append([])
             stanzas[-1].extend(pending)
             pending = []
             stanzas[-1].append(line)
-        else:
-            pending.append(line)
     if pending:
         (stanzas[-1] if stanzas else stanzas.append([]) or stanzas[-1]).extend(pending)
 

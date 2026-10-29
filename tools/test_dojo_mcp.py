@@ -367,6 +367,25 @@ x = true
         "x = true\r\n"
     )
 
+    def test_top_level_settings_before_the_old_block_survive(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("dojo_mcp3", SHIM)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        top = 'model = "gpt-x"\napproval_policy = "never"\n\n' + self.OLD[self.OLD.index("# Xyntetik"):]
+        with tempfile.TemporaryDirectory() as home:
+            os.makedirs(os.path.join(home, ".dojo"))
+            shutil.copy(SHIM, os.path.join(home, ".dojo", "dojo-mcp.py"))
+            os.makedirs(os.path.join(home, ".codex"))
+            config = os.path.join(home, ".codex", "config.toml")
+            with open(config, "w") as f:
+                f.write(top)
+            self.assertEqual(mod.install(home=home, out=io.StringIO(), windows=False), 0)
+            parsed = tomllib.loads(open(config).read())
+            self.assertEqual(parsed["model"], "gpt-x")
+            self.assertEqual(parsed["approval_policy"], "never")
+            self.assertEqual(list(parsed["mcp_servers"]), ["dojo"])
+
     def test_a_mixed_hook_group_subtables_comments_and_line_endings_survive(self):
         import importlib.util
         spec = importlib.util.spec_from_file_location("dojo_mcp2", SHIM)

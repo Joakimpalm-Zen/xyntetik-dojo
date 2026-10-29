@@ -48,6 +48,9 @@ public final class Bus {
         var enterPending = false
         /// Keystrokes of the owner's unsent text, as counted by `noteOwnerInput`.
         var draft = 0
+        /// Unsent text of unknown length (a recalled prompt); only Enter or a clear ends it.
+        var draftUnknown = false
+        var hasDraft: Bool { draft > 0 || draftUnknown }
         /// The screen as last seen by `tick`, and since when it has looked like that.
         var screenHash = 0
         var quietSince: Date?
@@ -142,30 +145,35 @@ public final class Bus {
 
     /// What an owner keystroke did to the pane's composer.
     public enum OwnerKey: Equatable {
-        /// Added this many characters (a key, a paste, an input-method commit, a recalled prompt).
+        /// Added this many characters (a key, a paste, an input-method commit).
         case text(Int)
+        /// Recalled an earlier prompt into the composer: unsent text of unknown length, there until it is sent or cleared.
+        case recall
         /// Removed a character.
         case delete
         /// Sent the composer (Enter) or emptied it (Ctrl-C, Ctrl-U).
         case clear
         /// Moved around or did something else.
         case other
+        /// Not the owner at all: the terminal answering the program's query.
+        case reply
     }
 
     /// The owner typed into the pane: hold relayed messages for a moment, and while unsent text remains.
     /// The count is a keystroke tally, so a word deleted at once can leave it high; Enter on an empty
     /// composer resets it.
     public func noteOwnerInput(_ name: String, _ key: OwnerKey = .text(1)) {
-        guard let p = pane(named: name) else { return }
+        guard let p = pane(named: name), key != .reply else { return }
         p.lastOwnerInput = now()
-        let before = p.draft
+        let before = p.hasDraft
         switch key {
         case .text(let n): p.draft += max(1, n)
+        case .recall: p.draftUnknown = true
         case .delete: p.draft = max(0, p.draft - 1)
-        case .clear: p.draft = 0
-        case .other: break
+        case .clear: p.draft = 0; p.draftUnknown = false
+        case .other, .reply: break
         }
-        if (before == 0) != (p.draft == 0) { onChange?() }
+        if before != p.hasDraft { onChange?() }
     }
 
     /// Delivers what can be delivered now and notices turns that ended without a Stop hook.
@@ -257,7 +265,7 @@ public final class Bus {
             }
         } else if target.state == .prompt {
             result["note"] = "\(target.name) is at a prompt; the bus never types into a prompt. Queued until it is idle."
-        } else if target.draft > 0 {
+        } else if target.hasDraft {
             result["note"] = "the owner has unsent text in \(target.name); queued until that is sent."
         } else {
             result["note"] = "\(target.name) is \(target.state.rawValue); queued until it is idle."
@@ -292,7 +300,7 @@ public final class Bus {
     /// there and has nothing unsent. A running harness keeps the input in its own queue and reads it
     /// when its current step ends, which is sooner than the end of its turn.
     private func flush(_ p: Pane) {
-        guard p.state == .idle || p.state == .running, !p.queue.isEmpty, p.draft == 0, !p.enterPending, let io = p.io else { return }
+        guard p.state == .idle || p.state == .running, !p.queue.isEmpty, !p.hasDraft, !p.enterPending, let io = p.io else { return }
         if let last = p.lastOwnerInput, now().timeIntervalSince(last) < ownerQuietInterval { return }
         let message = p.queue.map { Delivery.line(from: $0.sender.name, text: $0.text) }.joined(separator: "\n")
         p.queue.removeAll()
@@ -307,7 +315,7 @@ public final class Bus {
                 guard let self, let p else { return }
                 p.enterPending = false
                 let ownerTyped = p.lastOwnerInput.map { $0 > pasted } ?? false
-                if p.state == .idle || p.state == .running, p.draft == 0, !ownerTyped { io?.write(Delivery.enter) }
+                if p.state == .idle || p.state == .running, !p.hasDraft, !ownerTyped { io?.write(Delivery.enter) }
                 self.flush(p)
             }
         } else {
@@ -325,7 +333,7 @@ public final class Bus {
     }
 
     private func info(_ p: Pane) -> Info {
-        Info(name: p.name, kind: p.kind, host: p.host, state: p.state, queued: p.queue.count, model: p.model, draft: p.draft > 0)
+        Info(name: p.name, kind: p.kind, host: p.host, state: p.state, queued: p.queue.count, model: p.model, draft: p.hasDraft)
     }
 
     private func noPane(_ args: [String: Any]) -> (status: Int, body: Data) {
