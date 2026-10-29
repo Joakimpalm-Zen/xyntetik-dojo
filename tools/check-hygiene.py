@@ -64,7 +64,8 @@ def check_range(rng):
 def check_files():
     problems = []
     for path in git("ls-files").split("\n"):
-        if not path:
+        # The checker's own patterns and self-test samples are not findings.
+        if not path or path == "tools/check-hygiene.py":
             continue
         try:
             text = open(path, encoding="utf-8").read()

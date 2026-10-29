@@ -5,8 +5,14 @@ import PackageDescription
 // With the Command Line Tools, a rebuild of the test target sometimes runs without the
 // swift-testing macro plugin path ("plugin for module 'TestingMacros' not found").
 // Passing the path explicitly makes every test build find it.
+// The path belongs to the Command Line Tools only: with an Xcode on the machine (a CI runner, say) the
+// active toolchain is Xcode's, whose plugin server cannot load the Command Line Tools' plugin.
 let cltTestingPlugins = "/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing"
-let testSettings: [SwiftSetting] = FileManager.default.fileExists(atPath: cltTestingPlugins)
+let developerDir = ProcessInfo.processInfo.environment["DEVELOPER_DIR"] ?? ""
+let xcodeInstalled = ((try? FileManager.default.contentsOfDirectory(atPath: "/Applications")) ?? [])
+    .contains { $0.hasPrefix("Xcode") && $0.hasSuffix(".app") }
+let usingCLT = developerDir.contains("CommandLineTools") || (developerDir.isEmpty && !xcodeInstalled)
+let testSettings: [SwiftSetting] = usingCLT && FileManager.default.fileExists(atPath: cltTestingPlugins)
     ? [.unsafeFlags(["-plugin-path", cltTestingPlugins])]
     : []
 
