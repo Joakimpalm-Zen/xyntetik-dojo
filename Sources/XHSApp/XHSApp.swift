@@ -10,6 +10,14 @@ struct XHSApp: App {
         Window("Xyntetik Dojo", id: "main") {
             ContentView().environmentObject(model)
         }
+        .commands {
+            // Text size for every pane, as in any terminal app.
+            CommandGroup(after: .toolbar) {
+                Button("Bigger Text") { model.zoom(1) }.keyboardShortcut("+", modifiers: .command)
+                Button("Smaller Text") { model.zoom(-1) }.keyboardShortcut("-", modifiers: .command)
+                Button("Default Text Size") { model.zoom(nil) }.keyboardShortcut("0", modifiers: .command)
+            }
+        }
     }
 }
 

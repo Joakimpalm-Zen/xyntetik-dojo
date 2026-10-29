@@ -9,6 +9,10 @@ import XHSCore
 /// never calls that method on a subclass.
 @MainActor
 final class TerminalPane: TerminalView, PaneIO {
+    /// SF Mono at this size: a shade smaller than Terminal.app's Courier 10.5 reads. Cmd-plus, Cmd-minus
+    /// and Cmd-0 change every pane's size while the app runs; the size is not kept between launches.
+    static let defaultFontSize: CGFloat = 11
+
     /// The pane's name on the bus; a rename changes it.
     var paneName: String
     /// Called on the main thread when the process ends, with its exit code.
@@ -20,7 +24,7 @@ final class TerminalPane: TerminalView, PaneIO {
     init(name: String) {
         paneName = name
         super.init(frame: NSRect(x: 0, y: 0, width: 640, height: 400))
-        font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        font = NSFont.monospacedSystemFont(ofSize: TerminalPane.defaultFontSize, weight: .regular)
         applyTheme()
         terminalDelegate = self
         process = LocalProcess(delegate: self, dispatchQueue: .main)
