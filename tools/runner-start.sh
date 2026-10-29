@@ -44,7 +44,7 @@ download_runner() {
     curl -fL -o "$home/$asset.part" "$release/download/$asset" &&
         curl -fsL -o "$home/SHA256SUMS" "$release/download/SHA256SUMS" &&
         line=$(grep " $asset\$" "$home/SHA256SUMS" | tr -d '\r' | head -1) && [ -n "$line" ] &&
-        (cd "$home" && printf '%s\n' "${line% *}  $asset.part" | checksum >&2) &&
+        (cd "$home" && printf '%s  %s\n' "$(printf '%s' "$line" | awk '{ print $1 }')" "$asset.part" | checksum >&2) &&
         mv "$home/$asset.part" "$home/runner" && chmod +x "$home/runner" && return 0
     rm -f "$home/$asset.part"
     note "Runner $1 could not be downloaded and verified."
@@ -53,6 +53,12 @@ download_runner() {
 
 find_runner() {
     latest=$(latest_tag || true)
+    # A runner of yours on PATH is used as it is. One inside ~/.dojo/bin is not yours: it is a stop-gap
+    # copy and would shadow every release, so it is removed and the release is used.
+    if [ -x "$HOME/.dojo/bin/runner" ]; then
+        note "Removing the stop-gap runner in ~/.dojo/bin; releases are followed from here on."
+        rm -f "$HOME/.dojo/bin/runner"
+    fi
     if command -v runner >/dev/null 2>&1; then
         bin=$(command -v runner)
         note "Runner $("$bin" --version 2>/dev/null | head -1 || true) at $bin (yours; the latest release is ${latest:-unknown})"

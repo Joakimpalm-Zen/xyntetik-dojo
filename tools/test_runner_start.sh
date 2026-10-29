@@ -32,6 +32,10 @@ out=""; url=""; head=0
 while [ $# -gt 0 ]; do case $1 in -o) out=$2; shift ;; -I|-sI) head=1 ;; http*) url=$1 ;; esac; shift; done
 case $url in
     *releases/latest) [ $head = 1 ] && printf 'HTTP/2 302\r\nlocation: https://github.com/Joakimpalm-Zen/xyntetik-runner/releases/tag/v9.9.9\r\n\r\n' ;;
+    *releases/latest/download/runner-*) cp "$STUB_RUNNER" "$out" ;;
+    *releases/latest/download/SHA256SUMS)
+        hash=$( (command -v sha256sum >/dev/null && sha256sum "$STUB_RUNNER" || shasum -a 256 "$STUB_RUNNER") | awk '{ print $1 }')
+        printf '%s  runner-linux-x86_64\n%s  runner-macos-arm64\n%s *runner-windows-x86_64.exe\n' "$hash" "$hash" "$hash" > "$out" ;;
     *model-tiers.json) cat > "$out" <<'JSON'
 {"rows": [
  {"id": "coder-30b", "tier": "tier2", "envelope": {"features": ["text"]}, "files": [{"repo": "Joakimpalm-Zen/Qwen3-Coder-30B-GGUF", "name": "Qwen3-Coder-30B-Q4_K_M.gguf", "bytes": 17000000000}]},
@@ -90,6 +94,15 @@ got=$(STUB_TOTAL_BYTES=34359738368 STUB_AVAIL=20.00 run)
 [ "$got" = "Serving x/Split-GGUF:Split-00001-of-00002 -c 16384 --kv q8 --mlock" ] || fail "32 GiB pick: got '$got'"
 grep -q "bad-head: could not fetch the file's first 16 MiB, skipped" "$tmp/log" || fail "a head that is not GGUF must be skipped"
 [ ! -e "$tmp/home/heads/x-BadRepo-Bad.gguf" ] || fail "a head that is not GGUF must not be kept"
+
+# No runner on PATH: the release is downloaded, its checksum line found and matched, the binary used.
+mkdir -p "$tmp/nobin"; cp "$tmp/bin/curl" "$tmp/bin/sysctl" "$tmp/nobin/"
+got=$(STUB_RUNNER="$tmp/bin/runner" STUB_AVAIL=0.85 DOJO_RUNNER_HOME="$tmp/home" PATH="$tmp/nobin:/usr/bin:/bin" sh "$here/runner-start.sh" --pick 2>"$tmp/log")
+[ "$got" = "Serving nvidia/NVIDIA-Nemotron-3.5-Bolt-E4B-4GB:Nemotron-3.5-Bolt-E4B-Q4_K_M -c 16384 --kv q8 --mlock" ] || fail "download path: got '$got'"
+grep -q "Downloading Runner v9.9.9" "$tmp/log" || fail "the release was not downloaded"
+grep -q "could not be downloaded" "$tmp/log" && fail "the checksum must match a line of the form 'hash  name'"
+[ -x "$tmp/home/runner" ] || fail "the downloaded runner is not in place"
+# A stop-gap runner in the Dojo folder is removed, never used.
 
 # Offline: the kept roster copy serves.
 mv "$tmp/bin/curl" "$tmp/bin/curl.off"; printf '#!/bin/sh\nexit 6\n' > "$tmp/bin/curl"; chmod +x "$tmp/bin/curl"
