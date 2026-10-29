@@ -35,9 +35,9 @@ watch, you type, you stay in charge.
 <a id="what-it-does"></a>
 ## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> What it does
 
-- One window with a grid of terminals. The plus button (or Cmd-T) adds one: pick Claude, Codex or pi. An optional host makes it remote (a Linux, Mac or Windows box over ssh). An optional folder is where the session starts (a repo root, a book folder); empty means your home folder. Hosts and folders you used before are one click away. An optional name replaces `claude-1`, `codex-1`, `pi-1`; double-click a name in a pane header (or right-click it) to rename the pane later. The harness keeps its token, so its messages carry the new name and others reach it by the new name from then on; it was told its old name at launch, so it may still introduce itself by that.
+- One window with a grid of terminals. The plus button (or Cmd-T) adds one: pick Claude, Codex or pi. An optional host makes it remote (a Linux, Mac or Windows box over ssh). An optional folder is where the session starts (a repo root, a book folder); empty means your home folder. Hosts and folders you used before are one click away. An optional name replaces `claude-1`, `codex-1`, `pi-1`; double-click a name in a pane header (or right-click it) to rename the pane later. Drag a pane's header onto another pane and the two swap places. The harness keeps its token, so its messages carry the new name and others reach it by the new name from then on; it was told its old name at launch, so it may still introduce itself by that.
 - It looks like a Xyntetik product: the site's colours on a recycled-paper ground (the same by day and night; the system's dark mode does not darken it), the Ensō as the app icon and in the window. A harness paints its own colours; the one thing the pane changes on the way to the screen is a white background (the band behind a user message in a light theme), which becomes the paper shade. Claude Code and Codex pick their theme themselves; `/theme light` in a Claude pane suits the paper. The icon is drawn by `packaging/make-icon.swift` at build time; no image file is checked in.
-- Each pane is a real terminal (SwiftTerm and a pty). The harness sees an ordinary terminal.
+- Each pane is a real terminal (SwiftTerm and a pty the pane runs itself, so every byte from the harness passes the pane on its way to the screen). The harness sees an ordinary terminal.
 - Panes draw on the GPU (SwiftTerm's Metal renderer), so a harness repainting its whole screen keeps up with a plain terminal.
 - Each pane header shows the name, kind, host, model, queued messages and a state colour: grey starting, blue running, green idle, orange prompt, red exited.
 - The app runs a bus on `127.0.0.1:7788`. Every harness in the window can call four operations: `panes`, `send`, `read` and `state`.
@@ -186,7 +186,7 @@ Needs a human click-through:
 ## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> Not built
 
 - Remembering the layout: panes are not restored on restart, because restarting harnesses unasked is worse than an empty window.
-- Resizing, reordering or tabbing panes.
+- Resizing or tabbing panes (dragging a header onto another pane swaps the two).
 - Attaching to a session that was started outside the app (in a web terminal or on another screen). A pane is a session the app starts.
 - A full activity heuristic for state: hooks carry the state, and the only heuristic is the 15 second still-screen rule that recovers a `running` pane from a lost Stop.
 - A settings window or preferences file.
