@@ -289,7 +289,10 @@ public final class Bus {
         // The harness took the composer (as a prompt, or as a local command or shell line that pi reports
         // as UserInputSubmitted): it is empty now, unless keys came after the Enter that sent it, in which
         // case the hook is for an earlier prompt and a newer draft is in the composer.
-        if let name = event["hook_event_name"] as? String, name == "UserPromptSubmit" || name == "UserInputSubmitted",
+        // pi reports the editor submission separately: agent_start can arrive later, or start a
+        // queued turn, while a new draft is already present.
+        if let name = event["hook_event_name"] as? String,
+           name == "UserInputSubmitted" || (name == "UserPromptSubmit" && pane.kind != .pi),
            pane.hasDraft, !pane.typedSinceSubmit {
             pane.hasDraft = false
             onChange?()

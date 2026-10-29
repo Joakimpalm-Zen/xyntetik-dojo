@@ -28,6 +28,40 @@ function report(event: string, extra: Record<string, unknown> = {}): void {
 }
 
 export default async function (pi: any) {
+  let installedEditorFactory: any;
+
+  async function observeSubmissions(ctx: any) {
+    if (!ctx?.hasUI || !ctx.ui?.setEditorComponent) return;
+    const previous = ctx.ui.getEditorComponent?.();
+    if (installedEditorFactory && previous === installedEditorFactory) return;
+    let create = previous;
+    if (!create) {
+      const { CustomEditor } = await import("@earendil-works/pi-coding-agent");
+      create = (tui: any, theme: any, keys: any) => new CustomEditor(tui, theme, keys);
+    }
+    installedEditorFactory = (tui: any, theme: any, keys: any) => {
+      const editor = create(tui, theme, keys);
+      let submit = editor.onSubmit;
+      // Pi installs its callback after the factory returns. Observe that callback without replacing
+      // its command dispatch or an existing custom editor. Autocomplete does not call onSubmit.
+      const observed = (text: string) => {
+        try {
+          return submit?.call(editor, text);
+        } finally {
+          // Startup may restore the text instead of accepting it.
+          if (editor.getText() === "") report("UserInputSubmitted");
+        }
+      };
+      Object.defineProperty(editor, "onSubmit", {
+        configurable: true,
+        get: () => observed,
+        set: (handler) => { submit = handler; },
+      });
+      return editor;
+    };
+    ctx.ui.setEditorComponent(installedEditorFactory);
+  }
+
   const models = await runnerModels();
   if (models.length > 0) {
     pi.registerProvider("runner", {
@@ -47,16 +81,13 @@ export default async function (pi: any) {
     });
   }
   pi.on("session_start", async (_event: any, ctx: any) => {
+    await observeSubmissions(ctx);
     report("SessionStart", { model: ctx?.model?.id ?? "" });
     if (models.length === 0) {
       ctx?.ui?.notify?.(`Runner is not answering at ${RUNNER_URL}. Start it with: runner -m model.gguf --serve`, "warning");
     }
   });
   pi.on("agent_start", async () => report("UserPromptSubmit"));
-  // Any input the owner submits empties the editor, a slash command or a ! shell line as much as a
-  // prompt; the bus ends its unsent-text hold on this, a model turn or not.
-  pi.on("input", async (event: any) => { if (event?.source !== "extension") report("UserInputSubmitted"); });
-  pi.on("user_bash", async () => report("UserInputSubmitted"));
   pi.on("agent_settled", async () => report("Stop"));
   pi.on("ui_prompt_start", async () => report("PermissionRequest"));
   pi.on("ui_prompt_end", async () => report("PostToolUse"));

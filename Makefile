@@ -14,6 +14,7 @@ build:
 test:
 	swift test
 	python3 -m unittest discover -s tools -p 'test_*.py'
+	node --test tools/test_dojo_pi.mjs
 	sh tools/test_runner_start.sh
 	python3 tools/check-hygiene.py --self-test
 	python3 tools/check-hygiene.py --files
