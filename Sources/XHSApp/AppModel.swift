@@ -240,7 +240,9 @@ final class AppModel: NSObject, ObservableObject {
 
     // MARK: bus server
 
-    private func startServer() {
+    /// Listens on the bus port. A copy that was just quit may still hold the port for a moment (make run
+    /// right after a quit), so a refused port is tried again for five seconds before it is a problem.
+    private func startServer(attempt: Int = 0) {
         do {
             let bus = self.bus
             let server = try BusServer(port: UInt16(port)) { path, token, body in
@@ -249,8 +251,12 @@ final class AppModel: NSObject, ObservableObject {
             self.server = server
             let port = self.port
             server.start { [weak self] error in
-                if let error {
-                    self?.problem = "The bus could not listen on 127.0.0.1:\(port) (\(error)). Is another copy running?"
+                guard let self, let error else { return }
+                self.server = nil
+                if attempt < 10 {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.startServer(attempt: attempt + 1) }
+                } else {
+                    self.problem = "The bus could not listen on 127.0.0.1:\(port) (\(error)). Is another copy running?"
                 }
             }
         } catch {

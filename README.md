@@ -232,7 +232,7 @@ Needs a human click-through:
 <a id="troubleshooting"></a>
 ## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> Troubleshooting
 
-- Red banner "The bus could not listen": another copy is running, or the port is taken. Quit the other copy or set `DOJO_PORT`.
+- Red banner "The bus could not listen": another copy is running, or the port is taken (the app waits five seconds for a copy that was just quit to let go of it first). Quit the other copy or set `DOJO_PORT`.
 - A pane stays `starting`: a startup dialog waits for you, or the harness has not reported its session start yet. Your first prompt in that pane clears it (its Stop makes it `idle`).
 - `/resume` in a pane lists other sessions than your terminal does: Claude Code lists sessions per folder, so give the pane the same start folder.
 - A pane turns red at once: the harness is not on your login shell's PATH (the pane shows the error), or the ssh connection failed.
