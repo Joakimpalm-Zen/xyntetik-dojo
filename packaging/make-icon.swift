@@ -1,5 +1,5 @@
 // The app icon, drawn from the same numbers as the site's favicon (the Ensō in the brand gradient with
-// three coral dots) on a sheet of recycled paper, like the window. No image file is checked in; `make app` runs this.
+// three coral dots) with Dojo's torii inside the ring, on a sheet of recycled paper, like the window. No image file is checked in; `make app` runs this.
 //
 //   swift packaging/make-icon.swift build/AppIcon.iconset && iconutil -c icns build/AppIcon.iconset
 import AppKit
@@ -88,6 +88,20 @@ func draw(size: Int) -> CGImage {
     ctx.clip()
     ctx.drawLinearGradient(teal, start: gradientStart, end: gradientEnd, options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
     ctx.restoreGState()
+
+    // The torii inside the ring, in vermilion (Theme.Enso.Torii holds the same numbers for the window).
+    ctx.setStrokeColor(rgb(0xD8432B))
+    ctx.setLineCap(.butt)
+    ctx.setLineWidth(4.5 * scale)
+    ctx.move(to: point(29, 30))
+    ctx.addQuadCurve(to: point(71, 30), control: point(50, 36))
+    ctx.strokePath()
+    ctx.setLineWidth(3.5 * scale)
+    ctx.move(to: point(34, 44)); ctx.addLine(to: point(66, 44))
+    ctx.strokePath()
+    ctx.setLineWidth(4.5 * scale)
+    for x in [39.0, 61.0] { ctx.move(to: point(x, 36)); ctx.addLine(to: point(x, 70)) }
+    ctx.strokePath()
 
     for dot in Enso.dots {
         let c = point(dot.x, dot.y)
