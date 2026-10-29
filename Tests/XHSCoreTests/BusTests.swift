@@ -300,6 +300,24 @@ import Testing
         #expect(bus.rename("codex-1", to: "other") == "no pane named 'codex-1'")
     }
 
+    @Test func aRunnerPaneRunsOnceItListensAndTakesNoMessages() {
+        var clock = Date(timeIntervalSince1970: 1_000)
+        bus.now = { clock }
+        let io = MockIO()
+        bus.add(name: "runner-1", kind: .runner, io: io)
+        #expect(call("send", ["pane": "runner-1", "text": "hi"]).0 == 409)
+        io.screen = "Downloading Runner ..."
+        for _ in 0..<5 { clock += 1; bus.tick() }
+        #expect(bus.info("runner-1")?.state == .starting)
+        io.screen = "server listening on http://127.0.0.1:8080 — 1 slot sharing 8 threads"
+        for _ in 0..<5 { clock += 1; bus.tick() }
+        #expect(bus.info("runner-1")?.state == .running)
+        for _ in 0..<40 { clock += 1; bus.tick() }
+        #expect(bus.info("runner-1")?.state == .running)
+        #expect(call("send", ["pane": "runner-1", "text": "hi"]).0 == 409)
+        #expect(io.written.isEmpty)
+    }
+
     @Test func removedPaneIsGone() {
         bus.remove("codex-1")
         #expect(bus.names == ["claude-1"])

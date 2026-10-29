@@ -27,6 +27,8 @@ final class AppModel: NSObject, ObservableObject, LocalProcessTerminalViewDelega
     @Published private(set) var recentHosts: [String] = []
     /// Start folders used before, latest first (~/.xhs/folders).
     @Published private(set) var recentFolders: [String] = []
+    /// What Runner serves on this Mac, empty when it does not answer; refreshed when the picker opens.
+    @Published private(set) var runnerModel = ""
 
     let bus = Bus()
     let port: Int
@@ -49,7 +51,12 @@ final class AppModel: NSObject, ObservableObject, LocalProcessTerminalViewDelega
         bus.onChange = { [weak self] in self?.revision &+= 1 }
         startServer()
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.bus.tick() }
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.bus.tick()
+                self.ticks += 1
+                if self.ticks % 5 == 0 { self.fillRunnerHeader() }
+            }
         }
         // The bus holds relayed messages while the owner types in that pane and while unsent text sits there.
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -61,6 +68,24 @@ final class AppModel: NSObject, ObservableObject, LocalProcessTerminalViewDelega
         if !smoke, let trouble = ToolInstall.run() {
             problem = trouble
         }
+    }
+
+    private var ticks = 0
+
+    /// A Runner pane shows the model it serves once the server answers.
+    private func fillRunnerHeader() {
+        let waiting = bus.all.filter { $0.kind == .runner && $0.state == .running && $0.model.isEmpty }.map(\.name)
+        guard !waiting.isEmpty else { return }
+        Task {
+            guard let model = await Launcher.fetchRunnerModel() else { return }
+            for name in waiting { bus.setModel(name, model) }
+            runnerModel = model
+        }
+    }
+
+    /// Asks Runner what it serves, for the picker.
+    func refreshRunner() {
+        Task { runnerModel = await Launcher.fetchRunnerModel() ?? "" }
     }
 
     /// What a keystroke does to a harness composer: Enter sends it, Ctrl-C and Ctrl-U empty it, Delete
@@ -87,6 +112,9 @@ final class AppModel: NSObject, ObservableObject, LocalProcessTerminalViewDelega
         let host = rawHost.trimmingCharacters(in: .whitespaces)
         if !host.isEmpty, !Hosts.isValid(host) {
             return "Host is an ssh destination such as box or user@box."
+        }
+        if kind == .runner, !host.isEmpty {
+            return "A Runner pane serves on this Mac; leave the host empty."
         }
         var directory = rawDirectory.trimmingCharacters(in: .whitespaces)
         if host.isEmpty, !directory.isEmpty {
