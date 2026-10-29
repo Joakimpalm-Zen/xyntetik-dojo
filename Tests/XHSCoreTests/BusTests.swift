@@ -309,6 +309,11 @@ import Testing
         io.screen = "Downloading Runner ..."
         for _ in 0..<5 { clock += 1; bus.tick() }
         #expect(bus.info("runner-1")?.state == .starting)
+        #expect(bus.info("runner-1")?.model == "")
+        io.screen = "Serving ibm-granite/granite-4.1-3b-GGUF:Q4_K_M -c 8192 --kv fp4 --mlock\nhf: fetching ..."
+        clock += 1; bus.tick()
+        #expect(bus.info("runner-1")?.state == .starting)
+        #expect(bus.info("runner-1")?.model == "fetching granite-4.1-3b-GGUF:Q4_K_M")
         io.screen = "server listening on http://127.0.0.1:8080 — 1 slot sharing 8 threads"
         for _ in 0..<5 { clock += 1; bus.tick() }
         #expect(bus.info("runner-1")?.state == .running)

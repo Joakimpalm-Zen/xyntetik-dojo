@@ -72,9 +72,14 @@ final class AppModel: NSObject, ObservableObject, LocalProcessTerminalViewDelega
 
     private var ticks = 0
 
+    /// The Runner pane that is starting or serving, if any.
+    var runnerPane: Bus.Info? {
+        bus.all.first { $0.kind == .runner && $0.state != .exited }
+    }
+
     /// A Runner pane shows the model it serves once the server answers.
     private func fillRunnerHeader() {
-        let waiting = bus.all.filter { $0.kind == .runner && $0.state == .running && $0.model.isEmpty }.map(\.name)
+        let waiting = bus.all.filter { $0.kind == .runner && $0.state == .running && ($0.model.isEmpty || $0.model.hasPrefix("fetching ")) }.map(\.name)
         guard !waiting.isEmpty else { return }
         Task {
             guard let model = await Launcher.fetchRunnerModel() else { return }
@@ -115,6 +120,9 @@ final class AppModel: NSObject, ObservableObject, LocalProcessTerminalViewDelega
         }
         if kind == .runner, !host.isEmpty {
             return "A Runner pane serves on this Mac; leave the host empty."
+        }
+        if kind == .runner, let pane = runnerPane {
+            return "Runner is already \(pane.state == .running ? "serving" : "starting") in \(pane.name)."
         }
         var directory = rawDirectory.trimmingCharacters(in: .whitespaces)
         if host.isEmpty, !directory.isEmpty {

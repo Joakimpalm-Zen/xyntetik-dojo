@@ -205,11 +205,11 @@ struct PickerSheet: View {
                         .tint(Color(Theme.teal))
                 }
             }
-            Text(model.runnerModel.isEmpty
-                 ? "Runner is not running. A Runner pane fetches it if needed, picks a model that fits this Mac and serves it; pi panes use it."
-                 : "Runner is serving \(model.runnerModel) for the pi panes.")
+            let runnerPane = model.runnerPane
+            let runnerUp = !model.runnerModel.isEmpty || runnerPane != nil
+            Text(runnerStatus(runnerPane))
                 .font(.caption)
-                .foregroundStyle(Color(model.runnerModel.isEmpty ? Theme.coralInk : Theme.tealInk))
+                .foregroundStyle(Color(runnerUp ? Theme.tealInk : Theme.coralInk))
             TextField("Host (empty for this Mac)", text: $form.host)
             if !model.recentHosts.isEmpty {
                 HStack(spacing: 6) {
@@ -260,6 +260,20 @@ struct PickerSheet: View {
         .frame(width: 440)
         .background(Paper(tone: Theme.surface, density: 0.6))
         .onAppear { model.refreshRunner() }
+    }
+
+    /// One line on Runner: starting in a pane, serving (in a pane or started outside), or not running.
+    private func runnerStatus(_ pane: Bus.Info?) -> String {
+        if let pane, pane.state != .running {
+            let what = pane.model.isEmpty ? "picking a model that fits" : pane.model
+            return "Runner is starting in \(pane.name): \(what). Follow it there; pi panes can use it once it listens."
+        }
+        if !model.runnerModel.isEmpty {
+            let whereFrom = pane.map { " in \($0.name)" } ?? " (started outside the app)"
+            return "Runner is serving \(model.runnerModel)\(whereFrom) for the pi panes."
+        }
+        if let pane { return "Runner is up in \(pane.name), waiting for it to answer." }
+        return "Runner is not running. A Runner pane fetches it if needed, picks a model that fits this Mac and serves it; pi panes use it."
     }
 
     private func add(_ kind: HarnessKind) {
