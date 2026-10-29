@@ -209,6 +209,8 @@ struct PickerSheet: View {
                 EnsoMark().frame(width: 22, height: 22)
                 Text("New terminal").font(.headline).foregroundStyle(Color(Theme.ink))
             }
+            // The coding agents, with where they run: a host, a folder, a name.
+            Text("Coding agent").foregroundStyle(.secondary).font(.callout)
             HStack(spacing: 10) {
                 ForEach(HarnessKind.pickable, id: \.self) { kind in
                     Button { add(kind) } label: { Text(kind.title).frame(maxWidth: .infinity) }
@@ -216,36 +218,6 @@ struct PickerSheet: View {
                         .tint(Color(Theme.teal))
                 }
             }
-            // The local model server has a section of its own under the agents: a heading, then the button
-            // with Runner's state beside it, then what the last Runner pane found to fit this Mac.
-            let runnerPane = model.runnerPane
-            let runnerUp = !model.runnerModel.isEmpty || runnerPane != nil
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Local model").foregroundStyle(.secondary)
-                HStack(alignment: .center, spacing: 10) {
-                    Button { add(.runner) } label: { Text(HarnessKind.runner.title) }
-                        .controlSize(.large)
-                        .tint(Color(Theme.teal))
-                        .disabled(runnerPane != nil)
-                    Text(runnerStatus(runnerPane))
-                        .font(.caption)
-                        .foregroundStyle(Color(runnerUp ? Theme.tealInk : Theme.coralInk))
-                }
-                ForEach(model.runnerFits, id: \.spelling) { fit in
-                    let current = fit.spelling == model.runnerChoice || (!model.runnerModel.isEmpty && model.runnerModel.contains(fit.stem))
-                    HStack(spacing: 8) {
-                        Button(fit.id) { model.chooseRunnerModel(fit.spelling); model.picking = false }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .tint(Color(current ? Theme.coral : Theme.teal))
-                        Text("\(fit.resident) GiB resident, \(fit.flags)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .lineLimit(1)
-                }
-            }
-            .font(.callout)
             TextField("Host (empty for this Mac)", text: $form.host)
             if !model.recentHosts.isEmpty {
                 HStack(spacing: 6) {
@@ -287,6 +259,37 @@ struct PickerSheet: View {
             if !form.error.isEmpty {
                 Text(form.error).font(.caption).foregroundStyle(Color(Theme.coralInk))
             }
+            Divider()
+            // The local model server has a section of its own after the agent's fields: a heading, then the button
+            // with Runner's state beside it, then what the last Runner pane found to fit this Mac.
+            let runnerPane = model.runnerPane
+            let runnerUp = !model.runnerModel.isEmpty || runnerPane != nil
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Local model").foregroundStyle(.secondary)
+                HStack(alignment: .center, spacing: 10) {
+                    Button { add(.runner) } label: { Text(HarnessKind.runner.title) }
+                        .controlSize(.large)
+                        .tint(Color(Theme.teal))
+                        .disabled(runnerPane != nil)
+                    Text(runnerStatus(runnerPane))
+                        .font(.caption)
+                        .foregroundStyle(Color(runnerUp ? Theme.tealInk : Theme.coralInk))
+                }
+                ForEach(model.runnerFits, id: \.spelling) { fit in
+                    let current = fit.spelling == model.runnerChoice || (!model.runnerModel.isEmpty && model.runnerModel.contains(fit.stem))
+                    HStack(spacing: 8) {
+                        Button(fit.id) { model.chooseRunnerModel(fit.spelling); model.picking = false }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .tint(Color(current ? Theme.coral : Theme.teal))
+                        Text("\(fit.resident) GiB resident, \(fit.flags)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .lineLimit(1)
+                }
+            }
+            .font(.callout)
             HStack {
                 Spacer()
                 Button("Cancel") { model.picking = false }.keyboardShortcut(.cancelAction)
