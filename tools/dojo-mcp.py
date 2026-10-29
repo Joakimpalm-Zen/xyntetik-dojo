@@ -276,10 +276,24 @@ def toml_stanzas(text, strip_old_marker=False):
             if part.startswith("'"):
                 part = part[1:-1]
             elif part.startswith('"'):
-                try:
-                    part = json.loads(part)
-                except ValueError:
-                    return None
+                # TOML basic keys share JSON escapes and also allow eight-digit Unicode escapes.
+                # Decode left to right so an escaped backslash before U remains literal text.
+                decoded, i = [], 1
+                escapes = {"b": "\b", "t": "\t", "n": "\n", "f": "\f", "r": "\r", '"': '"', "\\": "\\"}
+                while i < len(part) - 1:
+                    if part[i] != "\\":
+                        decoded.append(part[i])
+                        i += 1
+                        continue
+                    code = part[i + 1]
+                    if code in "uU":
+                        width = 4 if code == "u" else 8
+                        decoded.append(chr(int(part[i + 2:i + 2 + width], 16)))
+                        i += 2 + width
+                    else:
+                        decoded.append(escapes[code])
+                        i += 2
+                part = "".join(decoded)
             parts.append(part if re.fullmatch(r"[A-Za-z0-9_-]+", part) else json.dumps(part))
         return match[1] + ".".join(parts) + match[3]
 

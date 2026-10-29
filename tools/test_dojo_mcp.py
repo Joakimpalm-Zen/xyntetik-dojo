@@ -499,6 +499,17 @@ x = true
                     with open(config + ".before-dojo") as f:
                         self.assertEqual(f.read(), original)
 
+    def test_unicode_escaped_table_keys_do_not_consume_neighboring_tables(self):
+        mod = load_shim()
+        original = ('[mcp_servers.xhs]\ncommand = "sh"\n'
+                    '[features."\\U00000078"]\nenabled = true\n'
+                    '[projects."a]b"]\ntrust_level = "trusted"\n')
+        migrated = tomllib.loads(mod.without_old_block(original) + mod.codex_block())
+        self.assertEqual(migrated["features"], tomllib.loads(original)["features"])
+        self.assertEqual(migrated["projects"], tomllib.loads(original)["projects"])
+        escaped_old = '[mcp_servers."\\U00000078hs"]\ncommand = "sh"\n'
+        self.assertNotIn("xhs", tomllib.loads(mod.without_old_block(escaped_old) + mod.codex_block())["mcp_servers"])
+
     def test_top_level_settings_before_the_old_block_survive(self):
         import importlib.util
         spec = importlib.util.spec_from_file_location("dojo_mcp3", SHIM)
