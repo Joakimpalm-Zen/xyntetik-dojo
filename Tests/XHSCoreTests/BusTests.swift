@@ -332,11 +332,12 @@ import Testing
     @Test func keysAreClassifiedFromTheBytesTheTerminalSends() {
         let text = ["a", "p\u{e5}", "\t", "\n", "\u{19}", "\u{1b}[200~hello world\u{1b}[201~", "\u{1b}[A", "\u{1b}[B", "\u{1b}[1;2B",
                     "\u{1b}[97u", "\u{1b}[13;2u", "\u{1b}[106;5u", "\u{1b}[122;5u", "\u{1b}[97;1:2u", "\u{1b}a", "\u{1b}[57400u"]
-        let clear = ["\r", "\u{3}", "\u{1b}[13u", "\u{1b}[99;5u"]
+        let submit = ["\r", "\u{1b}[13u"]
+        let clear = ["\u{3}", "\u{1b}[99;5u"]
         let other = ["\u{7f}", "\u{8}", "\u{1b}", "\u{1b}[C", "\u{1b}[D", "\u{1b}[H", "\u{1b}[F", "\u{1b}[3~", "\u{1b}[5~", "\u{1b}[1;5D",
                      "\u{1b}OD", "\u{1b}[127u", "\u{1b}[127;1:3u", "\u{1b}[57364u", "\u{1b}[<0;10;5M"]
         let reply = ["\u{1b}[24;80R", "\u{1b}[?62;c", "\u{1b}[0n", "\u{1b}]11;rgb:f3f3/efef/e6e6\u{1b}\\", "\u{1b}[?1u", "\u{1b}[I", "\u{1b}P1$r\u{1b}\\"]
-        for (keys, expected) in [(text, Bus.OwnerKey.text), (clear, .clear), (other, .other), (reply, .reply)] {
+        for (keys, expected) in [(text, Bus.OwnerKey.text), (submit, .submit), (clear, .clear), (other, .other), (reply, .reply)] {
             for k in keys { #expect(OwnerInput.key(Array(k.utf8)[...]) == expected, Comment(rawValue: k.debugDescription)) }
         }
     }
@@ -367,6 +368,7 @@ import Testing
         clock += 60; bus.tick()
         #expect(targetIO.written.isEmpty, "a newline typed as kitty Ctrl-J is text")
         bus.noteOwnerInput("codex-1", OwnerInput.key([0x0D]))
+        hook(targetToken, "UserPromptSubmit")   // the harness confirms the submission
         clock += 60; bus.tick()
         #expect(targetIO.typed == "[from: claude-1] two\r")
         targetIO.written = []
@@ -383,6 +385,33 @@ import Testing
         #expect(isText(OwnerInput.key([0x19])), "raw Ctrl-Y")
         #expect(OwnerInput.key(Array("\u{1b}[127;1:3u".utf8)[...]) == .other)
         #expect(OwnerInput.key(Array("\u{1b}[D".utf8)[...]) == .other, "Left moves only")
+    }
+
+    @Test func enterIsNotASubmissionUntilTheHarnessSaysSo() {
+        // In pi, Enter can accept a filename completion and leave the text unsent. The harness's own
+        // UserPromptSubmit hook is the proof of a submission; a shell pane has no hooks, so Enter is it there.
+        var clock = Date(timeIntervalSince1970: 1000)
+        bus.now = { clock }
+        hook(targetToken, "SessionStart")
+        bus.noteOwnerInput("codex-1", OwnerInput.key(Array("foo".utf8)[...]))
+        bus.noteOwnerInput("codex-1", OwnerInput.key([0x0D]))
+        #expect(bus.info("codex-1")?.draft == true, "Enter accepted a completion; nothing was submitted")
+        _ = call("send", ["pane": "codex-1", "text": "wait"])
+        clock += 60; bus.tick()
+        #expect(targetIO.written.isEmpty)
+        hook(targetToken, "UserPromptSubmit")
+        #expect(bus.info("codex-1")?.draft == false, "the harness reported the prompt submitted")
+        hook(targetToken, "Stop")
+        clock += 60; bus.tick()
+        #expect(targetIO.typed == "[from: claude-1] wait\r")
+        let shellIO = MockIO()
+        bus.add(name: "shell-1", kind: .shell, io: shellIO)
+        bus.noteOwnerInput("shell-1", OwnerInput.key(Array("ls".utf8)[...]))
+        bus.noteOwnerInput("shell-1", OwnerInput.key([0x0D]))
+        #expect(bus.info("shell-1")?.draft == false, "a shell has no hooks: Enter is the submission")
+        for reply in ["\u{1b}[8;24;80t", "\u{1b}[?2004;1$y", "\u{1b}[3;0;0t"] {
+            #expect(OwnerInput.key(Array(reply.utf8)[...]) == .reply, Comment(rawValue: reply.debugDescription))
+        }
     }
 
     @Test func theTerminalsOwnRepliesNeitherHoldNorCancelAnything() {

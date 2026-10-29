@@ -145,7 +145,9 @@ public final class Bus {
     public enum OwnerKey: Equatable {
         /// May have put text in the composer: a character, a paste, a recalled prompt, an editing chord.
         case text
-        /// Sent the composer (Enter) or emptied it (Ctrl-C): the one way to know it is empty.
+        /// Enter: a submission in a shell; in a harness only its UserPromptSubmit hook proves one.
+        case submit
+        /// Emptied the composer (Ctrl-C): known empty.
         case clear
         /// Moved or deleted: whatever was there may still be there.
         case other
@@ -161,6 +163,7 @@ public final class Bus {
         switch key {
         case .text: p.hasDraft = true
         case .clear: p.hasDraft = false
+        case .submit: if p.kind == .shell || p.kind == .runner { p.hasDraft = false }   // no hooks there: Enter is it
         case .other, .reply: break
         }
         if before != p.hasDraft { onChange?() }
@@ -279,6 +282,11 @@ public final class Bus {
             onChange?()
         }
         pane.quietSince = nil
+        // The harness took the composer as a prompt: it is empty now, whatever the keys suggested.
+        if event["hook_event_name"] as? String == "UserPromptSubmit", pane.hasDraft {
+            pane.hasDraft = false
+            onChange?()
+        }
         guard pane.state != .exited,
               let name = event["hook_event_name"] as? String,
               let next = HookMapping.next(event: name, notificationType: event["notification_type"] as? String, current: pane.state)

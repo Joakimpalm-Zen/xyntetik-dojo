@@ -405,6 +405,31 @@ x = true
             self.assertEqual(list(parsed["mcp_servers"]), ["dojo"], "the real old table, inline comment and all, is gone")
             self.assertNotIn("xhs-mcp.py", text)
 
+    def test_a_top_level_multiline_string_that_names_the_old_table_survives(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("dojo_mcp5", SHIM)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        top = (
+            'developer_instructions = """\n'
+            'When asked about the bus, mention that the old table was\n'
+            '[mcp_servers.xhs]\n'
+            'and is gone now.\n'
+            '"""\n'
+            "\n" + self.OLD[self.OLD.index("# Xyntetik"):]
+        )
+        with tempfile.TemporaryDirectory() as home:
+            os.makedirs(os.path.join(home, ".dojo"))
+            shutil.copy(SHIM, os.path.join(home, ".dojo", "dojo-mcp.py"))
+            os.makedirs(os.path.join(home, ".codex"))
+            config = os.path.join(home, ".codex", "config.toml")
+            with open(config, "w") as f:
+                f.write(top)
+            self.assertEqual(mod.install(home=home, out=io.StringIO(), windows=False), 0)
+            parsed = tomllib.loads(open(config).read())
+            self.assertIn("[mcp_servers.xhs]\nand is gone now.", parsed["developer_instructions"])
+            self.assertEqual(list(parsed["mcp_servers"]), ["dojo"])
+
     def test_top_level_settings_before_the_old_block_survive(self):
         import importlib.util
         spec = importlib.util.spec_from_file_location("dojo_mcp3", SHIM)

@@ -3,15 +3,18 @@
 /// writes do not. A terminal cannot tell the app that a composer is empty (Backspace at the start of a
 /// line deletes nothing, undo and yank bring text back, a tab becomes spaces), so the rule is one-sided:
 /// any key that can put text in the composer marks it, and only Enter or Ctrl-C, which send or empty
-/// it for certain, unmark it. Deleting and moving change nothing. The terminal's own answers to the
-/// program's queries (cursor position, colours, device attributes) are not input at all.
+/// it for certain, unmark it. Deleting and moving change nothing. Enter is reported apart (`submit`):
+/// in a harness it can accept a completion and leave the text unsent, so there the harness's own
+/// UserPromptSubmit hook is the proof; in a plain shell, which has no hooks, Enter is the submission.
+/// The terminal's own answers to the program's queries (cursor position, colours, device attributes,
+/// window size, mode reports) are not input at all.
 public enum OwnerInput {
     public static func key(_ bytes: ArraySlice<UInt8>) -> Bus.OwnerKey {
         guard let first = bytes.first else { return .other }
         if bytes.count == 1 {
             switch first {
-            case 0x0D: return .clear                  // Enter sends the composer
-            case 0x03: return .clear                  // Ctrl-C empties it
+            case 0x0D: return .submit                 // Enter: a submission, unless it accepted a completion
+            case 0x03: return .clear                  // Ctrl-C empties the composer
             case 0x1B, 0x7F, 0x08: return .other      // Escape, Backspace: nothing added
             default: return .text                     // a character, or a control that may add text (Tab, Ctrl-J, Ctrl-Y)
             }
@@ -23,12 +26,14 @@ public enum OwnerInput {
         if s.hasPrefix("\u{1b}]") || s.hasPrefix("\u{1b}P") { return .reply }
         if s.hasPrefix("\u{1b}[?"), s.hasSuffix("u") { return .reply }
         if s.hasPrefix("\u{1b}["), let last = s.last, "RcnIO".contains(last) { return .reply }
+        if s.hasPrefix("\u{1b}["), s.hasSuffix("$y") { return .reply }                       // a mode report
+        if s.hasPrefix("\u{1b}["), s.hasSuffix("t"), s.dropFirst(2).first?.isNumber == true { return .reply }   // window size and state
         // A key in the kitty keyboard protocol: CSI code [; modifiers [: event]] u.
         if s.hasPrefix("\u{1b}["), s.hasSuffix("u"), let (code, mods, event) = kittyKey(s) {
             if event == 3 { return .other }                          // a key release changes nothing
             let control = mods & 4 != 0, shiftOrAlt = mods & 3 != 0
             switch code {
-            case 13 where !shiftOrAlt: return .clear                 // Enter (Shift-Enter is a newline)
+            case 13 where !shiftOrAlt: return .submit                // Enter (Shift-Enter is a newline)
             case 99 where control: return .clear                     // Ctrl-C
             case 27, 127, 8: return .other                           // Escape, Backspace
             case 57344...57600: return functionalKeyAddsText(code) ? .text : .other

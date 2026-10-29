@@ -234,43 +234,45 @@ def without_old_block(text):
     removed. A [[hooks.X]] group goes only when every hook in it is the old shim's; a comment above a
     table belongs to that table. Line endings are kept."""
     nl = "\r\n" if "\r\n" in text else "\n"
-    # Stanzas: a header line and what follows it. Comment and blank lines directly above a header belong
-    # to that header, so a comment the owner wrote for the next table is not lost with a dropped stanza.
-    # A line inside a multi-line string ("""...""" or \'\'\'...\'\'\') is never a header.
+    # Stanzas: (header, lines). A header line opens a stanza; comment and blank lines directly above it
+    # belong to it, so a comment the owner wrote for the next table is not lost with a dropped stanza.
+    # A line inside a multi-line string is never a header, and a stanza's header is the line that
+    # opened it, never something found in its contents. The top-level stanza has no header.
     stanzas, pending, in_string = [], [], None
     for line in text.splitlines(keepends=True):
         if in_string:
-            stanzas[-1].append(line) if stanzas else pending.append(line)
+            if stanzas:
+                stanzas[-1][1].append(line)
+            else:
+                stanzas.append(("", [line]))
             if in_string in line:
                 in_string = None
             continue
-        if line.lstrip().startswith("[") and not in_string:   # a table header, indented or not
-            stanzas.append(pending + [line])
+        if line.lstrip().startswith("["):
+            m = re.match(r"\s*(\[\[?[^\]]*\]\]?)", line)
+            stanzas.append((m.group(1) if m else "", pending + [line]))
             pending = []
         elif line.lstrip().startswith("#") or not line.strip():
             pending.append(line)
         else:
             if not stanzas:
-                stanzas.append([])
-            stanzas[-1].extend(pending)
+                stanzas.append(("", []))
+            stanzas[-1][1].extend(pending)
             pending = []
-            stanzas[-1].append(line)
+            stanzas[-1][1].append(line)
             for delimiter in ('"""', "\'\'\'"):
                 if line.count(delimiter) % 2 == 1:
                     in_string = delimiter
     if pending:
-        (stanzas[-1] if stanzas else stanzas.append([]) or stanzas[-1]).extend(pending)
+        if not stanzas:
+            stanzas.append(("", []))
+        stanzas[-1][1].extend(pending)
 
     def header(st):
-        # The table name alone: an inline comment after it does not count.
-        for l in st:
-            m = re.match(r"\s*(\[\[?[^\]]*\]\]?)", l)
-            if m:
-                return m.group(1)
-        return ""
+        return st[0]
 
     def old_child(st):
-        return header(st).startswith("[[hooks.") and header(st).endswith(".hooks]]") and OLD_SCRIPT in "".join(st)
+        return header(st).startswith("[[hooks.") and header(st).endswith(".hooks]]") and OLD_SCRIPT in "".join(st[1])
 
     drop = set()
     for i, st in enumerate(stanzas):
@@ -289,7 +291,7 @@ def without_old_block(text):
                     break
             if children and all(old_child(stanzas[j]) for j in children):
                 drop.add(i)
-    kept = [l for i, st in enumerate(stanzas) if i not in drop for l in st if not l.startswith(OLD_MARKER)]
+    kept = [l for i, st in enumerate(stanzas) if i not in drop for l in st[1] if not l.startswith(OLD_MARKER)]
     return "".join(kept).rstrip("\r\n") + nl
 
 
