@@ -4,8 +4,9 @@
 # models that fits this machine (runner --info fit on the first 16 MiB of each, nothing else fetched),
 # at the largest of three context sizes it fits with, and serves it on http://127.0.0.1:8080. A model whose
 # whole file fits in the RAM free right now wins over one that fits by its hot set alone (a mixture of
-# experts whose file exceeds RAM, which Runner rates usable); that one is the fallback.
-# `--pick` prints the choice and stops.
+# experts whose file exceeds RAM, which Runner rates usable); that one is the fallback. The weights are
+# wired into RAM (--mlock) so a loaded machine cannot evict them; when the OS refuses, Runner says so and
+# serves anyway. `--pick` prints the choice and stops.
 set -eu
 mode=${1:-serve}
 home="${XHS_RUNNER_HOME:-$HOME/.xhs/runner}"
@@ -86,7 +87,7 @@ pick_model() {
                 FITS*) choice="$c -c $ctx" ;;
             esac
             [ -n "$choice" ] || continue
-            if whole_file_fits "$report"; then say "$choice"; return; fi
+            if whole_file_fits "$report"; then say "$choice --mlock"; return; fi
             note "    the whole file does not fit in the RAM free right now; kept as the fallback"
             [ -n "$fallback" ] || fallback=$choice
             break
@@ -94,7 +95,7 @@ pick_model() {
     done
     if [ -n "$fallback" ]; then
         note "No model's whole file fits in the RAM free right now (quit what you are not using and try again); serving the one Runner rates usable by its hot set."
-        say "$fallback"
+        say "$fallback --mlock"
         return
     fi
     note "None of the candidate models fits this machine, even at context 4096."
