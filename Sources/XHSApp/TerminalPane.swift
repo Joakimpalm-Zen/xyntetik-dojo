@@ -70,6 +70,14 @@ final class TerminalPane: TerminalView, PaneIO {
         terminalInputStateSnapshot()?.bracketedPasteMode ?? false
     }
 
+    /// A click focuses the pane. With the Metal surface up the click lands on the GPU layer's view, which
+    /// takes no focus, so AppKit would not move the first responder here by itself; a pane that lost focus
+    /// (a swap re-parents it) would then never take keys again.
+    override func mouseDown(with event: NSEvent) {
+        if window?.firstResponder !== self { window?.makeFirstResponder(self) }
+        super.mouseDown(with: event)
+    }
+
     /// Frames are drawn on the GPU: a harness repaints its whole screen many times a second, which the
     /// CoreGraphics path draws on the main thread, glyph by glyph. SwiftTerm leaves Metal off by default.
     override func viewDidMoveToWindow() {
