@@ -221,6 +221,22 @@ struct PickerSheet: View {
             Text(runnerStatus(runnerPane))
                 .font(.caption)
                 .foregroundStyle(Color(runnerUp ? Theme.tealInk : Theme.coralInk))
+            if !model.runnerFits.isEmpty {
+                // What the last Runner pane found to fit this Mac; the served or chosen one is filled in.
+                HStack(spacing: 6) {
+                    Text("Fits").foregroundStyle(.secondary)
+                    ForEach(model.runnerFits, id: \.spelling) { fit in
+                        let current = fit.spelling == model.runnerChoice || (!model.runnerModel.isEmpty && model.runnerModel.contains(fit.stem))
+                        Button(fit.id) { model.chooseRunnerModel(fit.spelling); model.picking = false }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .tint(Color(current ? Theme.coral : Theme.teal))
+                            .help("\(fit.resident) GiB resident; \(fit.flags)")
+                    }
+                }
+                .font(.callout)
+                .lineLimit(1)
+            }
             TextField("Host (empty for this Mac)", text: $form.host)
             if !model.recentHosts.isEmpty {
                 HStack(spacing: 6) {

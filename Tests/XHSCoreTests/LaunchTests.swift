@@ -205,4 +205,14 @@ import Testing
         #expect(line == "/bin/sh \"$HOME/.xhs/runner-start.sh\"")
         #expect(PaneNames.next(for: .runner, taken: []) == "runner-1")
     }
+
+    @Test func theFitsFileParses() {
+        let text = "bolt\tnvidia/Bolt-4GB:Nemotron-Bolt-Q4_K_M\t-c 16384 --kv q8 --mlock\t2.97\nbad line\nq4\tb/Q-GGUF:Q_Q4_K_M\t-c 16384 --mlock\t2.40\n"
+        let fits = RunnerFit.parse(text)
+        #expect(fits.map(\.id) == ["bolt", "q4"])
+        #expect(fits[0].spelling == "nvidia/Bolt-4GB:Nemotron-Bolt-Q4_K_M")
+        #expect(fits[0].flags == "-c 16384 --kv q8 --mlock")
+        #expect(fits[0].stem == "Nemotron-Bolt-Q4_K_M")
+        #expect(RunnerFit.parse("").isEmpty)
+    }
 }

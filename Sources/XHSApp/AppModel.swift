@@ -29,6 +29,10 @@ final class AppModel: NSObject, ObservableObject {
     @Published private(set) var recentFolders: [String] = []
     /// What Runner serves on this Mac, empty when it does not answer; refreshed when the picker opens.
     @Published private(set) var runnerModel = ""
+    /// The models the last Runner pane found to fit this Mac (~/.xhs/runner/fits), largest first.
+    @Published private(set) var runnerFits: [RunnerFit] = []
+    /// The model the owner chose for Runner panes (~/.xhs/runner/model), empty for the largest that fits.
+    @Published private(set) var runnerChoice = ""
 
     let bus = Bus()
     let port: Int
@@ -88,9 +92,23 @@ final class AppModel: NSObject, ObservableObject {
         }
     }
 
-    /// Asks Runner what it serves, for the picker.
+    static let runnerHome = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".xhs/runner")
+
+    /// Asks Runner what it serves and reads what the start script found to fit, for the picker.
     func refreshRunner() {
+        runnerFits = RunnerFit.parse((try? String(contentsOf: AppModel.runnerHome.appendingPathComponent("fits"), encoding: .utf8)) ?? "")
+        runnerChoice = ((try? String(contentsOf: AppModel.runnerHome.appendingPathComponent("model"), encoding: .utf8)) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         Task { runnerModel = await Launcher.fetchRunnerModel() ?? "" }
+    }
+
+    /// Serves `spelling` in a Runner pane from now on: remembers it, replaces the Runner pane that is up.
+    func chooseRunnerModel(_ spelling: String) {
+        try? FileManager.default.createDirectory(at: AppModel.runnerHome, withIntermediateDirectories: true)
+        try? (spelling + "\n").write(to: AppModel.runnerHome.appendingPathComponent("model"), atomically: true, encoding: .utf8)
+        runnerChoice = spelling
+        if let pane = runnerPane { close(pane.name) }
+        addPane(kind: .runner, host: "", name: "")
     }
 
     /// What a keystroke does to a harness composer: Enter sends it, Ctrl-C and Ctrl-U empty it, Delete
