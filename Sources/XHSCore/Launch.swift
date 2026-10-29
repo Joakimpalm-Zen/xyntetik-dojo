@@ -142,7 +142,10 @@ public enum Launcher {
             var words: [ShellWord] = [.literal("pi"), .literal("-e"), .raw(#""$HOME/.xhs/xhs-pi.ts""#),
                                       .literal("--provider"), .literal("runner")]
             if let runnerModel { words += [.literal("--model"), .literal(runnerModel)] }
-            return words + [.literal("--tools"), .literal(piTools), .literal("--append-system-prompt"), .literal(prompt + " " + piReplyHint)]
+            // Full-screen layout with the composer at the bottom, whatever the owner's tuiMode setting says;
+            // in regular mode pi draws from the top of the pane down and leaves the rest empty.
+            return words + [.literal("--tui-mode"), .literal("fullscreen"), .literal("--tools"), .literal(piTools),
+                            .literal("--append-system-prompt"), .literal(prompt + " " + piReplyHint)]
         case .runner:
             // Finds or fetches Runner, picks a model that fits this machine and serves it (tools/runner-start.sh).
             return [.literal("/bin/sh"), .raw(#""$HOME/.xhs/runner-start.sh""#)]
