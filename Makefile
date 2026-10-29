@@ -32,6 +32,12 @@ app: build build/AppIcon.icns
 run: app
 	open $(APP)
 
+# The app in /Applications, replacing the copy there.
+install: app
+	rm -rf /Applications/XyntetikHarnessSupervisor.app
+	cp -R $(APP) /Applications/
+	open /Applications/XyntetikHarnessSupervisor.app
+
 # Launch proof without a human: one local pane runs `echo ok`, the bus answers, the app quits.
 # With HOST=user@box the pane runs `echo ok` on that host over ssh instead (POSIX or Windows).
 smoke: app
