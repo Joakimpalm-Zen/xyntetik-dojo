@@ -9,13 +9,18 @@ enum Theme {
     /// Recycled paper: warm, a little grey, for the window; a shade lighter for headers and the picker;
     /// the lightest sheet for the terminals. `shade` is the header tone as an RGB triple, for the bands a
     /// harness paints white.
-    static let bg = color(0xE3DED1)
-    static let surface = color(0xECE7DB)
-    static let paper = color(0xF3EFE6)
-    static let shade = (red: 0xEC, green: 0xE7, blue: 0xDB)
+    static let bg = color(0xD9D5C8)
+    static let surface = color(0xE1DDD0)
+    static let paper = color(0xE8E4D7)
+    static let shade = (red: 0xDF, green: 0xDB, blue: 0xCD)
     static let ink = color(0x16232A)
     static let muted = color(0x6F6A5F)
-    static let line = color(0xCDC6B5)
+    static let line = color(0xC4BEAD)
+    /// The terminal's text and its sixteen colours: Terminal.app's Novel profile, the warm brown ink and
+    /// its muted palette, on a paper that is greyer than Novel's yellow.
+    static let terminalInk = color(0x3B2322)
+    static let ansi: [UInt32] = [0x000000, 0xCC0000, 0x00A600, 0x999900, 0x0000B2, 0xB200B2, 0x00A6B2, 0xBFBFBF,
+                                 0x666666, 0xE50000, 0x00D900, 0xE5E500, 0x0000FF, 0xE500E5, 0x00E5E5, 0xE5E5E5]
     /// The fibre flecks in the paper, drawn over the ground by `Paper`.
     static let fleck = color(0x6B5E48)
     static let teal = color(0x14A08F)

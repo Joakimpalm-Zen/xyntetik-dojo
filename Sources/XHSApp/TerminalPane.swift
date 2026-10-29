@@ -26,10 +26,13 @@ final class TerminalPane: TerminalView, PaneIO {
         process = LocalProcess(delegate: self, dispatchQueue: .main)
     }
 
-    /// Paper and ink for the terminal; the ANSI palette stays the harnesses' own.
+    /// Paper, Novel's ink and Novel's sixteen colours for the terminal.
     private func applyTheme() {
         nativeBackgroundColor = Theme.paper
-        nativeForegroundColor = Theme.ink
+        nativeForegroundColor = Theme.terminalInk
+        installColors(Theme.ansi.map { rgb in
+            SwiftTerm.Color(red: UInt16((rgb >> 16) & 0xFF) * 257, green: UInt16((rgb >> 8) & 0xFF) * 257, blue: UInt16(rgb & 0xFF) * 257)
+        })
         caretColor = Theme.teal
         selectedTextBackgroundColor = Theme.teal.withAlphaComponent(0.35)
     }
