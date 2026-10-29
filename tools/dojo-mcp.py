@@ -234,41 +234,76 @@ def without_old_block(text):
     removed. A [[hooks.X]] group goes only when every hook in it is the old shim's; a comment above a
     table belongs to that table. Line endings are kept."""
     nl = "\r\n" if "\r\n" in text else "\n"
-    # Stanzas: (header, lines). A header line opens a stanza; comment and blank lines directly above it
-    # belong to it, so a comment the owner wrote for the next table is not lost with a dropped stanza.
-    # A line inside a multi-line string is never a header, and a stanza's header is the line that
-    # opened it, never something found in its contents. The top-level stanza has no header.
-    def delimiters(delimiter, line):
-        # Occurrences that open or close a string: in a basic string an escaped quote (\\""") does not.
-        if delimiter == "'''":
-            return line.count(delimiter)
-        return len(re.findall(r'(?<!\\)"""', line.replace("\\\\", "")))
-
-    stanzas, pending, in_string = [], [], None
-    for line in text.splitlines(keepends=True):
-        if in_string:
-            if stanzas:
-                stanzas[-1][1].append(line)
+    # Keep source lines intact, but recognize tables only outside strings, comments and arrays.
+    # A lexical scan matters here: counting triple quotes also counts examples and inline comments.
+    def scan(line, quote, depth):
+        i = 0
+        while i < len(line):
+            c = line[i]
+            if quote:
+                if quote[0] == '"' and c == "\\":
+                    i += 2
+                    continue
+                if line.startswith(quote, i):
+                    i += len(quote)
+                    if len(quote) == 3:
+                        # A multiline closing delimiter may include one or two trailing quotes.
+                        for _ in range(2):
+                            if i < len(line) and line[i] == quote[0]:
+                                i += 1
+                    quote = None
+                else:
+                    i += 1
+            elif c == "#":
+                break
+            elif c in "\"'":
+                quote = c * 3 if line.startswith(c * 3, i) else c
+                i += len(quote)
             else:
-                stanzas.append(("", [line]))
-            if delimiters(in_string, line) % 2 == 1:
-                in_string = None
+                if c in "[{":
+                    depth += 1
+                elif c in "]}":
+                    depth -= 1
+                i += 1
+        return quote, depth
+
+    key = r"(?:[A-Za-z0-9_-]+|\"(?:\\.|[^\"\\])*\"|'[^']*')"
+    table = re.compile(r"\s*(\[\[?)\s*(" + key + r"(?:\s*\.\s*" + key + r")*)\s*(\]\]?)\s*(?:#.*)?$")
+
+    def table_header(line):
+        match = table.fullmatch(line.rstrip("\r\n"))
+        if not match or len(match[1]) != len(match[3]):
+            return None
+        parts = []
+        for part in re.findall(key, match[2]):
+            if part.startswith("'"):
+                part = part[1:-1]
+            elif part.startswith('"'):
+                try:
+                    part = json.loads(part)
+                except ValueError:
+                    return None
+            parts.append(part if re.fullmatch(r"[A-Za-z0-9_-]+", part) else json.dumps(part))
+        return match[1] + ".".join(parts) + match[3]
+
+    stanzas, pending, quote, depth = [], [], None, 0
+    for line in text.splitlines(keepends=True):
+        outside = quote is None and depth == 0
+        h = table_header(line) if outside else None
+        if h is not None:
+            stanzas.append((h, pending + [line]))
+            pending = []
             continue
-        if line.lstrip().startswith("["):
-            m = re.match(r"\s*(\[\[?[^\]]*\]\]?)", line)
-            stanzas.append((m.group(1) if m else "", pending + [line]))
-            pending = []
-        elif line.lstrip().startswith("#") or not line.strip():
-            pending.append(line)
-        else:
-            if not stanzas:
-                stanzas.append(("", []))
-            stanzas[-1][1].extend(pending)
-            pending = []
-            stanzas[-1][1].append(line)
-            for delimiter in ('"""', "'''"):
-                if delimiters(delimiter, line) % 2 == 1:
-                    in_string = delimiter
+        if outside and (line.lstrip().startswith("#") or not line.strip()):
+            if not line.lstrip().startswith(OLD_MARKER):
+                pending.append(line)
+            continue
+        if not stanzas:
+            stanzas.append(("", []))
+        stanzas[-1][1].extend(pending)
+        pending = []
+        stanzas[-1][1].append(line)
+        quote, depth = scan(line, quote, depth)
     if pending:
         if not stanzas:
             stanzas.append(("", []))
@@ -297,7 +332,7 @@ def without_old_block(text):
                     break
             if children and all(old_child(stanzas[j]) for j in children):
                 drop.add(i)
-    kept = [l for i, st in enumerate(stanzas) if i not in drop for l in st[1] if not l.startswith(OLD_MARKER)]
+    kept = [l for i, st in enumerate(stanzas) if i not in drop for l in st[1]]
     return "".join(kept).rstrip("\r\n") + nl
 
 

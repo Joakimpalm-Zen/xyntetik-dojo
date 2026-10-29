@@ -457,6 +457,26 @@ x = true
             self.assertNotIn("notes", parsed)
             self.assertEqual(list(parsed["mcp_servers"]), ["dojo"])
 
+    def test_migration_ignores_quote_sequences_in_comments_and_other_strings(self):
+        mod = load_shim()
+        samples = [
+            'model = "x" # a triple quote """\n',
+            "note = 'a triple quote \"\"\" is literal'\n",
+            'note = "three apostrophes \'\'\' are ordinary text"\n',
+            'note = """A literal \'\'\' inside a basic string.\nStill text.\n"""\n',
+            'note = """\n# Xyntetik Harness Supervisor is part of this value.\n"""\n',
+            'matrix = [\n [1, 2], # """\n [3, 4]\n]\n',
+        ]
+        for sample in samples:
+            with self.subTest(sample=sample):
+                original = sample + self.OLD
+                expected = tomllib.loads(original)
+                migrated = tomllib.loads(mod.without_old_block(original) + mod.codex_block())
+                for key, value in tomllib.loads(sample).items():
+                    self.assertEqual(migrated.get(key), value)
+                self.assertEqual(list(migrated["mcp_servers"]), ["dojo"])
+                self.assertEqual(migrated["projects"], expected["projects"])
+
     def test_top_level_settings_before_the_old_block_survive(self):
         import importlib.util
         spec = importlib.util.spec_from_file_location("dojo_mcp3", SHIM)
