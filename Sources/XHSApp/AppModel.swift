@@ -12,6 +12,8 @@ final class AppModel: NSObject, ObservableObject {
         var id: ObjectIdentifier { ObjectIdentifier(view) }
         var name: String
         let kind: HarnessKind
+        /// The harness keeps its own approvals (asks before acting).
+        let askFirst: Bool
         let view: TerminalPane
         /// The start folder as given, empty for the home folder.
         let directory: String
@@ -115,7 +117,7 @@ final class AppModel: NSObject, ObservableObject {
     /// Adds a pane and starts its harness. Returns a message for the picker when the input is not usable.
     /// `directory` is the start folder: on this Mac it must exist (~ is expanded); on a host it is passed as typed.
     @discardableResult
-    func addPane(kind: HarnessKind, host rawHost: String, name rawName: String, directory rawDirectory: String = "") -> String? {
+    func addPane(kind: HarnessKind, host rawHost: String, name rawName: String, directory rawDirectory: String = "", askFirst: Bool = false) -> String? {
         let host = rawHost.trimmingCharacters(in: .whitespaces)
         if !host.isEmpty, !Hosts.isValid(host) {
             return "Host is an ssh destination such as box or user@box."
@@ -154,13 +156,13 @@ final class AppModel: NSObject, ObservableObject {
         tokens[name] = token
         if !host.isEmpty { recentHosts = RecentHosts.remember(host, in: AppModel.hostsFile) }
         if !directory.isEmpty { recentFolders = RecentHosts.remember(directory, in: AppModel.foldersFile, valid: RecentHosts.isFolder) }
-        items.append(Item(name: name, kind: kind, view: view, directory: directory))
-        Task { await launch(view, kind: kind, host: host, token: token, directory: directory) }
+        items.append(Item(name: name, kind: kind, askFirst: askFirst, view: view, directory: directory))
+        Task { await launch(view, kind: kind, host: host, token: token, directory: directory, askFirst: askFirst) }
         DispatchQueue.main.async { view.window?.makeFirstResponder(view) }
         return nil
     }
 
-    private func launch(_ view: TerminalPane, kind: HarnessKind, host: String, token: String, directory: String) async {
+    private func launch(_ view: TerminalPane, kind: HarnessKind, host: String, token: String, directory: String, askFirst: Bool) async {
         var model: String?
         if kind == .pi, host.isEmpty {
             model = await Launcher.fetchRunnerModel()
@@ -183,7 +185,7 @@ final class AppModel: NSObject, ObservableObject {
         if let note { view.feed(text: note + "\r\n\r\n") }
         start(view, Launcher.plan(kind: kind, paneName: view.paneName, host: host.isEmpty ? nil : host, port: port,
                                   token: token, runnerModel: model, loginShell: loginShell, remoteShell: remoteShell,
-                                  directory: directory))
+                                  directory: directory, askFirst: askFirst))
     }
 
     private func start(_ view: TerminalPane, _ plan: LaunchPlan) {

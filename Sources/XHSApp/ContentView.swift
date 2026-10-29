@@ -178,6 +178,7 @@ struct PaneCell: View {
                         .contextMenu { Button("Rename") { startRename() } }
                 }
                 Text(info?.kind.title ?? "").foregroundStyle(Color(Theme.muted))
+                if item.askFirst { Text("asks").foregroundStyle(Color(Theme.muted)).help("This pane keeps the harness's own approvals") }
                 Text(info?.host.isEmpty == false ? info!.host : "local").foregroundStyle(Color(Theme.muted))
                 if !item.directory.isEmpty {
                     Text((item.directory as NSString).lastPathComponent).foregroundStyle(Color(Theme.muted))
@@ -265,6 +266,8 @@ struct TerminalHost: NSViewRepresentable {
 
 /// The plus button's picker: Claude, Codex or pi, an optional host and an optional name.
 final class PickerForm: ObservableObject {
+    /// The harness keeps its own approvals instead of running without prompts.
+    @Published var askFirst = false
     @Published var host = ""
     @Published var name = ""
     @Published var folder = ""
@@ -328,6 +331,9 @@ struct PickerSheet: View {
                 .lineLimit(1)
             }
             TextField("Name (empty for claude-1, codex-1, pi-1 ...)", text: $form.name)
+            Toggle("Ask before acting: Claude asks for each permission, Codex keeps its approvals and sandbox", isOn: $form.askFirst)
+                .toggleStyle(.checkbox)
+                .font(.callout)
             if !form.error.isEmpty {
                 Text(form.error).font(.caption).foregroundStyle(Color(Theme.coralInk))
             }
@@ -392,7 +398,7 @@ struct PickerSheet: View {
     }
 
     private func add(_ kind: HarnessKind) {
-        if let problem = model.addPane(kind: kind, host: form.host, name: form.name, directory: form.folder) {
+        if let problem = model.addPane(kind: kind, host: form.host, name: form.name, directory: form.folder, askFirst: form.askFirst) {
             form.error = problem
         } else {
             model.picking = false

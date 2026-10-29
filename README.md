@@ -35,7 +35,7 @@ watch, you type, you stay in charge.
 - **A local model, fitted.** A Runner pane fetches Xyntetik Runner if needed, asks it about seven models from the first 16 MiB of each, and serves the largest whose resident weights fit in half of this Mac's RAM, wired in, for the pi panes.
 - **Small on purpose.** SwiftPM only, no Xcode. One port, two text files of recent hosts and folders, nothing else kept. Apache 2.0.
 
-**On this page:** [Install](#install) · [Requirements](#requirements) · [Build and run](#build-and-run) · [First run](#first-run) · [Adding a pane](#adding-a-pane) · [Remote panes](#remote-panes) · [How harnesses talk](#how-harnesses-talk) · [Safety rules](#safety-rules) · [What was verified](#what-was-verified-and-what-needs-a-human) · [Not built](#not-built) · [Files](#files) · [Troubleshooting](#troubleshooting) · [License](#license)
+**On this page:** [Install](#install) · [Requirements](#requirements) · [Build and run](#build-and-run) · [First run](#first-run) · [Adding a pane](#adding-a-pane) · [Remote panes](#remote-panes) · [How harnesses talk](#how-harnesses-talk) · [Safety rules](#safety-rules) · [Not built](#not-built) · [Files](#files) · [Troubleshooting](#troubleshooting) · [License](#license)
 
 <a id="what-it-does"></a>
 ## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> What it does
@@ -76,14 +76,16 @@ The first run copies its small tools to `~/.dojo` and, if you have Codex, adds i
 ## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> Build and run
 
 ```
-make test    # swift test (70 tests), the shim's Python tests (13), the Runner pick test and the hygiene check of the tree
+make test    # the Swift tests, the shim's Python tests, the Runner pick test and the hygiene check
 make app     # build/XyntetikDojo.app, assembled by hand and ad-hoc signed
 make run     # open the app from build/
 make install # copy the app to /Applications (replacing the one there) and open it
 make cert    # once: a self-signed certificate so macOS privacy remembers its answers across rebuilds
-make smoke   # launch proof: two panes, swapped as a drag does it; a click focuses the first and typed keys come back from its shell; the bus answers; the app quits (exit 0)
+make smoke   # launch proof: two panes, swapped, a click, typed keys echoed back, the bus answering; exit 0
 make smoke HOST=user@box   # the same, with the pane on that host over ssh
 ```
+
+The Swift tests cover the bus and its delivery rules, the command lines (parsed back by a real POSIX shell) and the snippets; the Python tests cover the shim speaking MCP over pipes, the `dojo` command, the hooks, the install and the migration; the shell test covers the Runner pick against a stub runner and Hub. The `ci` workflow runs all of it on every pull request.
 
 `DOJO_PORT` overrides the bus port. There is no other setting. The only files the app keeps are `~/.dojo/hosts` and `~/.dojo/folders` (the hosts and start folders you used, latest first, one per line) and `~/.dojo/runner/` (Runner's binary, its roster copy, the 16 MiB model heads, the fits list and your model choice); edit or delete them by hand.
 
@@ -95,13 +97,13 @@ On start the app:
 1. Copies `tools/dojo-mcp.py`, `tools/dojo-pi.ts` and `tools/runner-start.sh` to `~/.dojo/` and links `~/.dojo/bin/dojo`.
 2. If `~/.codex` exists and `~/.codex/config.toml` has no `[mcp_servers.dojo]`, appends the block in `tools/snippets/codex-config.toml`: the dojo MCP server and six state hooks. It does this once and never edits the file again. Delete the block by hand to remove it.
 
-**Renamed on 2026-10-29.** The app was Xyntetik Harness Supervisor and its command `xhs` until then. The first run of Dojo moves `~/.xhs` to `~/.dojo` (hosts, folders, Runner and its files come along) and replaces the old block in `~/.codex/config.toml` with the new one, keeping the file as it was beside it as `config.toml.before-dojo`. On an ssh host, run `make remote-setup HOST=...` again and delete `~/.xhs` there. A peer-rule snippet you installed by hand says `xhs`; replace it with the new one.
+**From Harness Supervisor.** If you ran this app under its earlier name, the first run moves `~/.xhs` to `~/.dojo` and replaces the `xhs` block in `~/.codex/config.toml` with the `dojo` one, keeping the file as it was beside it as `config.toml.before-dojo`. On an ssh host, run `make remote-setup HOST=...` again.
 
 - **Privacy prompts.** When a harness in a pane reads your Desktop, Documents or Downloads, macOS asks whether the app may, as it does for any terminal app; the first remote pane asks for the local network. With the ad hoc signature `make app` uses by default, every rebuild is a new app to macOS and the questions come back. Run `make cert` once: it makes a self-signed "Xyntetik Dojo" certificate in your login keychain (macOS asks for your password to trust it), and from then on `make app` signs with it and macOS remembers your answers. Or give the app Full Disk Access under System Settings, Privacy & Security, which ends the folder questions altogether.
 
 What needs you, once:
 
-- **No permission prompts by default.** A Claude pane runs `claude --dangerously-skip-permissions` and a Codex pane runs `codex --yolo --dangerously-bypass-hook-trust` (no approvals, no sandbox, the six dojo state hooks trusted without a `/hooks` confirmation). That is the owner's choice for a supervised window; the harness in a pane can do anything your user can. Keep the window to work you would approve anyway.
+- **No permission prompts by default.** A Claude pane runs `claude --dangerously-skip-permissions` and a Codex pane runs `codex --yolo --dangerously-bypass-hook-trust` (no approvals, no sandbox, the six dojo state hooks trusted without a `/hooks` confirmation). That is the owner's choice for a supervised window; the harness in a pane can do anything your user can. Keep the window to work you would approve anyway. The picker has one checkbox, **Ask before acting**, for a pane you want on the harness's own terms: Claude then asks for each permission (the bus sees the prompt and holds messages for it), and Codex keeps its approvals and sandbox. The header of such a pane says "asks".
 - **Startup dialogs.** Claude and Codex may show their own first-run dialogs in the pane (folder trust, browser tools, an update offer). Answer them there. A pane turns `idle` when its harness reports that its session started.
 - Codex shows two startup warnings: command-line config overrides run it without the shared background server (the app passes the peer rule with `-c developer_instructions`), and `--dangerously-bypass-hook-trust` is on. Both are expected.
 
@@ -112,7 +114,7 @@ What needs you, once:
   <img src="packaging/readme/picker.png" alt="The picker: Claude, Codex and pi with host, folder and name; under them the local model section with Runner's state and the models that fit" width="560">
 </p>
 
-Press plus, pick Claude, Codex or pi; the host, folder and name fields under them belong to that agent. Runner, the local model server, has its own section at the bottom with its state beside the button. Leave the host empty for this Mac. A pane starts in the folder you give (type it, press Choose, or click a recent one), or in your home directory. With a host set, the folder is on that host, typed as it is there; Choose and the recent folders are this Mac's, so they step aside. It runs in your login shell (`$SHELL -l -i`), so PATH is the one your terminal has. A pane never inherits `CLAUDE*` variables from the process that opened the app (so `make run` from inside a Claude Code session does not make the pane's Claude a child session). Close a pane with its x button; that ends the harness.
+Press plus, pick Claude, Codex or pi; the host, folder and name fields under them belong to that agent. Tick "Ask before acting" for a pane that should keep the harness's own approvals instead of running without prompts. Runner, the local model server, has its own section at the bottom with its state beside the button. Leave the host empty for this Mac. A pane starts in the folder you give (type it, press Choose, or click a recent one), or in your home directory. With a host set, the folder is on that host, typed as it is there; Choose and the recent folders are this Mac's, so they step aside. It runs in your login shell (`$SHELL -l -i`), so PATH is the one your terminal has. A pane never inherits `CLAUDE*` variables from the process that opened the app (so `make run` from inside a Claude Code session does not make the pane's Claude a child session). Close a pane with its x button; that ends the harness.
 
 A local pi pane first asks Runner for its models (`GET /v1/models`), starts pi with the first one and shows it in the header. If Runner does not answer, the pane says so and pi is not started.
 
@@ -151,7 +153,7 @@ A Windows host with OpenSSH Server and MSYS2 at `C:\msys64` works the same way. 
 
 `make remote-setup HOST=user@winbox` detects Windows too. There, `dojo install` writes two small sh scripts in `~/.dojo/bin` instead of a symlink: `dojo`, and a `python3` that runs the Python it was installed with (on Windows, `python3` on PATH is usually the Microsoft Store stub). The harness line puts `~/.dojo/bin` first on PATH, so the MCP shim and hooks find a working `python3`.
 
-Verified: a pane on a Windows 11 host over ssh (`make smoke HOST=...`), the remote setup there, and Claude Code on that host reaching the bus through the tunnel. Codex on a Windows host is not verified: its config hooks call `python3 "$HOME/.dojo/dojo-mcp.py" hook`, which depends on the shell Codex uses for hook commands there.
+Claude Code on a Windows host reaches the bus through the tunnel. Codex on a Windows host has not been tried: its config hooks call `python3 "$HOME/.dojo/dojo-mcp.py" hook`, which depends on the shell Codex uses for hook commands there.
 
 Two remote panes on the same host share the forwarded port: the first pane's tunnel serves both (ssh warns about the second forward). If the first pane closes, the second loses the bus until you reopen it.
 
@@ -209,27 +211,6 @@ To install the peer rule permanently as well (for sessions started outside the a
 | `tools/snippets/pi-APPEND_SYSTEM.md` | `~/.pi/agent/APPEND_SYSTEM.md` |
 
 `tools/snippets/claude-settings.json` and `tools/snippets/claude-mcp.json` are exactly what the app passes to Claude at launch (tests keep them equal). You do not need to install them. A by-hand equivalent of the MCP part is `claude mcp add --scope user dojo -- sh -c 'exec python3 "$HOME/.dojo/dojo-mcp.py"'`; the tools only work in a pane, where `DOJO_TOKEN` is set.
-
-<a id="what-was-verified-and-what-needs-a-human"></a>
-## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> What was verified, and what needs a human
-
-Verified without a human:
-
-- `swift test`, 64 tests: the bus operations, the `[from: ...]` prefix, refusal and queueing at a prompt, delivery into a running pane and the queue as one input, the owner-typing and unsent-text holds, control-character stripping, the HTTP server over loopback, the local and ssh command lines (parsed back by a real POSIX shell), and the snippets equal to what the app passes.
-- Python tests, 13: the shim speaking MCP (initialize, tools/list, tools/call, errors) over pipes, the CLI, `dojo hook` and `dojo install`.
-- `sh tools/test_runner_start.sh`: the Runner pick against a stub runner and a stub Hub: the largest model with a FITS verdict wins, with the `--kv` setting the verdict names.
-- `make smoke`: the bundled app opens a pane running `echo ok`, sees `ok` on its screen, gets an answer from its own bus, and quits with exit code 0.
-- Probes against a stand-in bus (not part of the test suite), on this Mac:
-  - Claude Code 2.1.311: `claude -p` with the app's `--settings` and `--mcp-config` POSTed hook events with the pane token, and the dojo `panes` tool reached the bus.
-  - Codex 0.163.0: command hooks receive `DOJO_TOKEN` (hook trust bypassed for the probe only), and the shim gets `DOJO_TOKEN` through `env_vars` and reaches the bus.
-  - pi 0.85.1 and 1.4.0, with the app's exact launch line: the extension registers Runner's models and picks the one given; it reports session start, prompt submit and settle; a message typed as bracketed paste plus Enter arrives as one multi-line user message. With pi 1.4.0 the extension's five events still fire; a 0.6B model on Runner answered a `[from: claude-1]` line on its own screen rather than with `dojo send`, so the pane spells the command out in pi's launch prompt, along with `curl -sL` for web pages (a small model's bare `curl -s` shows nothing on a redirect) and a preference for RSS feeds.
-
-Needs a human click-through:
-
-- The window: adding and closing panes, the grid, header colours, the picker, the paper ground under dark mode.
-- Claude, Codex and pi panes messaging each other in the real window, including a message queued at a real permission prompt.
-- The first-run Codex config append and the hook-trust bypass taking effect.
-- A remote pane over SSH with the reverse tunnel, and a real Runner.
 
 <a id="not-built"></a>
 ## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> Not built
