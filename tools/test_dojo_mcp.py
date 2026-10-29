@@ -457,6 +457,59 @@ x = true
             self.assertNotIn("notes", parsed)
             self.assertEqual(list(parsed["mcp_servers"]), ["dojo"])
 
+    def test_migration_ignores_quote_sequences_in_comments_and_other_strings(self):
+        mod = load_shim()
+        samples = [
+            'model = "x" # a triple quote """\n',
+            "note = 'a triple quote \"\"\" is literal'\n",
+            'note = "three apostrophes \'\'\' are ordinary text"\n',
+            'note = """A literal \'\'\' inside a basic string.\nStill text.\n"""\n',
+            'note = """\n# Xyntetik Harness Supervisor is part of this value.\n"""\n',
+            'matrix = [\n [1, 2], # """\n [3, 4]\n]\n',
+        ]
+        for sample in samples:
+            with self.subTest(sample=sample):
+                original = sample + self.OLD
+                expected = tomllib.loads(original)
+                migrated = tomllib.loads(mod.without_old_block(original) + mod.codex_block())
+                for key, value in tomllib.loads(sample).items():
+                    self.assertEqual(migrated.get(key), value)
+                self.assertEqual(list(migrated["mcp_servers"]), ["dojo"])
+                self.assertEqual(migrated["projects"], expected["projects"])
+
+    def test_install_uses_real_tables_and_preserves_the_original_backup(self):
+        mod = load_shim()
+        for spelling in ("[mcp_servers.xhs]", '[mcp_servers."xhs"]'):
+            with self.subTest(spelling=spelling), tempfile.TemporaryDirectory() as home:
+                root = os.path.join(home, ".dojo")
+                os.makedirs(root)
+                shutil.copy(SHIM, os.path.join(root, "dojo-mcp.py"))
+                os.makedirs(os.path.join(home, ".codex"))
+                config = os.path.join(home, ".codex", "config.toml")
+                original = ('developer_instructions = """\n'
+                            '[mcp_servers.xhs] and [mcp_servers.dojo] are examples.\n'
+                            '"""\n' + self.OLD.replace("[mcp_servers.xhs]", spelling))
+                with open(config, "w") as f:
+                    f.write(original)
+                for _ in range(2):
+                    self.assertEqual(mod.install(home=home, out=io.StringIO(), windows=False), 0)
+                    with open(config) as f:
+                        parsed = tomllib.loads(f.read())
+                    self.assertEqual(list(parsed["mcp_servers"]), ["dojo"])
+                    with open(config + ".before-dojo") as f:
+                        self.assertEqual(f.read(), original)
+
+    def test_unicode_escaped_table_keys_do_not_consume_neighboring_tables(self):
+        mod = load_shim()
+        original = ('[mcp_servers.xhs]\ncommand = "sh"\n'
+                    '[features."\\U00000078"]\nenabled = true\n'
+                    '[projects."a]b"]\ntrust_level = "trusted"\n')
+        migrated = tomllib.loads(mod.without_old_block(original) + mod.codex_block())
+        self.assertEqual(migrated["features"], tomllib.loads(original)["features"])
+        self.assertEqual(migrated["projects"], tomllib.loads(original)["projects"])
+        escaped_old = '[mcp_servers."\\U00000078hs"]\ncommand = "sh"\n'
+        self.assertNotIn("xhs", tomllib.loads(mod.without_old_block(escaped_old) + mod.codex_block())["mcp_servers"])
+
     def test_top_level_settings_before_the_old_block_survive(self):
         import importlib.util
         spec = importlib.util.spec_from_file_location("dojo_mcp3", SHIM)

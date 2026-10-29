@@ -94,6 +94,8 @@ make smoke   # launch proof: two panes, swapped, a click, typed keys echoed back
 make smoke HOST=user@box   # the same, with the pane on that host over ssh
 ```
 
+The pi extension tests need Node.js 22.18 or later. They check actual editor submissions, including local commands and autocomplete.
+
 The Swift tests cover the bus and its delivery rules, the command lines (parsed back by a real POSIX shell) and the snippets; the Python tests cover the shim speaking MCP over pipes, the `dojo` command, the hooks, the install and the migration; the shell test covers the Runner pick against a stub runner and Hub. The `ci` workflow runs all of it on every pull request.
 
 `DOJO_PORT` overrides the bus port. There is no other setting. The only files the app keeps are `~/.dojo/hosts` and `~/.dojo/folders` (the hosts and start folders you used, latest first, one per line) and `~/.dojo/runner/` (Runner's binary, its roster copy, the 16 MiB model heads, the fits list and your model choice); edit or delete them by hand.
@@ -195,7 +197,7 @@ dojo state pi-1
 | Codex | `[mcp_servers.dojo]` in `~/.codex/config.toml` | command hooks in the same file (`dojo hook`): SessionStart, UserPromptSubmit, PermissionRequest, PostToolUse, Stop, Interrupt | `-c developer_instructions` |
 | pi | the `dojo` command (pi has no MCP by design; it runs `dojo` with its bash tool). The pane passes `--tools read,bash,edit,write`, so a `defaultTools` setting of yours cannot leave it without bash, and `--tui-mode fullscreen`, so the composer sits at the bottom of the pane whatever your `tuiMode` setting says | the `dojo-pi.ts` extension: session_start, agent_start, agent_settled, ui_prompt_start, ui_prompt_end | `--append-system-prompt` |
 
-The pi extension also registers Runner as pi's `runner` provider.
+The pi extension also registers Runner as pi's `runner` provider. It observes the editor submission callback to report prompts, built-in commands and shell lines; accepting autocomplete does not release the hold.
 
 <a id="safety-rules"></a>
 ## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> Safety rules

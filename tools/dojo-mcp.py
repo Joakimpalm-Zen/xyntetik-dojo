@@ -229,50 +229,103 @@ OLD_SERVER = "[mcp_servers.xhs]"
 OLD_SCRIPT = "xhs-mcp.py"
 
 
-def without_old_block(text):
-    """The config text with the old name's server table (its subtables too), marker and hook stanzas
-    removed. A [[hooks.X]] group goes only when every hook in it is the old shim's; a comment above a
-    table belongs to that table. Line endings are kept."""
-    nl = "\r\n" if "\r\n" in text else "\n"
-    # Stanzas: (header, lines). A header line opens a stanza; comment and blank lines directly above it
-    # belong to it, so a comment the owner wrote for the next table is not lost with a dropped stanza.
-    # A line inside a multi-line string is never a header, and a stanza's header is the line that
-    # opened it, never something found in its contents. The top-level stanza has no header.
-    def delimiters(delimiter, line):
-        # Occurrences that open or close a string: in a basic string an escaped quote (\\""") does not.
-        if delimiter == "'''":
-            return line.count(delimiter)
-        return len(re.findall(r'(?<!\\)"""', line.replace("\\\\", "")))
-
-    stanzas, pending, in_string = [], [], None
-    for line in text.splitlines(keepends=True):
-        if in_string:
-            if stanzas:
-                stanzas[-1][1].append(line)
+def toml_stanzas(text, strip_old_marker=False):
+    """Return normalized table headers and their original source lines, including the root stanza."""
+    # Keep source lines intact, but recognize tables only outside strings, comments and arrays.
+    # A lexical scan matters here: counting triple quotes also counts examples and inline comments.
+    def scan(line, quote, depth):
+        i = 0
+        while i < len(line):
+            c = line[i]
+            if quote:
+                if quote[0] == '"' and c == "\\":
+                    i += 2
+                    continue
+                if line.startswith(quote, i):
+                    i += len(quote)
+                    if len(quote) == 3:
+                        # A multiline closing delimiter may include one or two trailing quotes.
+                        for _ in range(2):
+                            if i < len(line) and line[i] == quote[0]:
+                                i += 1
+                    quote = None
+                else:
+                    i += 1
+            elif c == "#":
+                break
+            elif c in "\"'":
+                quote = c * 3 if line.startswith(c * 3, i) else c
+                i += len(quote)
             else:
-                stanzas.append(("", [line]))
-            if delimiters(in_string, line) % 2 == 1:
-                in_string = None
+                if c in "[{":
+                    depth += 1
+                elif c in "]}":
+                    depth -= 1
+                i += 1
+        return quote, depth
+
+    key = r"(?:[A-Za-z0-9_-]+|\"(?:\\.|[^\"\\])*\"|'[^']*')"
+    table = re.compile(r"\s*(\[\[?)\s*(" + key + r"(?:\s*\.\s*" + key + r")*)\s*(\]\]?)\s*(?:#.*)?$")
+
+    def table_header(line):
+        match = table.fullmatch(line.rstrip("\r\n"))
+        if not match or len(match[1]) != len(match[3]):
+            return None
+        parts = []
+        for part in re.findall(key, match[2]):
+            if part.startswith("'"):
+                part = part[1:-1]
+            elif part.startswith('"'):
+                # TOML basic keys share JSON escapes and also allow eight-digit Unicode escapes.
+                # Decode left to right so an escaped backslash before U remains literal text.
+                decoded, i = [], 1
+                escapes = {"b": "\b", "t": "\t", "n": "\n", "f": "\f", "r": "\r", '"': '"', "\\": "\\"}
+                while i < len(part) - 1:
+                    if part[i] != "\\":
+                        decoded.append(part[i])
+                        i += 1
+                        continue
+                    code = part[i + 1]
+                    if code in "uU":
+                        width = 4 if code == "u" else 8
+                        decoded.append(chr(int(part[i + 2:i + 2 + width], 16)))
+                        i += 2 + width
+                    else:
+                        decoded.append(escapes[code])
+                        i += 2
+                part = "".join(decoded)
+            parts.append(part if re.fullmatch(r"[A-Za-z0-9_-]+", part) else json.dumps(part))
+        return match[1] + ".".join(parts) + match[3]
+
+    stanzas, pending, quote, depth = [], [], None, 0
+    for line in text.splitlines(keepends=True):
+        outside = quote is None and depth == 0
+        h = table_header(line) if outside else None
+        if h is not None:
+            stanzas.append((h, pending + [line]))
+            pending = []
             continue
-        if line.lstrip().startswith("["):
-            m = re.match(r"\s*(\[\[?[^\]]*\]\]?)", line)
-            stanzas.append((m.group(1) if m else "", pending + [line]))
-            pending = []
-        elif line.lstrip().startswith("#") or not line.strip():
-            pending.append(line)
-        else:
-            if not stanzas:
-                stanzas.append(("", []))
-            stanzas[-1][1].extend(pending)
-            pending = []
-            stanzas[-1][1].append(line)
-            for delimiter in ('"""', "'''"):
-                if delimiters(delimiter, line) % 2 == 1:
-                    in_string = delimiter
+        if outside and (line.lstrip().startswith("#") or not line.strip()):
+            if not (strip_old_marker and line.lstrip().startswith(OLD_MARKER)):
+                pending.append(line)
+            continue
+        if not stanzas:
+            stanzas.append(("", []))
+        stanzas[-1][1].extend(pending)
+        pending = []
+        stanzas[-1][1].append(line)
+        quote, depth = scan(line, quote, depth)
     if pending:
         if not stanzas:
             stanzas.append(("", []))
         stanzas[-1][1].extend(pending)
+
+    return stanzas
+
+
+def without_old_block(text):
+    """Remove the old bus tables and hook groups while preserving every other source line."""
+    stanzas = toml_stanzas(text, strip_old_marker=True)
 
     def header(st):
         return st[0]
@@ -297,8 +350,8 @@ def without_old_block(text):
                     break
             if children and all(old_child(stanzas[j]) for j in children):
                 drop.add(i)
-    kept = [l for i, st in enumerate(stanzas) if i not in drop for l in st[1] if not l.startswith(OLD_MARKER)]
-    return "".join(kept).rstrip("\r\n") + nl
+    kept = [l for i, st in enumerate(stanzas) if i not in drop for l in st[1]]
+    return "".join(kept)
 
 
 def install(home=None, out=sys.stdout, windows=None):
@@ -331,13 +384,15 @@ def install(home=None, out=sys.stdout, windows=None):
         if os.path.exists(config):
             with open(config, encoding="utf-8", newline="") as f:
                 text = f.read()
-        if OLD_SERVER in text:
-            shutil.copy2(config, config + ".before-dojo")  # the file as it was, byte for byte
+        headers = {header for header, _ in toml_stanzas(text)}
+        if any(h == OLD_SERVER or h.startswith(OLD_SERVER[:-1] + ".") for h in headers):
+            if not os.path.exists(config + ".before-dojo"):
+                shutil.copy2(config, config + ".before-dojo")  # preserve the first backup, byte for byte
             text = without_old_block(text)
             with open(config, "w", encoding="utf-8", newline="") as f:
                 f.write(text)
             out.write("dojo install: removed the old xhs block from %s (the file as it was: %s.before-dojo)\n" % (config, config))
-        if "[mcp_servers.dojo]" in text:
+        if "[mcp_servers.dojo]" in headers:
             out.write("dojo install: %s already has [mcp_servers.dojo], left as is\n" % config)
         else:
             with open(config, "a", encoding="utf-8") as f:

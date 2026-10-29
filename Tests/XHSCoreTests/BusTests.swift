@@ -445,6 +445,24 @@ import Testing
         #expect(bus.info("codex-1")?.state == before, "a local command is not a model turn")
     }
 
+    @Test func piAgentStartDoesNotClearANewerCompletionDraft() {
+        let io = MockIO()
+        let token = bus.add(name: "pi-1", kind: .pi, io: io)
+        hook(token, "SessionStart")
+        bus.noteOwnerInput("pi-1", .text)
+        bus.noteOwnerInput("pi-1", .submit)
+        hook(token, "UserInputSubmitted")
+        #expect(bus.info("pi-1")?.draft == false)
+        bus.noteOwnerInput("pi-1", .text)
+        bus.noteOwnerInput("pi-1", .submit) // accepts a completion; no editor submission
+        hook(token, "UserPromptSubmit") // the earlier prompt finally starts its agent turn
+        #expect(bus.info("pi-1")?.draft == true)
+        bus.now = { Date().addingTimeInterval(60) }
+        _ = call("send", ["pane": "pi-1", "text": "wait"])
+        bus.tick()
+        #expect(io.written.isEmpty)
+    }
+
     @Test func theTerminalsOwnRepliesNeitherHoldNorCancelAnything() {
         var fire: (() -> Void)?
         bus.schedule = { _, work in fire = work }
