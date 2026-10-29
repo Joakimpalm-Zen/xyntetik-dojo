@@ -160,7 +160,8 @@ public enum Launcher {
         let local = host == nil || host!.isEmpty
         let directory = directory?.isEmpty == false ? directory : nil
         if kind == .shell, local {
-            return LaunchPlan(executable: "/bin/sh", args: ["-c", "echo ok"], environment: env, directory: directory)
+            // The smoke types a line into this pane and expects it back.
+            return LaunchPlan(executable: "/bin/sh", args: ["-c", "read line; echo \"ok $line\""], environment: env, directory: directory)
         }
         let harness = harnessWords(kind: kind, paneName: paneName, port: port, runnerModel: runnerModel)
         let path: ShellWord = .raw(#"PATH="$HOME/.xhs/bin:$PATH""#)
