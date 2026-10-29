@@ -23,11 +23,13 @@ public enum HookMapping {
 
 /// What a harness shows when it is ready and nothing is going on, for a harness that does not report its
 /// session start before the first prompt. Codex creates its session, and sends SessionStart, with the first
-/// prompt, so a fresh Codex pane would wait at `starting` for the owner to type something.
+/// prompt, so a fresh Codex pane would wait at `starting` for the owner to type something. Runner prints
+/// its listening line once the model is loaded.
 public enum IdleFingerprint {
     public static func text(for kind: HarnessKind) -> String? {
         switch kind {
         case .codex: return "Ask Codex to do anything"
+        case .runner: return "server listening on"
         default: return nil
         }
     }

@@ -10,6 +10,7 @@ build:
 test:
 	swift test
 	python3 -m unittest discover -s tools -p 'test_*.py'
+	sh tools/test_runner_start.sh
 
 # The app icon: the Ensō from packaging/make-icon.swift, rendered at every size and packed into an icns.
 build/AppIcon.icns: packaging/make-icon.swift
@@ -23,7 +24,7 @@ app: build build/AppIcon.icns
 	rm -rf $(APP)
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources/tools
 	cp $(BIN) $(APP)/Contents/MacOS/
-	cp tools/xhs-mcp.py tools/xhs-pi.ts $(APP)/Contents/Resources/tools/
+	cp tools/xhs-mcp.py tools/xhs-pi.ts tools/runner-start.sh $(APP)/Contents/Resources/tools/
 	cp packaging/Info.plist $(APP)/Contents/Info.plist
 	cp build/AppIcon.icns $(APP)/Contents/Resources/AppIcon.icns
 	codesign --force --sign - $(APP)

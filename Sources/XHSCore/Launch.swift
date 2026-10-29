@@ -142,6 +142,9 @@ public enum Launcher {
                                       .literal("--provider"), .literal("runner")]
             if let runnerModel { words += [.literal("--model"), .literal(runnerModel)] }
             return words + [.literal("--tools"), .literal(piTools), .literal("--append-system-prompt"), .literal(prompt + " " + piReplyHint)]
+        case .runner:
+            // Finds or fetches Runner, picks a model that fits this machine and serves it (tools/runner-start.sh).
+            return [.literal("/bin/sh"), .raw(#""$HOME/.xhs/runner-start.sh""#)]
         case .shell:
             return [.literal("/bin/sh"), .literal("-c"), .literal("echo ok")]
         }
@@ -244,7 +247,7 @@ public enum Launcher {
 
     /// What a local pi pane shows when Runner does not answer.
     public static func runnerOfflinePlan() -> LaunchPlan {
-        let message = "Runner is not answering at \(runnerURL).\\nStart it with: runner -m model.gguf --serve\\nThen close this pane and add pi again.\\n"
+        let message = "Runner is not answering at \(runnerURL).\\nAdd a Runner pane (the + button): it fetches Runner if needed, picks a model that fits this Mac and serves it.\\nThen close this pane and add pi again.\\n"
         return LaunchPlan(executable: "/bin/sh", args: ["-c", "printf '\(message)'"], environment: [:])
     }
 

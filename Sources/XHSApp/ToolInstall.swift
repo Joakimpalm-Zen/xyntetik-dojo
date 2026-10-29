@@ -2,7 +2,7 @@ import Foundation
 
 /// Puts the shim and the pi extension in ~/.xhs and runs "xhs install" (the xhs command and the Codex entries).
 enum ToolInstall {
-    static let files = ["xhs-mcp.py", "xhs-pi.ts"]
+    static let files = ["xhs-mcp.py", "xhs-pi.ts", "runner-start.sh"]
 
     /// Contents/Resources/tools in the app bundle, or tools/ in the source tree for `swift run`.
     static func sourceDirectory() -> URL? {

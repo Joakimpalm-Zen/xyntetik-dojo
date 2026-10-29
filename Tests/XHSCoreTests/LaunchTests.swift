@@ -75,12 +75,12 @@ import Testing
     }
 
     @Test func windowsHostRunsTheSameInnerCommandInMsysBash() throws {
-        let posix = Launcher.plan(kind: .claude, paneName: "claude-3", host: "zen@box", port: 7788, token: "tok",
+        let posix = Launcher.plan(kind: .claude, paneName: "claude-3", host: "me@box", port: 7788, token: "tok",
                                   runnerModel: nil, loginShell: "/bin/zsh")
-        let windows = Launcher.plan(kind: .claude, paneName: "claude-3", host: "zen@box", port: 7788, token: "tok",
+        let windows = Launcher.plan(kind: .claude, paneName: "claude-3", host: "me@box", port: 7788, token: "tok",
                                     runnerModel: nil, loginShell: "/bin/zsh", remoteShell: .windows)
         let ssh = shellArgs(windows.args[3], home: home)
-        #expect(Array(ssh.prefix(5)) == ["ssh", "-t", "-R", "7788:127.0.0.1:7788", "zen@box"])
+        #expect(Array(ssh.prefix(5)) == ["ssh", "-t", "-R", "7788:127.0.0.1:7788", "me@box"])
         #expect(ssh.count == 6)
         let remote = ssh[5]
         let head = #"set MSYS2_PATH_TYPE=inherit&& C:\msys64\usr\bin\bash.exe -lc "eval \"$^(echo "#
@@ -103,8 +103,8 @@ import Testing
         #expect(RemoteShell.detect(probeOutput: "Windows_NT \r\n") == .windows)
         #expect(RemoteShell.detect(probeOutput: "%OS%\n") == .posix)
         #expect(RemoteShell.detect(probeOutput: "") == .posix)
-        #expect(shellArgs(Shell.line(Launcher.probeWords(host: "zen@box")))
-                == ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "zen@box", "echo %OS%"])
+        #expect(shellArgs(Shell.line(Launcher.probeWords(host: "me@box")))
+                == ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "me@box", "echo %OS%"])
     }
 
     @Test func remoteSmokeShellGoesOverSSH() {
@@ -127,7 +127,7 @@ import Testing
         #expect(remote.directory == nil)
         let inner = shellArgs(shellArgs(remote.args[3], home: home)[5], home: "/remote/home")[4]
         #expect(inner.hasPrefix("cd '/srv/it'\\''s here' && exec env "))
-        let windows = Launcher.plan(kind: .codex, paneName: "codex-1", host: "zen@box", port: 7788, token: "t",
+        let windows = Launcher.plan(kind: .codex, paneName: "codex-1", host: "me@box", port: 7788, token: "t",
                                     runnerModel: nil, loginShell: "/bin/zsh", remoteShell: .windows, directory: #"C:\Users\zen\repo"#)
         #expect(Launcher.windowsInnerCommand(shellArgs(windows.args[3], home: home)[5])?.hasPrefix(#"cd 'C:\Users\zen\repo' && exec env "#) == true)
     }
@@ -136,10 +136,10 @@ import Testing
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("xhs-hosts-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: file) }
         #expect(RecentHosts.load(file) == [])
-        #expect(RecentHosts.remember("zen@box", in: file) == ["zen@box"])
-        #expect(RecentHosts.remember("lab", in: file) == ["lab", "zen@box"])
-        #expect(RecentHosts.remember("zen@box", in: file) == ["zen@box", "lab"])
-        #expect(RecentHosts.load(file) == ["zen@box", "lab"])
+        #expect(RecentHosts.remember("me@box", in: file) == ["me@box"])
+        #expect(RecentHosts.remember("lab", in: file) == ["lab", "me@box"])
+        #expect(RecentHosts.remember("me@box", in: file) == ["me@box", "lab"])
+        #expect(RecentHosts.load(file) == ["me@box", "lab"])
         for i in 0..<20 { RecentHosts.remember("h\(i)", in: file) }
         #expect(RecentHosts.load(file).count == RecentHosts.limit)
         try "  \n-bad\nok-host\n\n".write(to: file, atomically: true, encoding: .utf8)
@@ -198,5 +198,11 @@ import Testing
         for name in ["CLAUDE.md-snippet.md", "codex-AGENTS.md-snippet.md", "pi-APPEND_SYSTEM.md"] {
             #expect(try !snippet(name).contains("\u{2014}"))
         }
+    }
+
+    @Test func aRunnerPaneRunsTheStartScript() {
+        let line = Shell.line(Launcher.harnessWords(kind: .runner, paneName: "runner-1", port: 7788, runnerModel: nil))
+        #expect(line == "/bin/sh \"$HOME/.xhs/runner-start.sh\"")
+        #expect(PaneNames.next(for: .runner, taken: []) == "runner-1")
     }
 }

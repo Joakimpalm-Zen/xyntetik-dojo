@@ -68,14 +68,16 @@ import Testing
         #expect((result["note"] as? String)?.contains("never types into a prompt") == true)
         #expect(targetIO.written.isEmpty)
         bus.tick()
+        #expect(targetIO.written.isEmpty)
         hook(targetToken, "PostToolUse")
-        #expect(targetIO.written.isEmpty)
-        hook(targetToken, "Notification", ["notification_type": "permission_prompt"])
-        bus.tick()
-        #expect(targetIO.written.isEmpty)
-        hook(targetToken, "Stop")
         #expect(targetIO.typed == "[from: claude-1] yes\r")
         #expect(bus.info("codex-1")?.queued == 0)
+        hook(targetToken, "Notification", ["notification_type": "permission_prompt"])
+        _ = call("send", ["pane": "codex-1", "text": "again"])
+        bus.tick()
+        #expect(targetIO.typed == "[from: claude-1] yes\r")
+        hook(targetToken, "Stop")
+        #expect(targetIO.typed == "[from: claude-1] yes\r[from: claude-1] again\r")
     }
 
     @Test func startingPaneQueuesUntilSessionStart() {
@@ -85,33 +87,66 @@ import Testing
         #expect(targetIO.typed == "[from: claude-1] hello\r")
     }
 
-    @Test func runningPaneQueues() {
+    @Test func runningPaneGetsTheMessageIntoItsOwnInput() {
         hook(targetToken, "UserPromptSubmit")
         let (_, result) = call("send", ["pane": "codex-1", "text": "later"])
-        #expect(result["delivered"] as? Bool == false)
+        #expect(result["delivered"] as? Bool == true)
         #expect(result["state"] as? String == "running")
-        #expect(targetIO.written.isEmpty)
+        #expect((result["note"] as? String)?.contains("busy") == true)
+        #expect(targetIO.typed == "[from: claude-1] later\r")
+        #expect(bus.info("codex-1")?.state == .running)
     }
 
-    @Test func oneMessagePerIdle() {
+    @Test func theWholeQueueGoesAsOneInput() {
+        hook(targetToken, "SessionStart")
         hook(targetToken, "UserPromptSubmit")
+        bus.noteOwnerInput("codex-1")
+        targetIO.bracketedPasteEnabled = true
         _ = call("send", ["pane": "codex-1", "text": "one"])
         _ = call("send", ["pane": "codex-1", "text": "two"])
+        #expect(bus.info("codex-1")?.queued == 2)
+        bus.noteOwnerInput("codex-1", .clear)
         hook(targetToken, "Stop")
-        #expect(targetIO.typed == "[from: claude-1] one\r")
-        #expect(bus.info("codex-1")?.state == .running)
+        #expect(targetIO.written.isEmpty)
+        bus.now = { Date().addingTimeInterval(10) }
         bus.tick()
-        #expect(targetIO.typed == "[from: claude-1] one\r")
-        hook(targetToken, "UserPromptSubmit")
-        hook(targetToken, "Stop")
-        #expect(targetIO.typed == "[from: claude-1] one\r[from: claude-1] two\r")
+        #expect(targetIO.typed.hasSuffix("[from: claude-1] one\n[from: claude-1] two\u{1b}[201~\r"))
+        #expect(bus.info("codex-1")?.queued == 0)
+    }
+
+    @Test func unsentOwnerTextHoldsTheQueueUntilItIsSentOrCleared() {
+        var clock = Date(timeIntervalSince1970: 1000)
+        bus.now = { clock }
+        hook(targetToken, "SessionStart")
+        bus.noteOwnerInput("codex-1", .text)
+        bus.noteOwnerInput("codex-1", .text)
+        let (_, result) = call("send", ["pane": "codex-1", "text": "wait"])
+        #expect(result["delivered"] as? Bool == false)
+        #expect((result["note"] as? String)?.contains("unsent text") == true)
+        #expect(bus.info("codex-1")?.draft == true)
+        clock += 60
+        bus.tick()
+        #expect(targetIO.written.isEmpty)
+        bus.noteOwnerInput("codex-1", .delete)
+        bus.noteOwnerInput("codex-1", .other)
+        clock += 60
+        bus.tick()
+        #expect(targetIO.written.isEmpty)
+        bus.noteOwnerInput("codex-1", .delete)
+        #expect(bus.info("codex-1")?.draft == false)
+        clock += 60
+        bus.tick()
+        #expect(targetIO.typed == "[from: claude-1] wait\r")
+        bus.noteOwnerInput("codex-1", .text)
+        bus.noteOwnerInput("codex-1", .clear)
+        #expect(bus.info("codex-1")?.draft == false)
     }
 
     @Test func holdsWhileTheOwnerTypes() {
         var clock = Date(timeIntervalSince1970: 1000)
         bus.now = { clock }
         hook(targetToken, "SessionStart")
-        bus.noteOwnerInput("codex-1")
+        bus.noteOwnerInput("codex-1", .other)
         let (_, result) = call("send", ["pane": "codex-1", "text": "wait"])
         #expect(result["delivered"] as? Bool == false)
         clock += 1
@@ -164,11 +199,12 @@ import Testing
 
     @Test func stateReportsQueueAndModel() {
         hook(targetToken, "SessionStart", ["model": "gpt-x"])
-        hook(targetToken, "UserPromptSubmit")
+        hook(targetToken, "PermissionRequest")
         _ = call("send", ["pane": "codex-1", "text": "q"])
         let (_, result) = call("state", ["pane": "codex-1"])
-        #expect(result["state"] as? String == "running")
+        #expect(result["state"] as? String == "prompt")
         #expect(result["queued"] as? Int == 1)
+        #expect(result["draft"] as? Bool == false)
         #expect(result["model"] as? String == "gpt-x")
         #expect(result["kind"] as? String == "codex")
     }
@@ -188,9 +224,11 @@ import Testing
         hook(targetToken, "SessionStart")
         hook(targetToken, "UserPromptSubmit")
         targetIO.screen = "Working (1s)"
+        bus.noteOwnerInput("codex-1", .text)
         call("send", ["pane": "codex-1", "text": "hi"])
         #expect(bus.info("codex-1")?.state == .running)
         #expect(targetIO.written.isEmpty)
+        bus.noteOwnerInput("codex-1", .clear)
         for s in 1...14 {
             clock = clock.addingTimeInterval(1)
             if s < 6 { targetIO.screen = "Working (\(s)s)" }
@@ -246,7 +284,7 @@ import Testing
     @Test func renamedPaneKeepsItsTokenAndQueueAndCarriesTheNewName() {
         hook(senderToken, "SessionStart")
         hook(targetToken, "SessionStart")
-        hook(targetToken, "UserPromptSubmit")
+        hook(targetToken, "PermissionRequest")
         #expect(call("send", ["pane": "codex-1", "text": "later"]).0 == 200)
         #expect(bus.rename("codex-1", to: "builder") == nil)
         #expect(bus.names == ["claude-1", "builder"])
@@ -260,6 +298,24 @@ import Testing
         #expect(bus.rename("builder", to: "claude-1") == "claude-1 is already open.")
         #expect(bus.rename("builder", to: "builder") == nil)
         #expect(bus.rename("codex-1", to: "other") == "no pane named 'codex-1'")
+    }
+
+    @Test func aRunnerPaneRunsOnceItListensAndTakesNoMessages() {
+        var clock = Date(timeIntervalSince1970: 1_000)
+        bus.now = { clock }
+        let io = MockIO()
+        bus.add(name: "runner-1", kind: .runner, io: io)
+        #expect(call("send", ["pane": "runner-1", "text": "hi"]).0 == 409)
+        io.screen = "Downloading Runner ..."
+        for _ in 0..<5 { clock += 1; bus.tick() }
+        #expect(bus.info("runner-1")?.state == .starting)
+        io.screen = "server listening on http://127.0.0.1:8080 — 1 slot sharing 8 threads"
+        for _ in 0..<5 { clock += 1; bus.tick() }
+        #expect(bus.info("runner-1")?.state == .running)
+        for _ in 0..<40 { clock += 1; bus.tick() }
+        #expect(bus.info("runner-1")?.state == .running)
+        #expect(call("send", ["pane": "runner-1", "text": "hi"]).0 == 409)
+        #expect(io.written.isEmpty)
     }
 
     @Test func removedPaneIsGone() {
