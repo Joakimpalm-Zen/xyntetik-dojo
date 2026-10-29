@@ -216,35 +216,36 @@ struct PickerSheet: View {
                         .tint(Color(Theme.teal))
                 }
             }
-            // The local model server has a row of its own, under the agents, with its state beside the button.
+            // The local model server has a section of its own under the agents: a heading, then the button
+            // with Runner's state beside it, then what the last Runner pane found to fit this Mac.
             let runnerPane = model.runnerPane
             let runnerUp = !model.runnerModel.isEmpty || runnerPane != nil
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text("Local model").foregroundStyle(.secondary)
-                Button { add(.runner) } label: { Text(HarnessKind.runner.title) }
-                    .controlSize(.large)
-                    .tint(Color(Theme.teal))
-                    .disabled(runnerPane != nil)
-                Text(runnerStatus(runnerPane))
-                    .font(.caption)
-                    .foregroundStyle(Color(runnerUp ? Theme.tealInk : Theme.coralInk))
-            }
-            if !model.runnerFits.isEmpty {
-                // What the last Runner pane found to fit this Mac; the served or chosen one is filled in.
-                HStack(spacing: 6) {
-                    Text("Fits").foregroundStyle(.secondary)
-                    ForEach(model.runnerFits, id: \.spelling) { fit in
-                        let current = fit.spelling == model.runnerChoice || (!model.runnerModel.isEmpty && model.runnerModel.contains(fit.stem))
+                HStack(alignment: .center, spacing: 10) {
+                    Button { add(.runner) } label: { Text(HarnessKind.runner.title) }
+                        .controlSize(.large)
+                        .tint(Color(Theme.teal))
+                        .disabled(runnerPane != nil)
+                    Text(runnerStatus(runnerPane))
+                        .font(.caption)
+                        .foregroundStyle(Color(runnerUp ? Theme.tealInk : Theme.coralInk))
+                }
+                ForEach(model.runnerFits, id: \.spelling) { fit in
+                    let current = fit.spelling == model.runnerChoice || (!model.runnerModel.isEmpty && model.runnerModel.contains(fit.stem))
+                    HStack(spacing: 8) {
                         Button(fit.id) { model.chooseRunnerModel(fit.spelling); model.picking = false }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
                             .tint(Color(current ? Theme.coral : Theme.teal))
-                            .help("\(fit.resident) GiB resident; \(fit.flags)")
+                        Text("\(fit.resident) GiB resident, \(fit.flags)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
+                    .lineLimit(1)
                 }
-                .font(.callout)
-                .lineLimit(1)
             }
+            .font(.callout)
             TextField("Host (empty for this Mac)", text: $form.host)
             if !model.recentHosts.isEmpty {
                 HStack(spacing: 6) {
