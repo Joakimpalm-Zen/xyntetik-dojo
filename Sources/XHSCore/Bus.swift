@@ -41,8 +41,11 @@ public final class Bus {
         let token: String
         var model: String
         var state: PaneState
-        var queue: [String] = []
+        /// Who sent what; the `[from: name]` line is built at delivery, so a renamed sender is named right.
+        var queue: [(sender: Pane, text: String)] = []
         var lastOwnerInput: Date?
+        /// The message text is in the composer and its Enter is still to come.
+        var enterPending = false
         /// Keystrokes of the owner's unsent text, as counted by `noteOwnerInput`.
         var draft = 0
         /// The screen as last seen by `tick`, and since when it has looked like that.
@@ -78,6 +81,10 @@ public final class Bus {
     /// and has not changed for this long.
     public var readyAfterQuiet: TimeInterval = 3
     public var now: () -> Date = { Date() }
+    /// Runs `work` after `delay` on the main queue; a test swaps it to fire by hand.
+    public var schedule: (TimeInterval, @escaping () -> Void) -> Void = { delay, work in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
 
     public init() {}
 
@@ -134,9 +141,9 @@ public final class Bus {
     }
 
     /// What an owner keystroke did to the pane's composer.
-    public enum OwnerKey {
-        /// Added text (a character, a paste, a newline inside the composer).
-        case text
+    public enum OwnerKey: Equatable {
+        /// Added this many characters (a key, a paste, an input-method commit, a recalled prompt).
+        case text(Int)
         /// Removed a character.
         case delete
         /// Sent the composer (Enter) or emptied it (Ctrl-C, Ctrl-U).
@@ -148,12 +155,12 @@ public final class Bus {
     /// The owner typed into the pane: hold relayed messages for a moment, and while unsent text remains.
     /// The count is a keystroke tally, so a word deleted at once can leave it high; Enter on an empty
     /// composer resets it.
-    public func noteOwnerInput(_ name: String, _ key: OwnerKey = .text) {
+    public func noteOwnerInput(_ name: String, _ key: OwnerKey = .text(1)) {
         guard let p = pane(named: name) else { return }
         p.lastOwnerInput = now()
         let before = p.draft
         switch key {
-        case .text: p.draft += 1
+        case .text(let n): p.draft += max(1, n)
         case .delete: p.draft = max(0, p.draft - 1)
         case .clear: p.draft = 0
         case .other: break
@@ -239,10 +246,10 @@ public final class Bus {
         let text = Delivery.sanitize(args["text"] as? String ?? "")
         guard !text.isEmpty else { return error(400, "text is empty") }
         guard text.count <= Bus.maxMessageLength else { return error(413, "text is longer than \(Bus.maxMessageLength) characters") }
-        let message = Delivery.line(from: sender.name, text: text)
-        target.queue.append(message)
+        let before = target.queue.count
+        target.queue.append((sender: sender, text: text))
         flush(target)
-        let delivered = !target.queue.contains(message)
+        let delivered = target.queue.count <= before
         var result: [String: Any] = ["pane": target.name, "delivered": delivered, "queued": target.queue.count, "state": target.state.rawValue]
         if delivered {
             if target.state == .running {
@@ -285,20 +292,27 @@ public final class Bus {
     /// there and has nothing unsent. A running harness keeps the input in its own queue and reads it
     /// when its current step ends, which is sooner than the end of its turn.
     private func flush(_ p: Pane) {
-        guard p.state == .idle || p.state == .running, !p.queue.isEmpty, p.draft == 0, let io = p.io else { return }
+        guard p.state == .idle || p.state == .running, !p.queue.isEmpty, p.draft == 0, !p.enterPending, let io = p.io else { return }
         if let last = p.lastOwnerInput, now().timeIntervalSince(last) < ownerQuietInterval { return }
-        let message = p.queue.joined(separator: "\n")
+        let message = p.queue.map { Delivery.line(from: $0.sender.name, text: $0.text) }.joined(separator: "\n")
         p.queue.removeAll()
         io.write(Delivery.bytes(message, bracketedPaste: io.bracketedPasteEnabled))
+        if p.kind != .shell { p.state = .running }
         if submitDelay > 0 {
-            DispatchQueue.main.asyncAfter(deadline: .now() + submitDelay) { [weak io] in
-                io?.write(Delivery.enter)
+            // Enter comes a moment later, and only if nothing changed meanwhile: a prompt that opened, or
+            // owner keys typed after the paste, would make Enter send the wrong thing.
+            p.enterPending = true
+            let pasted = now()
+            schedule(submitDelay) { [weak self, weak p, weak io] in
+                guard let self, let p else { return }
+                p.enterPending = false
+                let ownerTyped = p.lastOwnerInput.map { $0 > pasted } ?? false
+                if p.state == .idle || p.state == .running, p.draft == 0, !ownerTyped { io?.write(Delivery.enter) }
+                self.flush(p)
             }
         } else {
             io.write(Delivery.enter)
         }
-        // The harness is busy with the message now; its next idle event releases the next one.
-        if p.kind != .shell { p.state = .running }
         onChange?()
     }
 

@@ -39,16 +39,21 @@ case $url in
  {"id": "bolt-e4b", "tier": "tier2", "envelope": {"features": ["text"]}, "files": [{"repo": "nvidia/NVIDIA-Nemotron-3.5-Bolt-E4B-4GB", "name": "Nemotron-3.5-Bolt-E4B-Q4_K_M.gguf", "bytes": 6180446208}]},
  {"id": "qwen3-4b", "tier": "tier2", "envelope": {"features": ["text"]}, "files": [{"repo": "bartowski/Qwen_Qwen3-4B-GGUF", "name": "Qwen_Qwen3-4B-Q4_K_M.gguf", "bytes": 2500000000}]},
  {"id": "mtp-head", "tier": "tier1", "envelope": {"features": ["mtp"]}, "files": [{"repo": "x/y", "name": "head.gguf", "bytes": 100}]},
+ {"id": "split-20b", "tier": "tier1", "envelope": {"features": ["text"]}, "files": [{"repo": "x/Split-GGUF", "name": "Split-00001-of-00002.gguf", "bytes": 6500000000}, {"repo": "x/Split-GGUF", "name": "Split-00002-of-00002.gguf", "bytes": 6500000000}]},
+ {"id": "no-bytes", "tier": "tier2", "envelope": {"features": ["text"]}, "files": [{"repo": "x/nb", "name": "nb.gguf"}]},
+ {"id": "bad-head", "tier": "tier2", "envelope": {"features": ["text"]}, "files": [{"repo": "x/BadRepo", "name": "Bad.gguf", "bytes": 1000}]},
  {"id": "coming", "tier": "upcoming", "envelope": {"features": ["text"]}, "files": [{"repo": "x/z", "name": "z.gguf", "bytes": 100}]}
 ]}
 JSON
         ;;
+    *resolve/main/Bad*) printf '<html>captive portal</html>' > "$out" ;;
     *resolve/main/*) printf 'GGUF' > "$out" ;;
     *) exit 22 ;;
 esac
 STUB
 chmod +x "$tmp/bin/runner" "$tmp/bin/curl" "$tmp/bin/sysctl"
-run() { DOJO_RUNNER_HOME="$tmp/home" PATH="$tmp/bin:$PATH" sh "$here/runner-start.sh" --pick 2>"$tmp/log"; }
+# A comma-decimal locale must not change the arithmetic.
+run() { LANG=sv_SE.UTF-8 LC_ALL=sv_SE.UTF-8 DOJO_RUNNER_HOME="$tmp/home" PATH="$tmp/bin:$PATH" sh "$here/runner-start.sh" --pick 2>"$tmp/log"; }
 fail() { echo "$1"; cat "$tmp/log"; [ -f "$tmp/home/fits" ] && cat "$tmp/home/fits"; exit 1; }
 
 # An 8 GiB machine with little free: the 30B file is larger than RAM and never asked; the dense 8B is over
@@ -78,6 +83,13 @@ got=$(STUB_TOTAL_BYTES=17179869184 STUB_AVAIL=6.00 run)
 want="Serving ibm-granite/granite-4.2-8b-GGUF:granite-4.2-8b-Q4_K_M -c 8192 --kv q8 --mlock"
 [ "$got" = "$want" ] || fail "16 GiB pick: got '$got', want '$want'"
 grep -q "coder-30b: 16.33 GiB stay resident, more than half" "$tmp/log" || fail "the 30B skip is missing on 16 GiB"
+grep -q "split-20b: 12.11 GiB in 2 parts, more than half" "$tmp/log" || fail "the split model must be sized by the roster, not its first part"
+grep -q "no-bytes" "$tmp/log" && fail "a row without sizes must be skipped silently"
+# A split model that fits is served at the default context without a verdict; a head that is not GGUF is not kept.
+got=$(STUB_TOTAL_BYTES=34359738368 STUB_AVAIL=20.00 run)
+[ "$got" = "Serving x/Split-GGUF:Split-00001-of-00002 -c 16384 --kv q8 --mlock" ] || fail "32 GiB pick: got '$got'"
+grep -q "bad-head: could not fetch the file's first 16 MiB, skipped" "$tmp/log" || fail "a head that is not GGUF must be skipped"
+[ ! -e "$tmp/home/heads/x-BadRepo-Bad.gguf" ] || fail "a head that is not GGUF must not be kept"
 
 # Offline: the kept roster copy serves.
 mv "$tmp/bin/curl" "$tmp/bin/curl.off"; printf '#!/bin/sh\nexit 6\n' > "$tmp/bin/curl"; chmod +x "$tmp/bin/curl"

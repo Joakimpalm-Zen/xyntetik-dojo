@@ -16,6 +16,7 @@ the sender from it.
 """
 import json
 import os
+import shutil
 import sys
 import urllib.error
 import urllib.request
@@ -108,6 +109,8 @@ def bus_call(op, payload, timeout=10):
 # ---------------------------------------------------------------- MCP server
 
 def tool_payload(name, args):
+    if not isinstance(args, dict):
+        raise ValueError("arguments must be an object, got %s" % type(args).__name__)
     if name == "panes":
         return {}
     if name == "send":
@@ -144,7 +147,11 @@ def handle(msg):
             return {"jsonrpc": "2.0", "id": mid, "error": {"code": -32602, "message": "Unknown tool: %s" % name}}
         arguments = params.get("arguments") or {}
         try:
-            out = bus_call(name, tool_payload(name, arguments))
+            payload = tool_payload(name, arguments)
+        except (TypeError, ValueError, OverflowError) as e:
+            return {"jsonrpc": "2.0", "id": mid, "error": {"code": -32602, "message": "Invalid arguments for %s: %s" % (name, e)}}
+        try:
+            out = bus_call(name, payload)
             if name == "read":
                 text = out.get("text", "")
             else:
@@ -169,7 +176,11 @@ def serve(stdin=sys.stdin, stdout=sys.stdout):
         except ValueError:
             reply = {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}}
         else:
-            reply = handle(msg)
+            try:
+                reply = handle(msg)
+            except Exception as e:  # a server that dies takes all four tools with it for the session
+                mid = msg.get("id") if isinstance(msg, dict) else None
+                reply = {"jsonrpc": "2.0", "id": mid, "error": {"code": -32603, "message": "Internal error: %s" % e}}
         if reply is not None:
             stdout.write(json.dumps(reply) + "\n")
             stdout.flush()
@@ -218,25 +229,53 @@ OLD_SCRIPT = "xhs-mcp.py"
 
 
 def without_old_block(text):
-    """The config text with the old name's server table, marker and hook stanzas removed."""
-    stanzas = []
+    """The config text with the old name's server table (its subtables too), marker and hook stanzas
+    removed. A [[hooks.X]] group goes only when every hook in it is the old shim's; a comment above a
+    table belongs to that table. Line endings are kept."""
+    nl = "\r\n" if "\r\n" in text else "\n"
+    # Stanzas: a header line and what follows it. Comment and blank lines directly above a header belong
+    # to that header, so a comment the owner wrote for the next table is not lost with a dropped stanza.
+    stanzas, pending = [], []
     for line in text.splitlines(keepends=True):
-        if line.startswith("[") or not stanzas:
-            stanzas.append([line])
-        else:
+        if line.startswith("["):
+            stanzas.append(pending + [line])
+            pending = []
+        elif line.lstrip().startswith("#") or not line.strip():
+            pending.append(line)
+        elif stanzas:
+            stanzas[-1].extend(pending)
+            pending = []
             stanzas[-1].append(line)
-    keep = []
+        else:
+            pending.append(line)
+    if pending:
+        (stanzas[-1] if stanzas else stanzas.append([]) or stanzas[-1]).extend(pending)
+
+    def header(st):
+        return next((l.strip() for l in st if l.startswith("[")), "")
+
+    def old_child(st):
+        return header(st).startswith("[[hooks.") and header(st).endswith(".hooks]]") and OLD_SCRIPT in "".join(st)
+
+    drop = set()
     for i, st in enumerate(stanzas):
-        head, body = st[0], "".join(st)
-        if head.startswith(OLD_SERVER):
-            continue
-        if head.startswith("[[hooks.") and head.rstrip().endswith(".hooks]]") and OLD_SCRIPT in body:
-            continue
-        if head.startswith("[[hooks.") and i + 1 < len(stanzas) and stanzas[i + 1][0].startswith(head.rstrip()[:-2] + ".hooks]]") \
-                and OLD_SCRIPT in "".join(stanzas[i + 1]):
-            continue
-        keep.append("".join(l for l in st if not l.startswith(OLD_MARKER)))
-    return "".join(keep).rstrip("\n") + "\n"
+        h = header(st)
+        if h == OLD_SERVER or h.startswith(OLD_SERVER[:-1] + "."):
+            drop.add(i)
+        elif old_child(st):
+            drop.add(i)
+        elif h.startswith("[[hooks.") and not h.endswith(".hooks]]"):
+            # The group's children follow it; the group goes only if every child is old.
+            children = []
+            for j in range(i + 1, len(stanzas)):
+                if header(stanzas[j]).startswith(h[:-2] + ".hooks]]"):
+                    children.append(j)
+                else:
+                    break
+            if children and all(old_child(stanzas[j]) for j in children):
+                drop.add(i)
+    kept = [l for i, st in enumerate(stanzas) if i not in drop for l in st if not l.startswith(OLD_MARKER)]
+    return "".join(kept).rstrip("\r\n") + nl
 
 
 def install(home=None, out=sys.stdout, windows=None):
@@ -267,13 +306,12 @@ def install(home=None, out=sys.stdout, windows=None):
         config = os.path.join(codex_dir, "config.toml")
         text = ""
         if os.path.exists(config):
-            with open(config, encoding="utf-8") as f:
+            with open(config, encoding="utf-8", newline="") as f:
                 text = f.read()
         if OLD_SERVER in text:
-            with open(config + ".before-dojo", "w", encoding="utf-8") as f:
-                f.write(text)
+            shutil.copy2(config, config + ".before-dojo")  # the file as it was, byte for byte
             text = without_old_block(text)
-            with open(config, "w", encoding="utf-8") as f:
+            with open(config, "w", encoding="utf-8", newline="") as f:
                 f.write(text)
             out.write("dojo install: removed the old xhs block from %s (the file as it was: %s.before-dojo)\n" % (config, config))
         if "[mcp_servers.dojo]" in text:
@@ -289,7 +327,7 @@ def install(home=None, out=sys.stdout, windows=None):
 
 # ---------------------------------------------------------------- CLI
 
-USAGE = """usage: dojo panes | send <pane> <text...> | read <pane> [lines] | state <pane> | hook | install"""
+USAGE = """usage: dojo panes | send <pane> <text...> | send <pane> - (text on stdin) | read <pane> [lines] | state <pane> | hook | install"""
 
 
 def cli(argv, out=sys.stdout, err=sys.stderr, stdin=sys.stdin):
@@ -300,7 +338,7 @@ def cli(argv, out=sys.stdout, err=sys.stderr, stdin=sys.stdin):
     if cmd == "hook":
         try:
             event = json.loads(stdin.read(1 << 20) or "{}")
-            bus_call("hook", event, timeout=3)
+            bus_call("hook", event, timeout=1)  # the loopback bus answers in milliseconds; Codex allows 3 s
         except Exception:
             pass
         return 0
@@ -338,6 +376,10 @@ def cli(argv, out=sys.stdout, err=sys.stderr, stdin=sys.stdin):
 
 
 def main():
+    # Windows reads and writes pipes as cp1252 unless told otherwise; the bus speaks UTF-8.
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     invoked_as = os.path.basename(sys.argv[0])
     if len(sys.argv) > 1 or invoked_as == "dojo":
         sys.exit(cli(sys.argv[1:]))

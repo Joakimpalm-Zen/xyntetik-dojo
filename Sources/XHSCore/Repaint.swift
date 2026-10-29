@@ -38,7 +38,10 @@ public enum Repaint {
     /// One SGR sequence, rebuilt with near-white backgrounds replaced.
     static func sgr(_ params: [UInt8], shade: (red: Int, green: Int, blue: Int)) -> [UInt8] {
         let text = String(decoding: params, as: UTF8.self)
-        guard text.contains("4") || text.contains("107") else { return [0x1B, UInt8(ascii: "[")] + params + [UInt8(ascii: "m")] }
+        // Private sequences (ESC[>4;2m), colon-separated sub-parameters (4:3, 48:2::r:g:b) and anything
+        // else that is not plain numbers pass through untouched.
+        let plain = params.allSatisfy { ($0 >= UInt8(ascii: "0") && $0 <= UInt8(ascii: "9")) || $0 == UInt8(ascii: ";") }
+        guard plain, text.contains("4") || text.contains("107") else { return [0x1B, UInt8(ascii: "[")] + params + [UInt8(ascii: "m")] }
         let parts = text.split(separator: ";", omittingEmptySubsequences: false).map { Int($0) ?? 0 }
         var out: [String] = []
         var k = 0
@@ -56,10 +59,10 @@ public enum Repaint {
             } else if p == 107 {
                 out.append(replacement)
                 k += 1
-            } else if p == 38, k + 1 < parts.count, parts[k + 1] == 2 {
+            } else if p == 38 || p == 58, k + 1 < parts.count, parts[k + 1] == 2 {
                 out.append(parts[k..<min(k + 5, parts.count)].map(String.init).joined(separator: ";"))
                 k += 5
-            } else if p == 38, k + 1 < parts.count, parts[k + 1] == 5 {
+            } else if p == 38 || p == 58, k + 1 < parts.count, parts[k + 1] == 5 {
                 out.append(parts[k..<min(k + 3, parts.count)].map(String.init).joined(separator: ";"))
                 k += 3
             } else {

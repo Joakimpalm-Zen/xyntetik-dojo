@@ -21,15 +21,8 @@ enum ToolInstall {
         let fm = FileManager.default
         guard let source = sourceDirectory() else { return "The dojo tools were not found in the app bundle." }
         let target = fm.homeDirectoryForCurrentUser.appendingPathComponent(".dojo")
+        let moved = moveOldHome(to: target)
         do {
-            // The folder was ~/.xhs until 2026-10-29: hosts, folders and Runner's files move over once.
-            let old = fm.homeDirectoryForCurrentUser.appendingPathComponent(".xhs")
-            if !fm.fileExists(atPath: target.path), fm.fileExists(atPath: old.path) {
-                try fm.moveItem(at: old, to: target)
-                for stale in ["xhs-mcp.py", "xhs-pi.ts", "bin/xhs"] {
-                    try? fm.removeItem(at: target.appendingPathComponent(stale))
-                }
-            }
             try fm.createDirectory(at: target, withIntermediateDirectories: true)
             for file in files {
                 let destination = target.appendingPathComponent(file)
@@ -42,9 +35,46 @@ enum ToolInstall {
             process.standardOutput = FileHandle.nullDevice
             try process.run()
             process.waitUntilExit()
-            return process.terminationStatus == 0 ? nil : "dojo install failed; run python3 ~/.dojo/dojo-mcp.py install"
+            if process.terminationStatus != 0 { return "dojo install failed; run python3 ~/.dojo/dojo-mcp.py install" }
+            return moved
         } catch {
             return "Could not install the dojo tools in ~/.dojo: \(error.localizedDescription)"
+        }
+    }
+
+    /// The folder was ~/.xhs until 2026-10-29: hosts, folders and Runner's files move over once. When
+    /// ~/.dojo already exists (a smoke run made it), each entry that is not there yet moves on its own.
+    /// Returns a problem to show, or nil; nothing here stops the install.
+    static func moveOldHome(to target: URL) -> String? {
+        let fm = FileManager.default
+        let old = fm.homeDirectoryForCurrentUser.appendingPathComponent(".xhs")
+        guard fm.fileExists(atPath: old.path) else { return nil }
+        let stale = ["xhs-mcp.py", "xhs-pi.ts", "bin/xhs"]
+        do {
+            if !fm.fileExists(atPath: target.path) {
+                try fm.moveItem(at: old, to: target)
+            } else {
+                for entry in try fm.contentsOfDirectory(atPath: old.path) where !stale.contains(entry) {
+                    let destination = target.appendingPathComponent(entry)
+                    if entry == "bin" {
+                        // Runner's binary may live in bin; the old xhs link does not come along.
+                        for inner in (try? fm.contentsOfDirectory(atPath: old.appendingPathComponent("bin").path)) ?? [] where inner != "xhs" {
+                            let to = destination.appendingPathComponent(inner)
+                            if !fm.fileExists(atPath: to.path) {
+                                try fm.createDirectory(at: destination, withIntermediateDirectories: true)
+                                try fm.moveItem(at: old.appendingPathComponent("bin/\(inner)"), to: to)
+                            }
+                        }
+                    } else if !fm.fileExists(atPath: destination.path) {
+                        try fm.moveItem(at: old.appendingPathComponent(entry), to: destination)
+                    }
+                }
+                try fm.removeItem(at: old)
+            }
+            for name in stale { try? fm.removeItem(at: target.appendingPathComponent(name)) }
+            return nil
+        } catch {
+            return "~/.xhs could not be moved to ~/.dojo: \(error.localizedDescription). Move what you want by hand."
         }
     }
 }

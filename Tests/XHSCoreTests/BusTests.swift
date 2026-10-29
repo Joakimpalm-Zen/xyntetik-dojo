@@ -118,8 +118,8 @@ import Testing
         var clock = Date(timeIntervalSince1970: 1000)
         bus.now = { clock }
         hook(targetToken, "SessionStart")
-        bus.noteOwnerInput("codex-1", .text)
-        bus.noteOwnerInput("codex-1", .text)
+        bus.noteOwnerInput("codex-1", .text(1))
+        bus.noteOwnerInput("codex-1", .text(1))
         let (_, result) = call("send", ["pane": "codex-1", "text": "wait"])
         #expect(result["delivered"] as? Bool == false)
         #expect((result["note"] as? String)?.contains("unsent text") == true)
@@ -137,7 +137,7 @@ import Testing
         clock += 60
         bus.tick()
         #expect(targetIO.typed == "[from: claude-1] wait\r")
-        bus.noteOwnerInput("codex-1", .text)
+        bus.noteOwnerInput("codex-1", .text(1))
         bus.noteOwnerInput("codex-1", .clear)
         #expect(bus.info("codex-1")?.draft == false)
     }
@@ -224,7 +224,7 @@ import Testing
         hook(targetToken, "SessionStart")
         hook(targetToken, "UserPromptSubmit")
         targetIO.screen = "Working (1s)"
-        bus.noteOwnerInput("codex-1", .text)
+        bus.noteOwnerInput("codex-1", .text(1))
         call("send", ["pane": "codex-1", "text": "hi"])
         #expect(bus.info("codex-1")?.state == .running)
         #expect(targetIO.written.isEmpty)
@@ -321,6 +321,60 @@ import Testing
         #expect(bus.info("runner-1")?.state == .running)
         #expect(call("send", ["pane": "runner-1", "text": "hi"]).0 == 409)
         #expect(io.written.isEmpty)
+    }
+
+    @Test func aPasteCountsEveryCharacterAndKeysAreReadFromBytes() {
+        #expect(OwnerInput.key(Array("a".utf8)[...]) == .text(1))
+        #expect(OwnerInput.key(Array("\u{1b}[200~hello world\u{1b}[201~".utf8)[...]) == .text(11))
+        #expect(OwnerInput.key(Array("på".utf8)[...]) == .text(2))
+        #expect(OwnerInput.key([0x0D]) == .clear)
+        #expect(OwnerInput.key([0x03]) == .clear)
+        #expect(OwnerInput.key([0x7F]) == .delete)
+        #expect(OwnerInput.key(Array("\u{1b}[A".utf8)[...]) == .text(1))
+        #expect(OwnerInput.key(Array("\u{1b}[C".utf8)[...]) == .other)
+        #expect(OwnerInput.key([0x1B]) == .other)
+        var clock = Date(timeIntervalSince1970: 1000)
+        bus.now = { clock }
+        hook(targetToken, "SessionStart")
+        bus.noteOwnerInput("codex-1", OwnerInput.key(Array("\u{1b}[200~three\u{1b}[201~".utf8)[...]))
+        _ = call("send", ["pane": "codex-1", "text": "wait"])
+        bus.noteOwnerInput("codex-1", .delete)
+        clock += 60; bus.tick()
+        #expect(targetIO.written.isEmpty, "one Backspace does not release a five-character paste")
+        for _ in 0..<4 { bus.noteOwnerInput("codex-1", .delete) }
+        clock += 60; bus.tick()
+        #expect(targetIO.typed == "[from: claude-1] wait\r")
+    }
+
+    @Test func enterWaitsForTheDelayAndIsDroppedIfAPromptOpensMeanwhile() {
+        var fire: (() -> Void)?
+        bus.schedule = { _, work in fire = work }
+        bus.submitDelay = 0.15
+        hook(targetToken, "SessionStart")
+        _ = call("send", ["pane": "codex-1", "text": "one"])
+        #expect(targetIO.typed == "[from: claude-1] one")
+        // A second send before Enter waits for it instead of landing on the same line.
+        _ = call("send", ["pane": "codex-1", "text": "two"])
+        #expect(targetIO.typed == "[from: claude-1] one")
+        #expect(bus.info("codex-1")?.queued == 1)
+        fire?()
+        #expect(targetIO.typed == "[from: claude-1] one\r[from: claude-1] two")
+        fire?()
+        #expect(targetIO.typed == "[from: claude-1] one\r[from: claude-1] two\r")
+        // A prompt that opens between the paste and its Enter: no Enter.
+        hook(targetToken, "Stop")
+        _ = call("send", ["pane": "codex-1", "text": "three"])
+        hook(targetToken, "PermissionRequest")
+        fire?()
+        #expect(targetIO.typed == "[from: claude-1] one\r[from: claude-1] two\r[from: claude-1] three")
+    }
+
+    @Test func aQueuedMessageNamesItsSenderAsOfDelivery() {
+        hook(targetToken, "PermissionRequest")
+        _ = call("send", ["pane": "codex-1", "text": "later"])
+        #expect(bus.rename("claude-1", to: "builder") == nil)
+        hook(targetToken, "Stop")
+        #expect(targetIO.typed == "[from: builder] later\r")
     }
 
     @Test func removedPaneIsGone() {

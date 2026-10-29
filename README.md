@@ -76,7 +76,7 @@ The first run copies its small tools to `~/.dojo` and, if you have Codex, adds i
 ## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> Build and run
 
 ```
-make test    # swift test (65 tests), the shim's Python tests (10), the Runner pick test and the hygiene check of the tree
+make test    # swift test (70 tests), the shim's Python tests (13), the Runner pick test and the hygiene check of the tree
 make app     # build/XyntetikDojo.app, assembled by hand and ad-hoc signed
 make run     # open the app from build/
 make install # copy the app to /Applications (replacing the one there) and open it
@@ -163,6 +163,11 @@ The four operations, as MCP tools for Claude and Codex (`mcp__dojo__panes` and s
 ```
 dojo panes                         # name, kind, host, state, queued, model; * marks you
 dojo send codex-1 "please review the diff in src/bus.rs"
+dojo send codex-1 - <<'EOF'              # quotes, backticks, several lines: on stdin, nothing runs
+Two things:
+1. `make test` fails on main
+2. the diff in src/bus.rs
+EOF
 dojo read claude-1 60              # last 60 lines of claude-1's screen
 dojo state pi-1
 ```
@@ -185,7 +190,7 @@ The pi extension also registers Runner as pi's `runner` provider.
 ## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> Safety rules
 
 - **A relayed message never answers a prompt.** The bus types into a pane that is `idle` or `running`; a busy harness keeps the input in its own queue and reads it when its current step ends, sooner than the end of its turn. A pane at a permission prompt or question dialog (`prompt`) or not yet started (`starting`) gets the message queued. Whatever has queued goes out as one input, each message on its own line, the moment the pane can take it.
-- **Your unsent text is never sent for you.** The bus holds a pane's queue while you have typed into it in the last 3 seconds and while unsent text sits in its composer (the header says "unsent text here"). Enter sends your text and releases the queue; Ctrl-C or Ctrl-U clearing it does the same. The hold counts keystrokes, so a word deleted at once can leave it on; Enter on the empty composer turns it off.
+- **Your unsent text is never sent for you.** The bus holds a pane's queue while you have typed into it in the last 3 seconds and while unsent text sits in its composer (the header says "unsent text here"). Enter sends your text and releases the queue; Ctrl-C or Ctrl-U clearing it does the same. The hold counts the characters the pane sends to the harness (keys, pastes, a recalled prompt, an input-method commit), so a paste holds until every character of it is gone or Enter sends it; Enter on the empty composer turns a stale hold off. The Enter that follows a relayed message is pressed a moment after the text, and not at all if a prompt opened or you typed in that moment. A line inside a message that starts like a `[from: ...]` tag is set in by a space, so only the bus writes a line that begins with one.
 - **A fresh Codex pane is ready without a hello.** Codex sends SessionStart with the first prompt, not at startup, so the bus treats a `starting` Codex pane as idle once its screen shows the composer ("Ask Codex to do anything") and has been still for 3 seconds. A Codex startup dialog covers the composer, so the bus does not type into one. Claude and pi announce their start themselves.
 - **A lost Stop does not hold messages forever.** A turn can end without a Stop hook (Codex at its usage limit did). A `running` pane whose screen has not changed for 15 seconds is idle again; every harness animates a spinner while it works. A pane at a `prompt` is never timed out.
 - **Every message carries its sender.** The sender is taken from the calling pane's token, not from the message text; a `[from: ...]` tag a harness puts at the front of its own text is dropped, so the tag is never doubled or faked. The `[from: <name>]` tag shows in the Xyntetik green wherever a harness paints it: the pane colours it on the way from the harness to the screen.
@@ -211,7 +216,7 @@ To install the peer rule permanently as well (for sessions started outside the a
 Verified without a human:
 
 - `swift test`, 64 tests: the bus operations, the `[from: ...]` prefix, refusal and queueing at a prompt, delivery into a running pane and the queue as one input, the owner-typing and unsent-text holds, control-character stripping, the HTTP server over loopback, the local and ssh command lines (parsed back by a real POSIX shell), and the snippets equal to what the app passes.
-- Python tests, 10: the shim speaking MCP (initialize, tools/list, tools/call, errors) over pipes, the CLI, `dojo hook` and `dojo install`.
+- Python tests, 13: the shim speaking MCP (initialize, tools/list, tools/call, errors) over pipes, the CLI, `dojo hook` and `dojo install`.
 - `sh tools/test_runner_start.sh`: the Runner pick against a stub runner and a stub Hub: the largest model with a FITS verdict wins, with the `--kv` setting the verdict names.
 - `make smoke`: the bundled app opens a pane running `echo ok`, sees `ok` on its screen, gets an answer from its own bus, and quits with exit code 0.
 - Probes against a stand-in bus (not part of the test suite), on this Mac:
