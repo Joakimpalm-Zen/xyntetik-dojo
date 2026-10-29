@@ -216,11 +216,19 @@ struct PickerSheet: View {
                         .tint(Color(Theme.teal))
                 }
             }
+            // The local model server has a row of its own, under the agents, with its state beside the button.
             let runnerPane = model.runnerPane
             let runnerUp = !model.runnerModel.isEmpty || runnerPane != nil
-            Text(runnerStatus(runnerPane))
-                .font(.caption)
-                .foregroundStyle(Color(runnerUp ? Theme.tealInk : Theme.coralInk))
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text("Local model").foregroundStyle(.secondary)
+                Button { add(.runner) } label: { Text(HarnessKind.runner.title) }
+                    .controlSize(.large)
+                    .tint(Color(Theme.teal))
+                    .disabled(runnerPane != nil)
+                Text(runnerStatus(runnerPane))
+                    .font(.caption)
+                    .foregroundStyle(Color(runnerUp ? Theme.tealInk : Theme.coralInk))
+            }
             if !model.runnerFits.isEmpty {
                 // What the last Runner pane found to fit this Mac; the served or chosen one is filled in.
                 HStack(spacing: 6) {

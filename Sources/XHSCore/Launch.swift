@@ -81,7 +81,8 @@ public enum Launcher {
     public static let piTools = "read,bash,edit,write"
     /// Spelled out for the small local models pi runs on: how to answer a peer.
     public static let piReplyHint = "You have no xhs tool, only the bash tool. To answer a [from: <name>] message, run the bash command " +
-        "xhs send <name> \"<your reply>\" and then say what you sent."
+        "xhs send <name> \"<your reply>\" and then say what you sent. " +
+        "For web pages use curl -sL: without -L a redirect prints nothing at all. Prefer a site's RSS feed to its HTML."
     /// The shim as the harness runs it; $HOME is expanded on the host the harness runs on.
     public static let shimCommand = #"exec python3 "$HOME/.xhs/xhs-mcp.py""#
 
