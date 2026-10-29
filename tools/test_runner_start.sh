@@ -48,6 +48,7 @@ if [ "$got" != "$want" ]; then
 fi
 grep -q "Qwen3-Coder-30B.*16.33 GiB stay resident.*skipped" "$tmp/log" || { echo "the 30B skip is missing from the log"; cat "$tmp/log"; exit 1; }
 grep -q "granite-4.2-8b.*4.90 GiB stay resident.*skipped" "$tmp/log" || { echo "the 8B skip is missing from the log"; cat "$tmp/log"; exit 1; }
+grep -q "Bolt-E4B-4GB: 2.97 GiB stay resident, within half" "$tmp/log" || { echo "Bolt's hot set was not read"; cat "$tmp/log"; exit 1; }
 [ -s "$tmp/home/heads/nvidia-NVIDIA-Nemotron-3.5-Bolt-E4B-4GB-NVIDIA-Nemotron-3.5-Bolt-E4B-4GB-Q2_K.gguf" ] || { echo "no head file kept"; ls -R "$tmp/home"; exit 1; }
 # A 16 GiB machine with 6 GiB free: the dense 8B is within half of RAM and Runner says it fits at 8192.
 got=$(STUB_TOTAL_BYTES=17179869184 STUB_AVAIL=6.00 XHS_RUNNER_HOME="$tmp/home" PATH="$tmp/bin:$PATH" sh "$here/runner-start.sh" --pick 2>"$tmp/log")
