@@ -64,7 +64,7 @@ total_ram_gib() {
 # row-gathered table (Gemma E-series: that table is read by row and never resident), else the whole file.
 resident_gib() {
     if printf '%s\n' "$1" | grep -q '^ *row-gathered'; then
-        printf '%s\n' "$1" | awk '/^ *hot set/ { print ($3 == "GiB") ? $2 : 0; exit }'
+        printf '%s\n' "$1" | awk '/^ *hot set/ { print ($4 == "GiB") ? $3 : 0; exit }'
     else
         printf '%s\n' "$1" | awk '/^ *weights/ { print ($3 == "GiB") ? $2 : 0; exit }'
     fi
