@@ -11,6 +11,8 @@ test:
 	swift test
 	python3 -m unittest discover -s tools -p 'test_*.py'
 	sh tools/test_runner_start.sh
+	python3 tools/check-hygiene.py --self-test
+	python3 tools/check-hygiene.py --files
 
 # The app icon: the Ensō from packaging/make-icon.swift, rendered at every size and packed into an icns.
 build/AppIcon.icns: packaging/make-icon.swift

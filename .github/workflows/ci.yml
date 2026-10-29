@@ -1,0 +1,29 @@
+name: ci
+
+# Build, the Swift tests, the shim's Python tests, the Runner pick test and the app bundle, on macOS.
+# The smoke (two panes, a click, typed keys echoed back) runs too but does not block until it has
+# proved itself on the hosted runners.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: toolchain
+        run: swift --version && python3 --version
+      - name: build
+        run: swift build
+      - name: tests
+        run: make test
+      - name: app bundle
+        run: make app
+      - name: smoke (not blocking yet)
+        continue-on-error: true
+        run: make smoke
