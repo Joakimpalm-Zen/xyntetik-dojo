@@ -4,7 +4,7 @@ import XHSCore
 
 /// The window's state: the panes, the bus and its HTTP server.
 @MainActor
-final class AppModel: NSObject, ObservableObject, LocalProcessTerminalViewDelegate {
+final class AppModel: NSObject, ObservableObject {
     static let shared = AppModel()
 
     struct Item: Identifiable {
@@ -141,7 +141,7 @@ final class AppModel: NSObject, ObservableObject, LocalProcessTerminalViewDelega
             return "\(name) is already open."
         }
         let view = TerminalPane(name: name)
-        view.processDelegate = self
+        view.onExit = { [weak self, weak view] _ in if let view { self?.bus.setState(view.paneName, .exited) } }
         let token = bus.add(name: name, kind: kind, host: host, io: view)
         tokens[name] = token
         if !host.isEmpty { recentHosts = RecentHosts.remember(host, in: AppModel.hostsFile) }
@@ -194,9 +194,15 @@ final class AppModel: NSObject, ObservableObject, LocalProcessTerminalViewDelega
         return nil
     }
 
+    /// Swaps two panes' places in the grid.
+    func swap(_ a: String, with b: String) {
+        guard a != b, let i = items.firstIndex(where: { $0.name == a }), let j = items.firstIndex(where: { $0.name == b }) else { return }
+        items.swapAt(i, j)
+    }
+
     func close(_ name: String) {
         guard let item = items.first(where: { $0.name == name }) else { return }
-        item.view.processDelegate = nil
+        item.view.onExit = nil
         item.view.terminate()
         bus.remove(name)
         tokens[name] = nil
@@ -226,17 +232,6 @@ final class AppModel: NSObject, ObservableObject, LocalProcessTerminalViewDelega
         } catch {
             problem = "The bus could not start on 127.0.0.1:\(port): \(error)"
         }
-    }
-
-    // MARK: LocalProcessTerminalViewDelegate
-
-    func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
-    func setTerminalTitle(source: LocalProcessTerminalView, title: String) {}
-    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
-
-    func processTerminated(source: TerminalView, exitCode: Int32?) {
-        guard let pane = source as? TerminalPane else { return }
-        bus.setState(pane.paneName, .exited)
     }
 
     // MARK: smoke test
