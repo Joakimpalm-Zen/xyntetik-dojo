@@ -5,7 +5,8 @@ import Foundation
 public enum HarnessKind: String, Codable, CaseIterable, Sendable {
     case claude, codex, pi, runner, shell
 
-    public static let pickable: [HarnessKind] = [.claude, .codex, .pi, .runner]
+    /// The coding agents the picker offers in its first row; Runner has a row of its own.
+    public static let pickable: [HarnessKind] = [.claude, .codex, .pi]
 
     public var title: String {
         switch self {
