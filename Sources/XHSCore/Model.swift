@@ -81,3 +81,24 @@ public enum RecentHosts {
     /// A start folder as typed: anything non-empty on one line.
     public static func isFolder(_ s: String) -> Bool { !s.isEmpty && !s.contains("\n") }
 }
+
+/// One model the Runner start script found to fit this machine (a line of ~/.xhs/runner/fits):
+/// the roster id, the `REPO:STEM` spelling `runner -hf` takes, the serve flags and the resident GiB.
+public struct RunnerFit: Equatable, Sendable {
+    public let id: String
+    public let spelling: String
+    public let flags: String
+    public let resident: String
+
+    /// Parses the file's tab-separated lines; a line with fewer than four fields is skipped.
+    public static func parse(_ text: String) -> [RunnerFit] {
+        text.split(separator: "\n").compactMap { line in
+            let f = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+            guard f.count >= 4, !f[0].isEmpty, f[1].contains(":") else { return nil }
+            return RunnerFit(id: f[0], spelling: f[1], flags: f[2], resident: f[3])
+        }
+    }
+
+    /// The file name stem the spelling names, as Runner reports the served model.
+    public var stem: String { String(spelling.split(separator: ":").last ?? "") }
+}
