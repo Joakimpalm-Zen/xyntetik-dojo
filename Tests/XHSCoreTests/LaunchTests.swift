@@ -69,6 +69,9 @@ import Testing
         // Tools are passed explicitly: the owner's pi settings may turn them all off, and xhs needs bash.
         let tools = try #require(argv.firstIndex(of: "--tools"))
         #expect(argv[tools + 1] == "read,bash,edit,write")
+        // Full-screen layout, whatever the owner's tuiMode setting says: the composer sits at the bottom.
+        let mode = try #require(argv.firstIndex(of: "--tui-mode"))
+        #expect(argv[mode + 1] == "fullscreen")
         let remote = Launcher.harnessWords(kind: .pi, paneName: "pi-1", port: 7788, runnerModel: nil)
         #expect(!remote.contains(.literal("--model")))
         #expect(remote.contains(.literal("--tools")))
