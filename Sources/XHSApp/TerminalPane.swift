@@ -41,23 +41,28 @@ final class TerminalPane: LocalProcessTerminalView, PaneIO {
 
     /// Bytes from the harness that might be the start of a `[from: <name>]` tag, held for the next chunk.
     private var carry: [UInt8] = []
+    /// A control sequence cut off at the end of a chunk, held for the next.
+    private var sequenceCarry: [UInt8] = []
     private var flush: DispatchWorkItem?
 
     /// `Theme.brand` as a terminal colour code.
     private static let tagColor = Highlight.foreground(red: 0x14, green: 0xA0, blue: 0x8F)
 
-    /// Every `[from: <name>]` tag the harness paints is wrapped in the Xyntetik green on its way to the screen.
+    /// On the way from the harness to the screen, a white background becomes the paper shade and every
+    /// `[from: <name>]` tag is wrapped in the Xyntetik green.
     override func dataReceived(slice: ArraySlice<UInt8>) {
         flush?.cancel()
-        let out = Highlight.tagged(Array(slice), carry: &carry, color: TerminalPane.tagColor)
+        let repainted = Repaint.apply(Array(slice), carry: &sequenceCarry, shade: Theme.shade)
+        let out = Highlight.tagged(repainted, carry: &carry, color: TerminalPane.tagColor)
         if !out.isEmpty { feed(byteArray: out[...]) }
-        if !carry.isEmpty {
-            // A chunk ended inside a possible tag; if nothing follows at once, show the bytes as they are.
+        if !carry.isEmpty || !sequenceCarry.isEmpty {
+            // A chunk ended inside a possible tag or sequence; if nothing follows at once, show the bytes as they are.
             let item = DispatchWorkItem { [weak self] in
-                guard let self, !self.carry.isEmpty else { return }
-                let held = self.carry
+                guard let self else { return }
+                let held = self.sequenceCarry + self.carry
+                self.sequenceCarry = []
                 self.carry = []
-                self.feed(byteArray: held[...])
+                if !held.isEmpty { self.feed(byteArray: held[...]) }
             }
             flush = item
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: item)

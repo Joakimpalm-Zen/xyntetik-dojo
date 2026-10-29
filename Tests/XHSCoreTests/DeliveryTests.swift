@@ -121,3 +121,41 @@ import Testing
         #expect(out3.hasPrefix("[from: aaaa"))
     }
 }
+
+@Suite struct RepaintTests {
+    let shade = (red: 0xEC, green: 0xE7, blue: 0xDB)
+    func paint(_ text: String, carry: inout [UInt8]) -> String {
+        String(decoding: Repaint.apply(Array(text.utf8), carry: &carry, shade: shade), as: UTF8.self)
+    }
+    func paint(_ text: String) -> String { var c: [UInt8] = []; return paint(text, carry: &c) }
+
+    @Test func nearWhiteBackgroundsBecomeTheShadeAndOthersStay() {
+        #expect(paint("\u{1b}[48;2;240;240;240m x \u{1b}[49m") == "\u{1b}[48;2;236;231;219m x \u{1b}[49m")
+        #expect(paint("\u{1b}[48;2;215;119;87m") == "\u{1b}[48;2;215;119;87m")
+        #expect(paint("\u{1b}[48;2;255;221;221m") == "\u{1b}[48;2;255;221;221m")
+        #expect(paint("\u{1b}[48;5;255m") == "\u{1b}[48;2;236;231;219m")
+        #expect(paint("\u{1b}[48;5;231m") == "\u{1b}[48;2;236;231;219m")
+        #expect(paint("\u{1b}[48;5;196m") == "\u{1b}[48;5;196m")
+        #expect(paint("\u{1b}[107m") == "\u{1b}[48;2;236;231;219m")
+        #expect(paint("\u{1b}[47m") == "\u{1b}[47m")
+    }
+
+    @Test func textColoursAndOtherSequencesAreUntouched() {
+        #expect(paint("\u{1b}[38;2;240;240;240m") == "\u{1b}[38;2;240;240;240m")
+        #expect(paint("\u{1b}[0;1;48;2;240;240;240;38;5;255m") == "\u{1b}[0;1;48;2;236;231;219;38;5;255m")
+        #expect(paint("\u{1b}[2J\u{1b}[?25l\u{1b}]11;?\u{7}plain") == "\u{1b}[2J\u{1b}[?25l\u{1b}]11;?\u{7}plain")
+    }
+
+    @Test func aSequenceCutBetweenChunksIsRepaintedWhole() {
+        var carry: [UInt8] = []
+        let first = paint("ab\u{1b}[48;2;24", carry: &carry)
+        #expect(first == "ab")
+        #expect(!carry.isEmpty)
+        let second = paint("0;240;240mcd", carry: &carry)
+        #expect(second == "\u{1b}[48;2;236;231;219mcd")
+        #expect(carry.isEmpty)
+        _ = paint("x\u{1b}", carry: &carry)
+        #expect(carry == [0x1B])
+        #expect(paint("[1m", carry: &carry) == "\u{1b}[1m")
+    }
+}
