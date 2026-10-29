@@ -1,8 +1,39 @@
-# Xyntetik Harness Supervisor
+<p align="center">
+  <a href="https://xyntetik.com">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="packaging/readme/header-dark.svg">
+      <img src="packaging/readme/header-light.svg" alt="Xyntetik Harness Supervisor" width="420">
+    </picture>
+  </a>
+</p>
 
-One window of terminals for agent harnesses: Claude Code, Codex and pi (on a local Runner model), on this Mac or over SSH. The app is also a message bus, so the harness in any terminal can list, read and message the others. Built with SwiftPM only; no Xcode needed.
+<p align="center">
+  <b>One window for your coding agents, and a bus so they can talk.</b>
+</p>
 
-## What it does
+<p align="center">
+  <a href="https://xyntetik.com">xyntetik.com</a> ·
+  <a href="https://github.com/Joakimpalm-Zen/xyntetik-runner">Xyntetik Runner</a> ·
+  <a href="#how-harnesses-talk">How harnesses talk</a> ·
+  <a href="#safety-rules">Safety rules</a>
+</p>
+
+Running several coding agents at once means a desk full of terminals and you
+as the messenger between them. Harness Supervisor puts Claude Code, Codex and
+pi (on a local Runner model) in one window, on this Mac or over SSH, and gives
+every one of them four small tools to list, read and message the others. You
+watch, you type, you stay in charge.
+
+- **One window.** A grid of real terminals (SwiftTerm, a pty each, drawn on the GPU). Press plus: Claude, Codex, pi or Runner, a host if it is remote, a folder to start in, a name if `claude-1` is not it. Rename later from the header.
+- **They talk, you see it.** A harness runs `xhs send codex-1 "review the diff"` and the line lands in that terminal as typed input, tagged with its sender in the Xyntetik green. A busy pane reads it when its current step ends; a pane at a prompt gets it queued.
+- **Never over your shoulder.** The bus never answers a prompt, never sends your half-written text, and every message carries its sender from the pane's token, not from the text.
+- **A local model, fitted.** A Runner pane fetches Xyntetik Runner if needed, asks it which of five models fits this Mac from the first 16 MiB of each, and serves the largest that does, for the pi panes.
+- **Small on purpose.** SwiftPM only, no Xcode. One port, two text files of recent hosts and folders, nothing else kept. Apache 2.0.
+
+**On this page:** [Requirements](#requirements) · [Build and run](#build-and-run) · [First run](#first-run) · [Adding a pane](#adding-a-pane) · [Remote panes](#remote-panes) · [How harnesses talk](#how-harnesses-talk) · [Safety rules](#safety-rules) · [What was verified](#what-was-verified-and-what-needs-a-human) · [Not built](#not-built) · [Files](#files) · [Troubleshooting](#troubleshooting) · [License](#license)
+
+<a id="what-it-does"></a>
+## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> What it does
 
 - One window with a grid of terminals. The plus button (or Cmd-T) adds one: pick Claude, Codex or pi. An optional host makes it remote (a Linux, Mac or Windows box over ssh). An optional folder is where the session starts (a repo root, a book folder); empty means your home folder. Hosts and folders you used before are one click away. An optional name replaces `claude-1`, `codex-1`, `pi-1`; double-click a name in a pane header (or right-click it) to rename the pane later. The harness keeps its token, so its messages carry the new name and others reach it by the new name from then on; it was told its old name at launch, so it may still introduce itself by that.
 - It looks like a Xyntetik product: the site's colours on a recycled-paper ground (the same by day and night; the system's dark mode does not darken it), the Ensō as the app icon and in the window. A harness paints its own colours; the one thing the pane changes on the way to the screen is a white background (the band behind a user message in a light theme), which becomes the paper shade. Claude Code and Codex pick their theme themselves; `/theme light` in a Claude pane suits the paper. The icon is drawn by `packaging/make-icon.swift` at build time; no image file is checked in.
@@ -11,17 +42,19 @@ One window of terminals for agent harnesses: Claude Code, Codex and pi (on a loc
 - Each pane header shows the name, kind, host, model, queued messages and a state colour: grey starting, blue running, green idle, orange prompt, red exited.
 - The app runs a bus on `127.0.0.1:7788`. Every harness in the window can call four operations: `panes`, `send`, `read` and `state`.
 
-## Requirements
+<a id="requirements"></a>
+## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> Requirements
 
 - macOS 14 or later. Built and tested on macOS 27 (Apple Silicon) with the Swift 6.4 Command Line Tools.
 - `python3` on every host that runs a harness (the bus shim uses only the standard library).
 - `claude`, `codex` and `pi` on your login shell's PATH, each already logged in.
 - For pi: [Xyntetik Runner](https://github.com/Joakimpalm-Zen/xyntetik-runner) serving a model at `http://127.0.0.1:8080/v1`. A Runner pane sets that up (next section); if you already run Runner, pi uses it as it is.
 
-## Build and run
+<a id="build-and-run"></a>
+## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> Build and run
 
 ```
-make test    # swift test (46 tests) and the shim's Python tests (10)
+make test    # swift test (64 tests), the shim's Python tests (10) and the Runner pick test
 make app     # build/XyntetikHarnessSupervisor.app, assembled by hand and ad-hoc signed
 make run     # open the app
 make smoke   # launch proof: one pane runs `echo ok`, the bus answers, the app quits (exit 0)
@@ -30,7 +63,8 @@ make smoke HOST=user@box   # the same, with the pane on that host over ssh
 
 `XHS_PORT` overrides the bus port. There is no other setting. The only files the app keeps are `~/.xhs/hosts` and `~/.xhs/folders`, the hosts and start folders you used, latest first, one per line; edit or delete them by hand.
 
-## First run
+<a id="first-run"></a>
+## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> First run
 
 On start the app:
 
@@ -43,7 +77,8 @@ What needs you, once:
 - **Startup dialogs.** Claude and Codex may show their own first-run dialogs in the pane (folder trust, browser tools, an update offer). Answer them there. A pane turns `idle` when its harness reports that its session started.
 - Codex shows two startup warnings: command-line config overrides run it without the shared background server (the app passes the peer rule with `-c developer_instructions`), and `--dangerously-bypass-hook-trust` is on. Both are expected.
 
-## Adding a pane
+<a id="adding-a-pane"></a>
+## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> Adding a pane
 
 Press plus, pick Claude, Codex or pi. Leave the host empty for this Mac. A pane starts in the folder you give (type it, press Choose, or click a recent one), or in your home directory. With a host set, the folder is on that host, typed as it is there; Choose and the recent folders are this Mac's, so they step aside. It runs in your login shell (`$SHELL -l -i`), so PATH is the one your terminal has. A pane never inherits `CLAUDE*` variables from the process that opened the app (so `make run` from inside a Claude Code session does not make the pane's Claude a child session). Close a pane with its x button; that ends the harness.
 
@@ -51,7 +86,8 @@ A local pi pane first asks Runner for its models (`GET /v1/models`), starts pi w
 
 **Runner.** The picker says whether Runner is serving on this Mac and what. If it is not, add a Runner pane: it runs `tools/runner-start.sh`, which uses `runner` from your PATH or `~/.xhs/runner/runner`, downloading the latest release there (checked against its `SHA256SUMS`) when neither exists; then asks `runner --info fit` about each of five models, largest first (the Qwen3-Coder-30B and Qwen3-30B selective files, Granite-4.2-8B, Qwen3-4B, Granite-4.1-3B), reading only the first 16 MiB of each from the Hub; and serves the first that fits at context 16384 (with the `--kv` setting the verdict names), fetching that one model. The pane shows every verdict and then Runner's log; its header turns `running` and names the model once the server listens. Close the pane to stop Runner. A Runner pane is local; on a host, start Runner yourself. Messages are never sent to a Runner pane.
 
-## Remote panes
+<a id="remote-panes"></a>
+## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> Remote panes
 
 Set up a host once, with one command from this repository:
 
@@ -79,7 +115,8 @@ Verified: a pane on a Windows 11 host over ssh (`make smoke HOST=...`), the remo
 
 Two remote panes on the same host share the forwarded port: the first pane's tunnel serves both (ssh warns about the second forward). If the first pane closes, the second loses the bus until you reopen it.
 
-## How harnesses talk
+<a id="how-harnesses-talk"></a>
+## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> How harnesses talk
 
 The four operations, as MCP tools for Claude and Codex (`mcp__xhs__panes` and so on) and as the `xhs` command for pi and any shell in a pane:
 
@@ -100,7 +137,8 @@ xhs state pi-1
 
 The pi extension also registers Runner as pi's `runner` provider.
 
-## Safety rules
+<a id="safety-rules"></a>
+## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> Safety rules
 
 - **A relayed message never answers a prompt.** The bus types into a pane that is `idle` or `running`; a busy harness keeps the input in its own queue and reads it when its current step ends, sooner than the end of its turn. A pane at a permission prompt or question dialog (`prompt`) or not yet started (`starting`) gets the message queued. Whatever has queued goes out as one input, each message on its own line, the moment the pane can take it.
 - **Your unsent text is never sent for you.** The bus holds a pane's queue while you have typed into it in the last 3 seconds and while unsent text sits in its composer (the header says "unsent text here"). Enter sends your text and releases the queue; Ctrl-C or Ctrl-U clearing it does the same. The hold counts keystrokes, so a word deleted at once can leave it on; Enter on the empty composer turns it off.
@@ -123,12 +161,14 @@ To install the peer rule permanently as well (for sessions started outside the a
 
 `tools/snippets/claude-settings.json` and `tools/snippets/claude-mcp.json` are exactly what the app passes to Claude at launch (tests keep them equal). You do not need to install them. A by-hand equivalent of the MCP part is `claude mcp add --scope user xhs -- sh -c 'exec python3 "$HOME/.xhs/xhs-mcp.py"'`; the tools only work in a pane, where `XHS_TOKEN` is set.
 
-## What was verified, and what needs a human
+<a id="what-was-verified-and-what-needs-a-human"></a>
+## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> What was verified, and what needs a human
 
 Verified without a human:
 
-- `swift test`, 42 tests: the bus operations, the `[from: ...]` prefix, refusal and queueing at a prompt, delivery into a running pane and the queue as one input, the owner-typing and unsent-text holds, control-character stripping, the HTTP server over loopback, the local and ssh command lines (parsed back by a real POSIX shell), and the snippets equal to what the app passes.
-- Python tests, 9: the shim speaking MCP (initialize, tools/list, tools/call, errors) over pipes, the CLI, `xhs hook` and `xhs install`.
+- `swift test`, 64 tests: the bus operations, the `[from: ...]` prefix, refusal and queueing at a prompt, delivery into a running pane and the queue as one input, the owner-typing and unsent-text holds, control-character stripping, the HTTP server over loopback, the local and ssh command lines (parsed back by a real POSIX shell), and the snippets equal to what the app passes.
+- Python tests, 10: the shim speaking MCP (initialize, tools/list, tools/call, errors) over pipes, the CLI, `xhs hook` and `xhs install`.
+- `sh tools/test_runner_start.sh`: the Runner pick against a stub runner and a stub Hub: the largest model with a FITS verdict wins, with the `--kv` setting the verdict names.
 - `make smoke`: the bundled app opens a pane running `echo ok`, sees `ok` on its screen, gets an answer from its own bus, and quits with exit code 0.
 - Probes against a stand-in bus (not part of the test suite), on this Mac:
   - Claude Code 2.1.311: `claude -p` with the app's `--settings` and `--mcp-config` POSTed hook events with the pane token, and the xhs `panes` tool reached the bus.
@@ -142,7 +182,8 @@ Needs a human click-through:
 - The first-run Codex config append and the hook-trust bypass taking effect.
 - A remote pane over SSH with the reverse tunnel, and a real Runner.
 
-## Not built
+<a id="not-built"></a>
+## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> Not built
 
 - Remembering the layout: panes are not restored on restart, because restarting harnesses unasked is worse than an empty window.
 - Resizing, reordering or tabbing panes.
@@ -150,7 +191,8 @@ Needs a human click-through:
 - A full activity heuristic for state: hooks carry the state, and the only heuristic is the 15 second still-screen rule that recovers a `running` pane from a lost Stop.
 - A settings window or preferences file.
 
-## Files
+<a id="files"></a>
+## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> Files
 
 - `Sources/XHSCore/`: the bus, HTTP server, hook mapping, message delivery and launch commands. No UI; all tested.
 - `Sources/XHSApp/`: the window (SwiftUI and AppKit, SwiftTerm panes). View state uses ObservableObjects because `@State` is a macro whose plugin ships only with Xcode.
@@ -159,7 +201,8 @@ Needs a human click-through:
 - `packaging/Info.plist`, `packaging/make-icon.swift` (the icon), `Makefile`. `Sources/XHSApp/Theme.swift` holds the brand colours and the Ensō.
 - `Package.swift` passes the swift-testing macro plugin path to the test target. Without it, test builds with the Command Line Tools fail on about every other run.
 
-## Troubleshooting
+<a id="troubleshooting"></a>
+## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> Troubleshooting
 
 - Red banner "The bus could not listen": another copy is running, or the port is taken. Quit the other copy or set `XHS_PORT`.
 - A pane stays `starting`: a startup dialog waits for you, or the harness has not reported its session start yet. Your first prompt in that pane clears it (its Stop makes it `idle`).
@@ -170,3 +213,8 @@ Needs a human click-through:
 - Claude Code on a Windows host draws its prompt near the top of the pane rather than at the bottom. That is how it renders on a Windows console; the pane passes the right size (`make smoke HOST=...` prints it) and resizes reach the host.
 - `xhs: not inside Xyntetik Harness Supervisor`: `XHS_TOKEN` is set only in panes the app started.
 - A pi pane answers on its own screen instead of over the bus, and says it has no tools: the model is not calling tools. The pane launches pi with its four tools; a small model may still ignore them.
+
+<a id="license"></a>
+## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> License
+
+[Apache 2.0](LICENSE). Built in Sweden by [Xyntetik](https://xyntetik.com).
