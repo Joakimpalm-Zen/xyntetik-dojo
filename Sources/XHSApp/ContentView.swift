@@ -37,8 +37,9 @@ struct ContentView: View {
             } else {
                 PaneGrid(items: agents)
             }
-            if let runner = model.items.first(where: { $0.kind == .runner }) {
-                RunnerStrip(item: runner)
+            if let runner = model.items.last(where: { $0.kind == .runner }) {
+                // Its own identity per pane, so a replacement Runner gets a fresh strip (and its log open).
+                RunnerStrip(item: runner).id(runner.id)
             }
         }
         .background(Paper())

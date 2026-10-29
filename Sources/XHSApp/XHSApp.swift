@@ -52,6 +52,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
+    /// Cmd-W or Cmd-Q with sessions running ends every one of them, so it asks first.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        MainActor.assumeIsolated {
+            let live = AppModel.shared.livePanes
+            guard live > 0, !AppModel.shared.smoke else { return .terminateNow }
+            let alert = NSAlert()
+            alert.messageText = "Quit Xyntetik Dojo?"
+            alert.informativeText = live == 1 ? "One session is still running; quitting ends it." : "\(live) sessions are still running; quitting ends them all."
+            alert.addButton(withTitle: "Quit")
+            alert.addButton(withTitle: "Cancel")
+            return alert.runModal() == .alertFirstButtonReturn ? .terminateNow : .terminateCancel
+        }
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         MainActor.assumeIsolated { AppModel.shared.closeAll() }
     }

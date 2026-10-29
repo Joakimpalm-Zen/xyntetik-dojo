@@ -48,10 +48,17 @@ final class AppModel: NSObject, ObservableObject {
 
     override init() {
         let env = ProcessInfo.processInfo.environment
-        port = Int(env["DOJO_PORT"] ?? "") ?? Launcher.defaultPort
+        // DOJO_PORT must be a port; anything else is said and the default used.
+        let wanted = env["DOJO_PORT"].flatMap { Int($0) }
+        port = wanted.flatMap { (1...65535).contains($0) ? $0 : nil } ?? Launcher.defaultPort
         smoke = env["DOJO_SMOKE"] == "1"
         loginShell = AppModel.userShell()
         super.init()
+        if let wanted, wanted != port { problem = "DOJO_PORT is \(wanted); a port is 1 to 65535. Using \(port)." }
+        // The tools (and the move from ~/.xhs) come first, so the recent lists are read from the right folder.
+        if !smoke, let trouble = ToolInstall.run() {
+            problem = trouble
+        }
         recentHosts = RecentHosts.load(AppModel.hostsFile)
         recentFolders = RecentHosts.load(AppModel.foldersFile, valid: RecentHosts.isFolder)
         bus.onChange = { [weak self] in self?.revision &+= 1 }
@@ -64,16 +71,13 @@ final class AppModel: NSObject, ObservableObject {
                 if self.ticks % 5 == 0 { self.fillRunnerHeader() }
             }
         }
-        if !smoke, let trouble = ToolInstall.run() {
-            problem = trouble
-        }
     }
 
     private var ticks = 0
 
-    /// The Runner pane that is starting or serving, if any.
+    /// The Runner pane that is starting or serving, if any: the newest, since a stopped one may still be open.
     var runnerPane: Bus.Info? {
-        bus.all.first { $0.kind == .runner && $0.state != .exited }
+        bus.all.last { $0.kind == .runner && $0.state != .exited }
     }
 
     /// A Runner pane shows the model it serves once the server answers.
@@ -122,6 +126,10 @@ final class AppModel: NSObject, ObservableObject {
         if kind == .runner, let pane = runnerPane {
             return "Runner is already \(pane.state == .running ? "serving" : "starting") in \(pane.name)."
         }
+        // A stopped Runner pane gives way to the new one.
+        if kind == .runner {
+            for stopped in items where stopped.kind == .runner && bus.info(stopped.name)?.state == .exited { close(stopped.name) }
+        }
         var directory = rawDirectory.trimmingCharacters(in: .whitespaces)
         if host.isEmpty, !directory.isEmpty {
             directory = (directory as NSString).expandingTildeInPath
@@ -156,6 +164,7 @@ final class AppModel: NSObject, ObservableObject {
         var model: String?
         if kind == .pi, host.isEmpty {
             model = await Launcher.fetchRunnerModel()
+            guard items.contains(where: { $0.view === view }) else { return }
             guard let model else {
                 bus.setModel(view.paneName, "Runner offline")
                 start(view, Launcher.runnerOfflinePlan())
@@ -207,12 +216,20 @@ final class AppModel: NSObject, ObservableObject {
 
     func close(_ name: String) {
         guard let item = items.first(where: { $0.name == name }) else { return }
+        // Re-parenting the grid drops the first responder; give it back to the pane that had it.
+        let focused = items.first { $0.view !== item.view && $0.view.window?.firstResponder === $0.view }?.view
         item.view.onExit = nil
         item.view.terminate()
         bus.remove(name)
         tokens[name] = nil
         remoteShells[name] = nil
         items.removeAll { $0.name == name }
+        if let focused { DispatchQueue.main.async { focused.window?.makeFirstResponder(focused) } }
+    }
+
+    /// Panes whose harness is still running, for the quit confirmation.
+    var livePanes: Int {
+        items.filter { bus.info($0.name)?.state != .exited }.count
     }
 
     func closeAll() {
@@ -314,7 +331,7 @@ final class AppModel: NSObject, ObservableObject {
         }
         let host = bus.info(name)?.host ?? ""
         let location = host.isEmpty ? "locally" : "on \(host) (\(remoteShells[name] == .windows ? "Windows" : "POSIX") shell)"
-        let dims = items.first?.view.terminalDimensions
+        let dims = items.first(where: { $0.name == name })?.view.terminalDimensions
         print("DOJO_SMOKE ok: pane \(name) echoed the typed line \(location), the bus answered on 127.0.0.1:\(port), terminal \(dims?.cols ?? 0)x\(dims?.rows ?? 0)")
         closeAll()
         exit(0)
