@@ -1,24 +1,27 @@
 import AppKit
 import SwiftUI
 
-/// The Xyntetik brand as the window uses it: the colour tokens of xyntetik.com (light and dark) and
-/// the Ensō mark from its favicon. Every colour switches with the system appearance.
+/// The Xyntetik brand as the window uses it: the site's accent colours on a recycled-paper ground, and
+/// the Ensō mark from its favicon. The ground is the same in light and dark mode: paper has one colour.
 enum Theme {
-    // MARK: colours (light, dark), the site's tokens
+    // MARK: colours
 
-    static let bg = dynamic(light: 0xFAFAF8, dark: 0x0E1516)
-    static let surface = dynamic(light: 0xFFFFFF, dark: 0x131C1E)
-    static let ink = dynamic(light: 0x16232A, dark: 0xE8ECEA)
-    static let muted = dynamic(light: 0x6B7A81, dark: 0x8C9A98)
-    static let line = dynamic(light: 0xE3E6E4, dark: 0x223031)
-    static let teal = dynamic(light: 0x14A08F, dark: 0x1FAA98)
-    static let tealInk = dynamic(light: 0x0E7C6E, dark: 0x3ED2BD)
-    static let coral = dynamic(light: 0xFF7A5C, dark: 0xFF8A6E)
-    static let coralInk = dynamic(light: 0xC8532F, dark: 0xFFA48D)
-    static let blue = dynamic(light: 0x4F6BD8, dark: 0x6E8AEE)
-    static let codeBg = dynamic(light: 0xF3F4F2, dark: 0x0B1213)
-    /// The Xyntetik green for the name in the title bar: the site's teal in light, the mark's bright end in dark.
-    static let brand = dynamic(light: 0x14A08F, dark: 0x3ED2BD)
+    /// Recycled paper: warm, a little grey, with a lighter sheet for the panes and headers.
+    static let bg = color(0xE3DED1)
+    static let paper = color(0xECE7DB)
+    static let surface = color(0xF3EFE6)
+    static let ink = color(0x16232A)
+    static let muted = color(0x6F6A5F)
+    static let line = color(0xCDC6B5)
+    /// The fibre flecks in the paper, drawn over the ground by `Paper`.
+    static let fleck = color(0x6B5E48)
+    static let teal = color(0x14A08F)
+    static let tealInk = color(0x0E7C6E)
+    static let coral = color(0xFF7A5C)
+    static let coralInk = color(0xC8532F)
+    static let blue = color(0x4F6BD8)
+    /// The Xyntetik green for the name in the title bar and the `[from: <name>]` tags.
+    static let brand = color(0x14A08F)
 
     /// The mark's own colours, the same in both appearances.
     static let markTealStart = color(0x159A89)
@@ -32,11 +35,6 @@ enum Theme {
                 blue: CGFloat(rgb & 0xFF) / 255, alpha: alpha)
     }
 
-    private static func dynamic(light: UInt32, dark: UInt32) -> NSColor {
-        NSColor(name: nil) { appearance in
-            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? color(dark) : color(light)
-        }
-    }
 
     // MARK: the Ensō
 
@@ -111,5 +109,33 @@ struct Wordmark: View {
         }
         .font(.system(size: size, weight: .semibold, design: .default))
         .tracking(-0.03 * size)
+    }
+}
+
+/// A sheet of recycled paper: a tone with faint fibre flecks scattered over it. The flecks come from a fixed
+/// seed, so the sheet looks the same every time it is drawn.
+struct Paper: View {
+    var tone: NSColor = Theme.bg
+    var density: CGFloat = 1
+
+    var body: some View {
+        Color(tone).overlay(
+            Canvas { context, size in
+                var state: UInt64 = 0x9E37_79B9_7F4A_7C15
+                func next() -> CGFloat {
+                    state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+                    return CGFloat(state >> 33) / CGFloat(1 << 31)
+                }
+                let count = Int(size.width * size.height / 900 * density)
+                for _ in 0..<count {
+                    let x = next() * size.width, y = next() * size.height
+                    let long = 0.8 + next() * 2.2, wide = 0.5 + next() * 0.6
+                    let alpha = 0.05 + next() * 0.09
+                    let fleck = Path(ellipseIn: CGRect(x: x, y: y, width: long, height: wide))
+                    context.fill(fleck, with: .color(Color(Theme.fleck).opacity(alpha)))
+                }
+            }
+            .allowsHitTesting(false)
+        )
     }
 }

@@ -14,9 +14,9 @@ final class TerminalPane: LocalProcessTerminalView, PaneIO {
         applyTheme()
     }
 
-    /// The brand's page and ink colours for the terminal; the ANSI palette stays the harnesses' own.
+    /// Paper and ink for the terminal; the ANSI palette stays the harnesses' own.
     private func applyTheme() {
-        nativeBackgroundColor = Theme.bg
+        nativeBackgroundColor = Theme.paper
         nativeForegroundColor = Theme.ink
         caretColor = Theme.teal
         selectedTextBackgroundColor = Theme.teal.withAlphaComponent(0.35)
@@ -36,23 +36,19 @@ final class TerminalPane: LocalProcessTerminalView, PaneIO {
         terminalInputStateSnapshot()?.bracketedPasteMode ?? false
     }
 
-    override func viewDidChangeEffectiveAppearance() {
-        super.viewDidChangeEffectiveAppearance()
-        applyTheme()
-    }
-
     // MARK: relayed messages in the brand green
 
     /// Bytes from the harness that might be the start of a `[from: <name>]` tag, held for the next chunk.
     private var carry: [UInt8] = []
     private var flush: DispatchWorkItem?
 
+    /// `Theme.brand` as a terminal colour code.
+    private static let tagColor = Highlight.foreground(red: 0x14, green: 0xA0, blue: 0x8F)
+
     /// Every `[from: <name>]` tag the harness paints is wrapped in the Xyntetik green on its way to the screen.
     override func dataReceived(slice: ArraySlice<UInt8>) {
         flush?.cancel()
-        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        let color = dark ? Highlight.foreground(red: 0x3E, green: 0xD2, blue: 0xBD) : Highlight.foreground(red: 0x14, green: 0xA0, blue: 0x8F)
-        let out = Highlight.tagged(Array(slice), carry: &carry, color: color)
+        let out = Highlight.tagged(Array(slice), carry: &carry, color: TerminalPane.tagColor)
         if !out.isEmpty { feed(byteArray: out[...]) }
         if !carry.isEmpty {
             // A chunk ended inside a possible tag; if nothing follows at once, show the bytes as they are.
