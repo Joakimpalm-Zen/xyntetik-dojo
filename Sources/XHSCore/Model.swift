@@ -1,16 +1,18 @@
 import Foundation
 
-/// The harness a pane runs. `shell` exists only for the launch smoke test.
+/// The harness a pane runs. `runner` is the local model server the pi panes talk to, not a harness:
+/// messages are never sent to it. `shell` exists only for the launch smoke test.
 public enum HarnessKind: String, Codable, CaseIterable, Sendable {
-    case claude, codex, pi, shell
+    case claude, codex, pi, runner, shell
 
-    public static let pickable: [HarnessKind] = [.claude, .codex, .pi]
+    public static let pickable: [HarnessKind] = [.claude, .codex, .pi, .runner]
 
     public var title: String {
         switch self {
         case .claude: return "Claude"
         case .codex: return "Codex"
         case .pi: return "pi"
+        case .runner: return "Runner"
         case .shell: return "Shell"
         }
     }

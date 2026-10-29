@@ -181,11 +181,12 @@ public final class Bus {
         }
         let quiet = now().timeIntervalSince(p.quietSince!)
         switch p.state {
-        case .running where quiet >= idleAfterQuiet:
+        case .running where quiet >= idleAfterQuiet && p.kind != .runner:
             setState(p.name, .idle)
         case .starting where quiet >= readyAfterQuiet:
             if let fingerprint = IdleFingerprint.text(for: p.kind), screen.contains(fingerprint) {
-                setState(p.name, .idle)
+                // A server that listens is running for good; a harness showing its composer is idle.
+                setState(p.name, p.kind == .runner ? .running : .idle)
             }
         default:
             break
@@ -231,6 +232,7 @@ public final class Bus {
     private func send(from sender: Pane, _ args: [String: Any]) -> (status: Int, body: Data) {
         guard let target = target(args) else { return noPane(args) }
         guard target.state != .exited else { return error(409, "\(target.name) has exited") }
+        guard target.kind != .runner else { return error(409, "\(target.name) is the model server, not a harness") }
         let text = Delivery.sanitize(args["text"] as? String ?? "")
         guard !text.isEmpty else { return error(400, "text is empty") }
         guard text.count <= Bus.maxMessageLength else { return error(413, "text is longer than \(Bus.maxMessageLength) characters") }

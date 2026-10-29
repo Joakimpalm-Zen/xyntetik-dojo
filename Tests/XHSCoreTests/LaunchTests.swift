@@ -199,4 +199,10 @@ import Testing
             #expect(try !snippet(name).contains("\u{2014}"))
         }
     }
+
+    @Test func aRunnerPaneRunsTheStartScript() {
+        let line = Shell.line(Launcher.harnessWords(kind: .runner, paneName: "runner-1", port: 7788, runnerModel: nil))
+        #expect(line == "/bin/sh \"$HOME/.xhs/runner-start.sh\"")
+        #expect(PaneNames.next(for: .runner, taken: []) == "runner-1")
+    }
 }

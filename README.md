@@ -16,7 +16,7 @@ One window of terminals for agent harnesses: Claude Code, Codex and pi (on a loc
 - macOS 14 or later. Built and tested on macOS 27 (Apple Silicon) with the Swift 6.4 Command Line Tools.
 - `python3` on every host that runs a harness (the bus shim uses only the standard library).
 - `claude`, `codex` and `pi` on your login shell's PATH, each already logged in.
-- For pi: Runner's OpenAI-compatible server at `http://127.0.0.1:8080/v1` (`runner -m model.gguf --serve`).
+- For pi: [Xyntetik Runner](https://github.com/Joakimpalm-Zen/xyntetik-runner) serving a model at `http://127.0.0.1:8080/v1`. A Runner pane sets that up (next section); if you already run Runner, pi uses it as it is.
 
 ## Build and run
 
@@ -34,7 +34,7 @@ make smoke HOST=user@box   # the same, with the pane on that host over ssh
 
 On start the app:
 
-1. Copies `tools/xhs-mcp.py` and `tools/xhs-pi.ts` to `~/.xhs/` and links `~/.xhs/bin/xhs`.
+1. Copies `tools/xhs-mcp.py`, `tools/xhs-pi.ts` and `tools/runner-start.sh` to `~/.xhs/` and links `~/.xhs/bin/xhs`.
 2. If `~/.codex` exists and `~/.codex/config.toml` has no `[mcp_servers.xhs]`, appends the block in `tools/snippets/codex-config.toml`: the xhs MCP server and six state hooks. It does this once and never edits the file again. Delete the block by hand to remove it.
 
 What needs you, once:
@@ -48,6 +48,8 @@ What needs you, once:
 Press plus, pick Claude, Codex or pi. Leave the host empty for this Mac. A pane starts in the folder you give (type it, press Choose, or click a recent one), or in your home directory. With a host set, the folder is on that host, typed as it is there; Choose and the recent folders are this Mac's, so they step aside. It runs in your login shell (`$SHELL -l -i`), so PATH is the one your terminal has. A pane never inherits `CLAUDE*` variables from the process that opened the app (so `make run` from inside a Claude Code session does not make the pane's Claude a child session). Close a pane with its x button; that ends the harness.
 
 A local pi pane first asks Runner for its models (`GET /v1/models`), starts pi with the first one and shows it in the header. If Runner does not answer, the pane says so and pi is not started.
+
+**Runner.** The picker says whether Runner is serving on this Mac and what. If it is not, add a Runner pane: it runs `tools/runner-start.sh`, which uses `runner` from your PATH or `~/.xhs/runner/runner`, downloading the latest release there (checked against its `SHA256SUMS`) when neither exists; then asks `runner --info fit` about each of five models, largest first (the Qwen3-Coder-30B and Qwen3-30B selective files, Granite-4.2-8B, Qwen3-4B, Granite-4.1-3B), reading only the first 16 MiB of each from the Hub; and serves the first that fits at context 16384 (with the `--kv` setting the verdict names), fetching that one model. The pane shows every verdict and then Runner's log; its header turns `running` and names the model once the server listens. Close the pane to stop Runner. A Runner pane is local; on a host, start Runner yourself. Messages are never sent to a Runner pane.
 
 ## Remote panes
 
@@ -153,7 +155,7 @@ Needs a human click-through:
 - `Sources/XHSCore/`: the bus, HTTP server, hook mapping, message delivery and launch commands. No UI; all tested.
 - `Sources/XHSApp/`: the window (SwiftUI and AppKit, SwiftTerm panes). View state uses ObservableObjects because `@State` is a macro whose plugin ships only with Xcode.
 - `tools/xhs-mcp.py`: the shim (MCP server, `xhs` command, `xhs hook`, `xhs install`). `tools/xhs-pi.ts`: the pi extension.
-- `tools/snippets/`: peer-rule paragraphs and the hook and MCP config. `tools/remote-setup.sh`: the one-time install on an ssh host, POSIX or Windows.
+- `tools/snippets/`: peer-rule paragraphs and the hook and MCP config. `tools/remote-setup.sh`: the one-time install on an ssh host, POSIX or Windows. `tools/runner-start.sh`: find or fetch Runner, pick a model that fits, serve it (`tools/test_runner_start.sh` checks the pick with a stub runner and Hub).
 - `packaging/Info.plist`, `packaging/make-icon.swift` (the icon), `Makefile`. `Sources/XHSApp/Theme.swift` holds the brand colours and the Ensō.
 - `Package.swift` passes the swift-testing macro plugin path to the test target. Without it, test builds with the Command Line Tools fail on about every other run.
 

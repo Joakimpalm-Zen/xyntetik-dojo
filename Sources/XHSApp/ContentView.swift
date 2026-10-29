@@ -205,6 +205,11 @@ struct PickerSheet: View {
                         .tint(Color(Theme.teal))
                 }
             }
+            Text(model.runnerModel.isEmpty
+                 ? "Runner is not running. A Runner pane fetches it if needed, picks a model that fits this Mac and serves it; pi panes use it."
+                 : "Runner is serving \(model.runnerModel) for the pi panes.")
+                .font(.caption)
+                .foregroundStyle(Color(model.runnerModel.isEmpty ? Theme.coralInk : Theme.tealInk))
             TextField("Host (empty for this Mac)", text: $form.host)
             if !model.recentHosts.isEmpty {
                 HStack(spacing: 6) {
@@ -252,8 +257,9 @@ struct PickerSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 400)
+        .frame(width: 440)
         .background(Paper(tone: Theme.surface, density: 0.6))
+        .onAppear { model.refreshRunner() }
     }
 
     private func add(_ kind: HarnessKind) {

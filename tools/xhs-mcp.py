@@ -28,7 +28,7 @@ TOOLS = [
     {
         "name": "panes",
         "description": "List the terminals in the Xyntetik Harness Supervisor window: "
-        "name, kind (claude, codex, pi), host, state (starting, running, idle, prompt, exited) "
+        "name, kind (claude, codex, pi, or runner for the model server), host, state (starting, running, idle, prompt, exited) "
         "and queued messages. The field 'you' is your own terminal.",
         "inputSchema": {"type": "object", "properties": {}},
     },
