@@ -13,9 +13,9 @@ public enum Delivery {
         let normalised = text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
         for s in normalised.unicodeScalars {
             switch s.value {
-            case 0x0A: out.append(s)
+            case 0x0A, 0x85, 0x2028, 0x2029: out.append("\n")   // line feed, next line, line and paragraph separators
             case 0x09: out.append(" ")
-            case 0x00...0x1F, 0x7F...0x9F: continue
+            case 0x00...0x1F, 0x7F...0x9F: continue             // the other C0 and C1 controls
             default: out.append(s)
             }
         }
@@ -25,7 +25,12 @@ public enum Delivery {
     /// The message as it appears in the target terminal. A harness that puts its own `[from: ...]` tag
     /// at the front of its text loses it: the tag is the bus's, from the token, never from the text.
     public static func line(from sender: String, text: String) -> String {
-        "[from: \(sender)] \(stripLeadingTags(text))"
+        // A later line of the text that starts like a tag would read as another sender's message: it is
+        // set in by one space, so only the bus writes a line that begins with [from:.
+        let body = stripLeadingTags(text).split(separator: "\n", omittingEmptySubsequences: false)
+            .enumerated().map { i, line in i > 0 && line.hasPrefix("[from:") ? " " + line : String(line) }
+            .joined(separator: "\n")
+        return "[from: \(sender)] \(body)"
     }
 
     static func stripLeadingTags(_ text: String) -> String {

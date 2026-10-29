@@ -13,6 +13,8 @@ final class TerminalPane: TerminalView, PaneIO {
     var paneName: String
     /// Called on the main thread when the process ends, with its exit code.
     var onExit: ((Int32?) -> Void)?
+    /// Called with what each batch of the owner's keystrokes did to the composer.
+    var onOwnerInput: ((Bus.OwnerKey) -> Void)?
     private var process: LocalProcess!
 
     init(name: String) {
@@ -107,7 +109,9 @@ final class TerminalPane: TerminalView, PaneIO {
             // A chunk ended inside a possible tag or sequence; if nothing follows at once, show the bytes as they are.
             let item = DispatchWorkItem { [weak self] in
                 guard let self else { return }
-                let held = self.sequenceCarry + self.carry
+                // Stream order: the tag carry holds the end of the repainted output, the sequence carry
+                // the raw tail after it.
+                let held = self.carry + self.sequenceCarry
                 self.sequenceCarry = []
                 self.carry = []
                 if !held.isEmpty { self.feed(byteArray: held[...]) }
@@ -136,6 +140,7 @@ extension TerminalPane: LocalProcessDelegate {
 
 extension TerminalPane: TerminalViewDelegate {
     func send(source: TerminalView, data: ArraySlice<UInt8>) {
+        onOwnerInput?(OwnerInput.key(data))
         process.send(data: data)
     }
 

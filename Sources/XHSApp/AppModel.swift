@@ -45,7 +45,6 @@ final class AppModel: NSObject, ObservableObject {
     private var remoteShells: [String: RemoteShell] = [:]
     private var server: BusServer?
     private var timer: Timer?
-    private var keyMonitor: Any?
 
     override init() {
         let env = ProcessInfo.processInfo.environment
@@ -64,13 +63,6 @@ final class AppModel: NSObject, ObservableObject {
                 self.ticks += 1
                 if self.ticks % 5 == 0 { self.fillRunnerHeader() }
             }
-        }
-        // The bus holds relayed messages while the owner types in that pane and while unsent text sits there.
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            if let pane = event.window?.firstResponder as? TerminalPane {
-                self?.bus.noteOwnerInput(pane.paneName, AppModel.ownerKey(event))
-            }
-            return event
         }
         if !smoke, let trouble = ToolInstall.run() {
             problem = trouble
@@ -114,21 +106,6 @@ final class AppModel: NSObject, ObservableObject {
         addPane(kind: .runner, host: "", name: "")
     }
 
-    /// What a keystroke does to a harness composer: Enter sends it, Ctrl-C and Ctrl-U empty it, Delete
-    /// removes a character, printable keys and a paste add text; the rest moves around.
-    static func ownerKey(_ event: NSEvent) -> Bus.OwnerKey {
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        switch event.keyCode {
-        case 36, 76: return flags.isDisjoint(with: [.shift, .option]) ? .clear : .text
-        case 51, 117: return .delete
-        default: break
-        }
-        if flags.contains(.control), let c = event.charactersIgnoringModifiers, c == "c" || c == "u" { return .clear }
-        if flags.contains(.command) { return event.charactersIgnoringModifiers == "v" ? .text : .other }
-        guard let chars = event.characters, let first = chars.unicodeScalars.first else { return .other }
-        return first.value >= 0x20 && first.value != 0x7F && !(0xF700...0xF8FF).contains(first.value) ? .text : .other
-    }
-
     // MARK: panes
 
     /// Adds a pane and starts its harness. Returns a message for the picker when the input is not usable.
@@ -163,6 +140,8 @@ final class AppModel: NSObject, ObservableObject {
         }
         let view = TerminalPane(name: name)
         view.onExit = { [weak self, weak view] _ in if let view { self?.bus.setState(view.paneName, .exited) } }
+        // The bus holds relayed messages while the owner types in the pane and while unsent text sits there.
+        view.onOwnerInput = { [weak self, weak view] key in if let view { self?.bus.noteOwnerInput(view.paneName, key) } }
         let token = bus.add(name: name, kind: kind, host: host, io: view)
         tokens[name] = token
         if !host.isEmpty { recentHosts = RecentHosts.remember(host, in: AppModel.hostsFile) }
