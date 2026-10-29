@@ -80,7 +80,7 @@ What needs you, once:
 <a id="adding-a-pane"></a>
 ## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> Adding a pane
 
-Press plus, pick Claude, Codex or pi. Leave the host empty for this Mac. A pane starts in the folder you give (type it, press Choose, or click a recent one), or in your home directory. With a host set, the folder is on that host, typed as it is there; Choose and the recent folders are this Mac's, so they step aside. It runs in your login shell (`$SHELL -l -i`), so PATH is the one your terminal has. A pane never inherits `CLAUDE*` variables from the process that opened the app (so `make run` from inside a Claude Code session does not make the pane's Claude a child session). Close a pane with its x button; that ends the harness.
+Press plus, pick Claude, Codex or pi (Runner, the local model server, has its own row underneath with its state beside the button). Leave the host empty for this Mac. A pane starts in the folder you give (type it, press Choose, or click a recent one), or in your home directory. With a host set, the folder is on that host, typed as it is there; Choose and the recent folders are this Mac's, so they step aside. It runs in your login shell (`$SHELL -l -i`), so PATH is the one your terminal has. A pane never inherits `CLAUDE*` variables from the process that opened the app (so `make run` from inside a Claude Code session does not make the pane's Claude a child session). Close a pane with its x button; that ends the harness.
 
 A local pi pane first asks Runner for its models (`GET /v1/models`), starts pi with the first one and shows it in the header. If Runner does not answer, the pane says so and pi is not started.
 
@@ -181,7 +181,7 @@ Verified without a human:
 - Probes against a stand-in bus (not part of the test suite), on this Mac:
   - Claude Code 2.1.311: `claude -p` with the app's `--settings` and `--mcp-config` POSTed hook events with the pane token, and the xhs `panes` tool reached the bus.
   - Codex 0.163.0: command hooks receive `XHS_TOKEN` (hook trust bypassed for the probe only), and the shim gets `XHS_TOKEN` through `env_vars` and reaches the bus.
-  - pi 0.85.1 and 1.4.0, with the app's exact launch line: the extension registers Runner's models and picks the one given; it reports session start, prompt submit and settle; a message typed as bracketed paste plus Enter arrives as one multi-line user message. With pi 1.4.0 the extension's five events still fire; a 0.6B model on Runner answered a `[from: claude-1]` line on its own screen rather than with `xhs send`, so the pane spells the command out in pi's launch prompt.
+  - pi 0.85.1 and 1.4.0, with the app's exact launch line: the extension registers Runner's models and picks the one given; it reports session start, prompt submit and settle; a message typed as bracketed paste plus Enter arrives as one multi-line user message. With pi 1.4.0 the extension's five events still fire; a 0.6B model on Runner answered a `[from: claude-1]` line on its own screen rather than with `xhs send`, so the pane spells the command out in pi's launch prompt, along with `curl -sL` for web pages (a small model's bare `curl -s` shows nothing on a redirect) and a preference for RSS feeds.
 
 Needs a human click-through:
 
