@@ -9,6 +9,7 @@ final class MockIO: PaneIO {
 
     func write(_ bytes: [UInt8]) { written.append(bytes) }
     func screenText() -> String { screen }
+    func visibleText() -> String { screen }
 
     /// Everything typed so far as one string.
     var typed: String { String(decoding: written.flatMap { $0 }, as: UTF8.self) }

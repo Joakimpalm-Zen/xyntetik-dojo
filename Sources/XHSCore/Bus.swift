@@ -8,6 +8,8 @@ public protocol PaneIO: AnyObject {
     func write(_ bytes: [UInt8])
     /// The screen and scrollback as text, one line per row.
     func screenText() -> String
+    /// The rows on screen right now, without the scrollback; what `tick` watches for change.
+    func visibleText() -> String
     /// Whether the program in the pane turned on bracketed paste.
     var bracketedPasteEnabled: Bool { get }
 }
@@ -170,7 +172,7 @@ public final class Bus {
 
     private func watchQuiet(_ p: Pane) {
         guard let io = p.io else { return }
-        let screen = String(io.screenText().suffix(4000))
+        let screen = io.visibleText()
         let hash = screen.hashValue
         if hash != p.screenHash || p.quietSince == nil {
             p.screenHash = hash
