@@ -18,6 +18,11 @@
   <a href="#safety-rules">Safety rules</a>
 </p>
 
+<p align="center">
+  <img src="packaging/readme/rollcall.png" alt="Six panes: two Claude Code, two Codex and a pi on a local model answer a roll call sent over the bus from the sixth, with Runner serving in the strip along the bottom" width="900">
+</p>
+<p align="center"><sub>A roll call: one session asks five others to report over the bus, and they do; Runner serves the pi pane's model in the strip at the bottom.</sub></p>
+
 Running several coding agents at once means a desk full of terminals and you
 as the messenger between them. Dojo puts Claude Code, Codex and
 pi (on a local Runner model) in one window, on this Mac or over SSH, and gives
@@ -75,6 +80,7 @@ make test    # swift test (65 tests), the shim's Python tests (10), the Runner p
 make app     # build/XyntetikDojo.app, assembled by hand and ad-hoc signed
 make run     # open the app from build/
 make install # copy the app to /Applications (replacing the one there) and open it
+make cert    # once: a self-signed certificate so macOS privacy remembers its answers across rebuilds
 make smoke   # launch proof: two panes, swapped as a drag does it; a click focuses the first and typed keys come back from its shell; the bus answers; the app quits (exit 0)
 make smoke HOST=user@box   # the same, with the pane on that host over ssh
 ```
@@ -91,6 +97,8 @@ On start the app:
 
 **Renamed on 2026-10-29.** The app was Xyntetik Harness Supervisor and its command `xhs` until then. The first run of Dojo moves `~/.xhs` to `~/.dojo` (hosts, folders, Runner and its files come along) and replaces the old block in `~/.codex/config.toml` with the new one, keeping the file as it was beside it as `config.toml.before-dojo`. On an ssh host, run `make remote-setup HOST=...` again and delete `~/.xhs` there. A peer-rule snippet you installed by hand says `xhs`; replace it with the new one.
 
+- **Privacy prompts.** When a harness in a pane reads your Desktop, Documents or Downloads, macOS asks whether the app may, as it does for any terminal app; the first remote pane asks for the local network. With the ad hoc signature `make app` uses by default, every rebuild is a new app to macOS and the questions come back. Run `make cert` once: it makes a self-signed "Xyntetik Dojo" certificate in your login keychain (macOS asks for your password to trust it), and from then on `make app` signs with it and macOS remembers your answers. Or give the app Full Disk Access under System Settings, Privacy & Security, which ends the folder questions altogether.
+
 What needs you, once:
 
 - **No permission prompts by default.** A Claude pane runs `claude --dangerously-skip-permissions` and a Codex pane runs `codex --yolo --dangerously-bypass-hook-trust` (no approvals, no sandbox, the six dojo state hooks trusted without a `/hooks` confirmation). That is the owner's choice for a supervised window; the harness in a pane can do anything your user can. Keep the window to work you would approve anyway.
@@ -99,6 +107,10 @@ What needs you, once:
 
 <a id="adding-a-pane"></a>
 ## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> Adding a pane
+
+<p align="center">
+  <img src="packaging/readme/picker.png" alt="The picker: Claude, Codex and pi with host, folder and name; under them the local model section with Runner's state and the models that fit" width="560">
+</p>
 
 Press plus, pick Claude, Codex or pi; the host, folder and name fields under them belong to that agent. Runner, the local model server, has its own section at the bottom with its state beside the button. Leave the host empty for this Mac. A pane starts in the folder you give (type it, press Choose, or click a recent one), or in your home directory. With a host set, the folder is on that host, typed as it is there; Choose and the recent folders are this Mac's, so they step aside. It runs in your login shell (`$SHELL -l -i`), so PATH is the one your terminal has. A pane never inherits `CLAUDE*` variables from the process that opened the app (so `make run` from inside a Claude Code session does not make the pane's Claude a child session). Close a pane with its x button; that ends the harness.
 
@@ -154,6 +166,10 @@ dojo send codex-1 "please review the diff in src/bus.rs"
 dojo read claude-1 60              # last 60 lines of claude-1's screen
 dojo state pi-1
 ```
+
+<p align="center">
+  <img src="packaging/readme/window.png" alt="Claude Code asks Codex and pi to reply over the bus; both replies land in its pane as green [from: name] lines" width="900">
+</p>
 
 `send` types `[from: <your pane>] <text>` into the target terminal and presses Enter, so the target harness gets it as typed input. Ask any harness to do it in plain words: "send codex-1 a summary of what you changed".
 
