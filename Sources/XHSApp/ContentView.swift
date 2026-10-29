@@ -19,7 +19,9 @@ struct ContentView: View {
                     .padding(6)
                     .background(Color(Theme.coral))
             }
-            if model.items.isEmpty {
+            // Agents fill the grid; Runner, the local model server, lives in a strip along the bottom.
+            let agents = model.items.filter { $0.kind != .runner }
+            if agents.isEmpty {
                 VStack(spacing: 14) {
                     EnsoMark().frame(width: 96, height: 96)
                     Wordmark(size: 26)
@@ -33,7 +35,10 @@ struct ContentView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                PaneGrid(items: model.items)
+                PaneGrid(items: agents)
+            }
+            if let runner = model.items.first(where: { $0.kind == .runner }) {
+                RunnerStrip(item: runner)
             }
         }
         .background(Paper())
@@ -48,6 +53,57 @@ struct ContentView: View {
         }
         .sheet(isPresented: $model.picking) {
             PickerSheet().environmentObject(model)
+        }
+    }
+}
+
+/// The local model server along the bottom of the window: one line with its state, a chevron that opens
+/// its log above the line (open while it starts, closed once it serves) and a close button that stops it.
+struct RunnerStrip: View {
+    @EnvironmentObject private var model: AppModel
+    let item: AppModel.Item
+
+    var body: some View {
+        let info = model.bus.info(item.name)
+        VStack(spacing: 0) {
+            if model.runnerLogOpen {
+                Rectangle().fill(Color(Theme.line)).frame(height: 1)
+                TerminalHost(view: item.view).frame(height: 240)
+            }
+            Rectangle().fill(Color(Theme.line)).frame(height: 1)
+            HStack(spacing: 8) {
+                StateDot(state: info?.state)
+                EnsoMark().frame(width: 14, height: 14)
+                Text("Runner").bold().foregroundStyle(Color(Theme.ink))
+                Text(RunnerStrip.status(info)).foregroundStyle(Color(info?.state == .exited ? Theme.coralInk : Theme.muted))
+                    .lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: 4)
+                Image(systemName: model.runnerLogOpen ? "chevron.down" : "chevron.up")
+                    .foregroundStyle(Color(Theme.muted))
+                    .help(model.runnerLogOpen ? "Hide Runner's log" : "Show Runner's log")
+                Button { model.close(item.name) } label: { Image(systemName: "xmark") }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(Color(Theme.muted))
+                    .help("Stop Runner")
+            }
+            .font(.callout)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Paper(tone: Theme.surface, density: 0.6))
+            .contentShape(Rectangle())
+            .onTapGesture { model.runnerLogOpen.toggle() }
+        }
+        .onAppear { model.runnerLogOpen = info?.state != .running }
+        .onChange(of: info?.state) { _, state in if state == .running { model.runnerLogOpen = false } }
+    }
+
+    /// One phrase for the strip: what is being picked or fetched, what is served, or that it stopped.
+    static func status(_ info: Bus.Info?) -> String {
+        guard let info else { return "" }
+        switch info.state {
+        case .running: return info.model.isEmpty ? "serving on 127.0.0.1:8080" : "serving \(info.model)"
+        case .exited: return "stopped; open the log to see why"
+        default: return info.model.isEmpty ? "picking a model that fits this Mac" : info.model
         }
     }
 }
