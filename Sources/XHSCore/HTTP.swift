@@ -128,7 +128,7 @@ public final class BusServer {
                 if let data { buffer.append(data) }
                 switch HTTPRequest.parse(buffer) {
                 case .complete(let request):
-                    let result = self.handler(request.path, request.headers["x-xhs-token"], request.body)
+                    let result = self.handler(request.path, request.headers["x-dojo-token"], request.body)
                     self.reply(connection, result.status, result.body)
                 case .invalid:
                     self.reply(connection, 400, Data(#"{"error":"bad request"}"#.utf8))

@@ -1,41 +1,41 @@
-# Xyntetik Harness Supervisor: bus tools and state hooks (added by "xhs install")
-[mcp_servers.xhs]
+# Xyntetik Dojo: bus tools and state hooks (added by "dojo install")
+[mcp_servers.dojo]
 command = "sh"
-args = ["-c", "exec python3 \"$HOME/.xhs/xhs-mcp.py\""]
-env_vars = ["XHS_TOKEN", "XHS_PORT", "XHS_PANE"]
+args = ["-c", "exec python3 \"$HOME/.dojo/dojo-mcp.py\""]
+env_vars = ["DOJO_TOKEN", "DOJO_PORT", "DOJO_PANE"]
 
 [[hooks.SessionStart]]
 [[hooks.SessionStart.hooks]]
 type = "command"
-command = "python3 \"$HOME/.xhs/xhs-mcp.py\" hook"
+command = "python3 \"$HOME/.dojo/dojo-mcp.py\" hook"
 timeout = 5
 
 [[hooks.UserPromptSubmit]]
 [[hooks.UserPromptSubmit.hooks]]
 type = "command"
-command = "python3 \"$HOME/.xhs/xhs-mcp.py\" hook"
+command = "python3 \"$HOME/.dojo/dojo-mcp.py\" hook"
 timeout = 5
 
 [[hooks.PermissionRequest]]
 [[hooks.PermissionRequest.hooks]]
 type = "command"
-command = "python3 \"$HOME/.xhs/xhs-mcp.py\" hook"
+command = "python3 \"$HOME/.dojo/dojo-mcp.py\" hook"
 timeout = 5
 
 [[hooks.PostToolUse]]
 [[hooks.PostToolUse.hooks]]
 type = "command"
-command = "python3 \"$HOME/.xhs/xhs-mcp.py\" hook"
+command = "python3 \"$HOME/.dojo/dojo-mcp.py\" hook"
 timeout = 5
 
 [[hooks.Stop]]
 [[hooks.Stop.hooks]]
 type = "command"
-command = "python3 \"$HOME/.xhs/xhs-mcp.py\" hook"
+command = "python3 \"$HOME/.dojo/dojo-mcp.py\" hook"
 timeout = 5
 
 [[hooks.Interrupt]]
 [[hooks.Interrupt.hooks]]
 type = "command"
-command = "python3 \"$HOME/.xhs/xhs-mcp.py\" hook"
+command = "python3 \"$HOME/.dojo/dojo-mcp.py\" hook"
 timeout = 3

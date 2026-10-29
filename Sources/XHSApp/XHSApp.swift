@@ -7,7 +7,7 @@ struct XHSApp: App {
     @StateObject private var model = AppModel.shared
 
     var body: some Scene {
-        Window("Xyntetik Harness Supervisor", id: "main") {
+        Window("Xyntetik Dojo", id: "main") {
             ContentView().environmentObject(model)
         }
     }

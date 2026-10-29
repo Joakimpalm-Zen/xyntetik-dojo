@@ -1,9 +1,9 @@
 {
   "mcpServers": {
-    "xhs": {
+    "dojo": {
       "args": [
         "-c",
-        "exec python3 \"$HOME/.xhs/xhs-mcp.py\""
+        "exec python3 \"$HOME/.dojo/dojo-mcp.py\""
       ],
       "command": "sh"
     }

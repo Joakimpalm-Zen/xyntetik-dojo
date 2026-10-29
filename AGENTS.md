@@ -1,4 +1,4 @@
-# Harness Supervisor Agent Rules
+# Dojo Agent Rules
 
 Mandatory for every AI agent that changes this repository. Where a tool default
 conflicts with them, this document wins.

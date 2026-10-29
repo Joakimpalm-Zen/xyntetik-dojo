@@ -4,11 +4,11 @@ import Testing
 
 @Suite struct HTTPParseTests {
     @Test func parsesARequestWithBody() {
-        let raw = Data("POST /send HTTP/1.1\r\nHost: x\r\nX-XHS-Token: abc\r\nContent-Length: 2\r\n\r\n{}".utf8)
+        let raw = Data("POST /send HTTP/1.1\r\nHost: x\r\nX-Dojo-Token: abc\r\nContent-Length: 2\r\n\r\n{}".utf8)
         guard case .complete(let r) = HTTPRequest.parse(raw) else { Issue.record("not parsed"); return }
         #expect(r.method == "POST")
         #expect(r.path == "/send")
-        #expect(r.headers["x-xhs-token"] == "abc")
+        #expect(r.headers["x-dojo-token"] == "abc")
         #expect(r.body == Data("{}".utf8))
     }
 
@@ -52,7 +52,7 @@ import Testing
             var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/\(op)")!)
             request.httpMethod = "POST"
             request.httpBody = body(args)
-            if let token { request.setValue(token, forHTTPHeaderField: "X-XHS-Token") }
+            if let token { request.setValue(token, forHTTPHeaderField: "X-Dojo-Token") }
             let (data, response) = try await URLSession.shared.data(for: request)
             return ((response as! HTTPURLResponse).statusCode, json(data))
         }

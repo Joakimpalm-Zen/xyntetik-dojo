@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Xyntetik Harness Supervisor bus shim. Python 3 standard library only.
+"""Xyntetik Dojo bus shim. Python 3 standard library only.
 
 Modes:
-  xhs-mcp.py                 MCP stdio server with the tools panes, send, read, state
-  xhs panes                  list the terminals in the supervisor window
-  xhs send <pane> <text...>  type a message into another terminal ("-" reads stdin)
-  xhs read <pane> [lines]    print the last lines of a terminal's screen
-  xhs state <pane>           print a terminal's state
-  xhs hook                   forward a harness hook event (JSON on stdin) to the bus
-  xhs install                link ~/.xhs/bin/xhs and add the Codex MCP server and hooks
+  dojo-mcp.py                 MCP stdio server with the tools panes, send, read, state
+  dojo panes                  list the terminals in the supervisor window
+  dojo send <pane> <text...>  type a message into another terminal ("-" reads stdin)
+  dojo read <pane> [lines]    print the last lines of a terminal's screen
+  dojo state <pane>           print a terminal's state
+  dojo hook                   forward a harness hook event (JSON on stdin) to the bus
+  dojo install                link ~/.dojo/bin/dojo and add the Codex MCP server and hooks
 
-The bus is the supervisor app on 127.0.0.1:$XHS_PORT (default 7788). Every call
-carries $XHS_TOKEN, which the app gives each terminal it starts; the bus knows
+The bus is the supervisor app on 127.0.0.1:$DOJO_PORT (default 7788). Every call
+carries $DOJO_TOKEN, which the app gives each terminal it starts; the bus knows
 the sender from it.
 """
 import json
@@ -27,7 +27,7 @@ PROTOCOL_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
 TOOLS = [
     {
         "name": "panes",
-        "description": "List the terminals in the Xyntetik Harness Supervisor window: "
+        "description": "List the terminals in the Xyntetik Dojo window: "
         "name, kind (claude, codex, pi, or runner for the model server), host, state (starting, running, idle, prompt, exited) "
         "and queued messages. The field 'you' is your own terminal.",
         "inputSchema": {"type": "object", "properties": {}},
@@ -80,14 +80,14 @@ class BusError(Exception):
 
 
 def bus_call(op, payload, timeout=10):
-    token = os.environ.get("XHS_TOKEN", "")
+    token = os.environ.get("DOJO_TOKEN", "")
     if not token:
-        raise BusError("not inside Xyntetik Harness Supervisor: XHS_TOKEN is not set")
-    port = os.environ.get("XHS_PORT", DEFAULT_PORT)
+        raise BusError("not inside Xyntetik Dojo: DOJO_TOKEN is not set")
+    port = os.environ.get("DOJO_PORT", DEFAULT_PORT)
     req = urllib.request.Request(
         "http://127.0.0.1:%s/%s" % (port, op),
         data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json", "X-XHS-Token": token},
+        headers={"Content-Type": "application/json", "X-Dojo-Token": token},
         method="POST",
     )
     try:
@@ -132,12 +132,12 @@ def handle(msg):
         result = {
             "protocolVersion": version,
             "capabilities": {"tools": {}},
-            "serverInfo": {"name": "xhs", "version": VERSION},
+            "serverInfo": {"name": "dojo", "version": VERSION},
         }
     elif method == "ping":
         result = {}
     elif method == "tools/list":
-        result = {"tools": TOOLS if os.environ.get("XHS_TOKEN") else []}
+        result = {"tools": TOOLS if os.environ.get("DOJO_TOKEN") else []}
     elif method == "tools/call":
         name = params.get("name")
         if name not in TOOL_NAMES:
@@ -178,18 +178,18 @@ def serve(stdin=sys.stdin, stdout=sys.stdout):
 # ---------------------------------------------------------------- install
 
 CODEX_BLOCK = '''
-# Xyntetik Harness Supervisor: bus tools and state hooks (added by "xhs install")
-[mcp_servers.xhs]
+# Xyntetik Dojo: bus tools and state hooks (added by "dojo install")
+[mcp_servers.dojo]
 command = "sh"
-args = ["-c", "exec python3 \\"$HOME/.xhs/xhs-mcp.py\\""]
-env_vars = ["XHS_TOKEN", "XHS_PORT", "XHS_PANE"]
+args = ["-c", "exec python3 \\"$HOME/.dojo/dojo-mcp.py\\""]
+env_vars = ["DOJO_TOKEN", "DOJO_PORT", "DOJO_PANE"]
 '''
 CODEX_HOOK_EVENTS = ("SessionStart", "UserPromptSubmit", "PermissionRequest", "PostToolUse", "Stop", "Interrupt")
 CODEX_HOOK = '''
 [[hooks.%s]]
 [[hooks.%s.hooks]]
 type = "command"
-command = "python3 \\"$HOME/.xhs/xhs-mcp.py\\" hook"
+command = "python3 \\"$HOME/.dojo/dojo-mcp.py\\" hook"
 timeout = %d
 '''
 
@@ -209,29 +209,59 @@ def write_wrapper(path, python, script_args="", prelude=""):
     os.chmod(path, 0o755)
 
 
+# The app was called Harness Supervisor and its command "xhs" until 2026-10-29. A Codex config that still
+# carries that block gets it replaced: the MCP server table, the marker comment and every hook stanza
+# that ran the old shim go, the new block is appended, and the file as it was is kept beside it.
+OLD_MARKER = "# Xyntetik Harness Supervisor"
+OLD_SERVER = "[mcp_servers.xhs]"
+OLD_SCRIPT = "xhs-mcp.py"
+
+
+def without_old_block(text):
+    """The config text with the old name's server table, marker and hook stanzas removed."""
+    stanzas = []
+    for line in text.splitlines(keepends=True):
+        if line.startswith("[") or not stanzas:
+            stanzas.append([line])
+        else:
+            stanzas[-1].append(line)
+    keep = []
+    for i, st in enumerate(stanzas):
+        head, body = st[0], "".join(st)
+        if head.startswith(OLD_SERVER):
+            continue
+        if head.startswith("[[hooks.") and head.rstrip().endswith(".hooks]]") and OLD_SCRIPT in body:
+            continue
+        if head.startswith("[[hooks.") and i + 1 < len(stanzas) and stanzas[i + 1][0].startswith(head.rstrip()[:-2] + ".hooks]]") \
+                and OLD_SCRIPT in "".join(stanzas[i + 1]):
+            continue
+        keep.append("".join(l for l in st if not l.startswith(OLD_MARKER)))
+    return "".join(keep).rstrip("\n") + "\n"
+
+
 def install(home=None, out=sys.stdout, windows=None):
     home = home or os.path.expanduser("~")
     windows = sys.platform == "win32" if windows is None else windows
-    xhs_dir = os.path.join(home, ".xhs")
-    script = os.path.join(xhs_dir, "xhs-mcp.py")
+    dojo_dir = os.path.join(home, ".dojo")
+    script = os.path.join(dojo_dir, "dojo-mcp.py")
     if not os.path.exists(script):
-        out.write("xhs install: put this script at %s first\n" % script)
+        out.write("dojo install: put this script at %s first\n" % script)
         return 1
     os.chmod(script, 0o755)
-    bin_dir = os.path.join(xhs_dir, "bin")
+    bin_dir = os.path.join(dojo_dir, "bin")
     os.makedirs(bin_dir, exist_ok=True)
-    link = os.path.join(bin_dir, "xhs")
+    link = os.path.join(bin_dir, "dojo")
     if os.path.lexists(link):
         os.remove(link)
     if windows:
         # No symlinks without privileges, and "python3" is the Microsoft Store stub there. The harness line
-        # puts ~/.xhs/bin first on PATH, so these two scripts give MSYS2's sh a python3 and an xhs that work.
+        # puts ~/.dojo/bin first on PATH, so these two scripts give MSYS2's sh a python3 and an dojo that work.
         write_wrapper(os.path.join(bin_dir, "python3"), sys.executable)
-        write_wrapper(link, sys.executable, '"$(dirname "$0")/../xhs-mcp.py" ', '[ $# -eq 0 ] && set -- help')
-        out.write("xhs install: %s and %s (Windows: sh wrappers around %s)\n" % (link, os.path.join(bin_dir, "python3"), sys.executable))
+        write_wrapper(link, sys.executable, '"$(dirname "$0")/../dojo-mcp.py" ', '[ $# -eq 0 ] && set -- help')
+        out.write("dojo install: %s and %s (Windows: sh wrappers around %s)\n" % (link, os.path.join(bin_dir, "python3"), sys.executable))
     else:
-        os.symlink("../xhs-mcp.py", link)
-        out.write("xhs install: %s\n" % link)
+        os.symlink("../dojo-mcp.py", link)
+        out.write("dojo install: %s\n" % link)
     codex_dir = os.path.join(home, ".codex")
     if os.path.isdir(codex_dir):
         config = os.path.join(codex_dir, "config.toml")
@@ -239,20 +269,27 @@ def install(home=None, out=sys.stdout, windows=None):
         if os.path.exists(config):
             with open(config, encoding="utf-8") as f:
                 text = f.read()
-        if "[mcp_servers.xhs]" in text:
-            out.write("xhs install: %s already has [mcp_servers.xhs], left as is\n" % config)
+        if OLD_SERVER in text:
+            with open(config + ".before-dojo", "w", encoding="utf-8") as f:
+                f.write(text)
+            text = without_old_block(text)
+            with open(config, "w", encoding="utf-8") as f:
+                f.write(text)
+            out.write("dojo install: removed the old xhs block from %s (the file as it was: %s.before-dojo)\n" % (config, config))
+        if "[mcp_servers.dojo]" in text:
+            out.write("dojo install: %s already has [mcp_servers.dojo], left as is\n" % config)
         else:
             with open(config, "a", encoding="utf-8") as f:
                 if text and not text.endswith("\n"):
                     f.write("\n")
                 f.write(codex_block())
-            out.write("xhs install: added the xhs MCP server and hooks to %s\n" % config)
+            out.write("dojo install: added the dojo MCP server and hooks to %s\n" % config)
     return 0
 
 
 # ---------------------------------------------------------------- CLI
 
-USAGE = """usage: xhs panes | send <pane> <text...> | read <pane> [lines] | state <pane> | hook | install"""
+USAGE = """usage: dojo panes | send <pane> <text...> | read <pane> [lines] | state <pane> | hook | install"""
 
 
 def cli(argv, out=sys.stdout, err=sys.stderr, stdin=sys.stdin):
@@ -294,7 +331,7 @@ def cli(argv, out=sys.stdout, err=sys.stderr, stdin=sys.stdin):
             out.write("%s %s queued=%s\n" % (rest[0], res.get("state"), res.get("queued", 0)))
             return 0
     except (BusError, ValueError) as e:
-        err.write("xhs: %s\n" % e)
+        err.write("dojo: %s\n" % e)
         return 1
     err.write(USAGE + "\n")
     return 2
@@ -302,7 +339,7 @@ def cli(argv, out=sys.stdout, err=sys.stderr, stdin=sys.stdin):
 
 def main():
     invoked_as = os.path.basename(sys.argv[0])
-    if len(sys.argv) > 1 or invoked_as == "xhs":
+    if len(sys.argv) > 1 or invoked_as == "dojo":
         sys.exit(cli(sys.argv[1:]))
     serve()
 

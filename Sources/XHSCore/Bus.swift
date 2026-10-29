@@ -201,7 +201,7 @@ public final class Bus {
     /// Handles one request. `path` is the operation: /panes, /send, /read, /state or /hook.
     public func handle(path: String, token: String?, body: Data) -> (status: Int, body: Data) {
         guard let token, let sender = panes.first(where: { $0.token == token }) else {
-            return error(401, "unknown or missing X-XHS-Token")
+            return error(401, "unknown or missing X-Dojo-Token")
         }
         let args: [String: Any]
         if body.isEmpty {

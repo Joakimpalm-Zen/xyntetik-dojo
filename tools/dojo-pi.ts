@@ -1,9 +1,9 @@
-// Xyntetik Harness Supervisor extension for pi.
+// Xyntetik Dojo extension for pi.
 // Registers the local Runner server as the "runner" provider and reports the
 // session state (idle, running, prompt) to the supervisor bus.
-// Load it with: pi -e ~/.xhs/xhs-pi.ts --provider runner
+// Load it with: pi -e ~/.dojo/dojo-pi.ts --provider runner
 
-const RUNNER_URL = process.env.XHS_RUNNER_URL || "http://127.0.0.1:8080/v1";
+const RUNNER_URL = process.env.DOJO_RUNNER_URL || "http://127.0.0.1:8080/v1";
 
 async function runnerModels(): Promise<any[]> {
   try {
@@ -16,12 +16,12 @@ async function runnerModels(): Promise<any[]> {
 }
 
 function report(event: string, extra: Record<string, unknown> = {}): void {
-  const token = process.env.XHS_TOKEN;
+  const token = process.env.DOJO_TOKEN;
   if (!token) return;
-  const port = process.env.XHS_PORT || "7788";
+  const port = process.env.DOJO_PORT || "7788";
   fetch(`http://127.0.0.1:${port}/hook`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-XHS-Token": token },
+    headers: { "Content-Type": "application/json", "X-Dojo-Token": token },
     body: JSON.stringify({ hook_event_name: event, ...extra }),
     signal: AbortSignal.timeout(2000),
   }).catch(() => {});

@@ -25,7 +25,7 @@ struct ContentView: View {
                 VStack(spacing: 14) {
                     EnsoMark().frame(width: 96, height: 96)
                     Wordmark(size: 26)
-                    Text("Harness Supervisor")
+                    Text("Dojo")
                         .font(.system(size: 15, weight: .medium))
                         .foregroundStyle(Color(Theme.muted))
                     Text("Press + to add Claude, Codex or pi, here or on another machine.")
