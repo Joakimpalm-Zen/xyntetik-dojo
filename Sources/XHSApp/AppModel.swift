@@ -51,16 +51,31 @@ final class AppModel: NSObject, ObservableObject, LocalProcessTerminalViewDelega
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.bus.tick() }
         }
-        // The bus holds relayed messages while the owner types in that pane.
+        // The bus holds relayed messages while the owner types in that pane and while unsent text sits there.
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             if let pane = event.window?.firstResponder as? TerminalPane {
-                self?.bus.noteOwnerInput(pane.paneName)
+                self?.bus.noteOwnerInput(pane.paneName, AppModel.ownerKey(event))
             }
             return event
         }
         if !smoke, let trouble = ToolInstall.run() {
             problem = trouble
         }
+    }
+
+    /// What a keystroke does to a harness composer: Enter sends it, Ctrl-C and Ctrl-U empty it, Delete
+    /// removes a character, printable keys and a paste add text; the rest moves around.
+    static func ownerKey(_ event: NSEvent) -> Bus.OwnerKey {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        switch event.keyCode {
+        case 36, 76: return flags.isDisjoint(with: [.shift, .option]) ? .clear : .text
+        case 51, 117: return .delete
+        default: break
+        }
+        if flags.contains(.control), let c = event.charactersIgnoringModifiers, c == "c" || c == "u" { return .clear }
+        if flags.contains(.command) { return event.charactersIgnoringModifiers == "v" ? .text : .other }
+        guard let chars = event.characters, let first = chars.unicodeScalars.first else { return .other }
+        return first.value >= 0x20 && first.value != 0x7F && !(0xF700...0xF8FF).contains(first.value) ? .text : .other
     }
 
     // MARK: panes

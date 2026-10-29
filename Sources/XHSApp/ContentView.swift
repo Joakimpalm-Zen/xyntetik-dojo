@@ -115,7 +115,8 @@ struct PaneCell: View {
                 }
                 Spacer(minLength: 4)
                 if let q = info?.queued, q > 0 {
-                    Text("\(q) queued").font(.caption).foregroundStyle(Color(Theme.coralInk))
+                    Text(info?.draft == true ? "\(q) queued, unsent text here" : "\(q) queued")
+                        .font(.caption).foregroundStyle(Color(Theme.coralInk))
                 }
                 Text(info?.state.rawValue ?? "").font(.caption).foregroundStyle(PaneCell.color(info?.state))
                 Button { model.close(item.name) } label: { Image(systemName: "xmark") }
