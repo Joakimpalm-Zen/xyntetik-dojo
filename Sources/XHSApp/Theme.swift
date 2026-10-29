@@ -51,6 +51,41 @@ enum Theme {
         static let strokeWidth: CGFloat = 9
         static let dots: [(x: CGFloat, y: CGFloat, r: CGFloat)] = [(70.5, 14.9, 5.4), (77.8, 9.2, 2.7), (82.6, 4.8, 1.6)]
 
+        /// The torii inside the ring, in vermilion: two pillars, the curved top beam (kasagi) with its
+        /// upturned ends, and the tie beam (nuki) through the pillars. Same box, y down.
+        enum Torii {
+            static let color = 0xD8432B
+            static let pillarX: (CGFloat, CGFloat) = (39, 61)
+            static let pillarTop: CGFloat = 36
+            static let pillarBottom: CGFloat = 70
+            static let pillarWidth: CGFloat = 4.5
+            static let kasagiY: CGFloat = 33
+            static let kasagiHalf: CGFloat = 21
+            static let kasagiWidth: CGFloat = 4.5
+            static let kasagiLift: CGFloat = 3
+            static let nukiY: CGFloat = 44
+            static let nukiHalf: CGFloat = 16
+            static let nukiWidth: CGFloat = 3.5
+
+            /// The strokes, each as (path, width), in `rect` (y down).
+            static func strokes(in rect: CGRect) -> [(Path, CGFloat)] {
+                let scale = min(rect.width, rect.height) / 100
+                func pt(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: rect.minX + x * scale, y: rect.minY + y * scale) }
+                var kasagi = Path()
+                kasagi.move(to: pt(50 - kasagiHalf, kasagiY - kasagiLift))
+                kasagi.addQuadCurve(to: pt(50 + kasagiHalf, kasagiY - kasagiLift), control: pt(50, kasagiY + kasagiLift))
+                var nuki = Path()
+                nuki.move(to: pt(50 - nukiHalf, nukiY))
+                nuki.addLine(to: pt(50 + nukiHalf, nukiY))
+                var pillars = Path()
+                for x in [pillarX.0, pillarX.1] {
+                    pillars.move(to: pt(x, pillarTop))
+                    pillars.addLine(to: pt(x, pillarBottom))
+                }
+                return [(kasagi, kasagiWidth * scale), (nuki, nukiWidth * scale), (pillars, pillarWidth * scale)]
+            }
+        }
+
         /// Points along the arc, one per degree, y down as in the SVG. From the upper left down the left
         /// side, along the bottom and up to the upper right: the long way round, with the angle decreasing
         /// (the SVG's sweep flag), leaving the break at the top.
@@ -78,7 +113,7 @@ enum Theme {
     }
 }
 
-/// The Ensō mark, drawn with the brand gradient and the three coral dots.
+/// The Dojo mark: the Ensō with the brand gradient and the three coral dots, and the torii inside it.
 struct EnsoMark: View {
     var body: some View {
         GeometryReader { geo in
@@ -89,6 +124,10 @@ struct EnsoMark: View {
                     .stroke(LinearGradient(colors: [Color(Theme.markTealStart), Color(Theme.markTealEnd)],
                                            startPoint: .leading, endPoint: .trailing),
                             style: StrokeStyle(lineWidth: Theme.Enso.strokeWidth * scale, lineCap: .round))
+                ForEach(Array(Theme.Enso.Torii.strokes(in: rect).enumerated()), id: \.offset) { _, stroke in
+                    stroke.0.stroke(Color(Theme.color(UInt32(Theme.Enso.Torii.color))),
+                                    style: StrokeStyle(lineWidth: stroke.1, lineCap: .butt))
+                }
                 ForEach(Array(Theme.Enso.dots.enumerated()), id: \.offset) { i, dot in
                     Circle()
                         .fill(Color([Theme.markCoral, Theme.markCoralLight, Theme.markCoralLighter][i]))
