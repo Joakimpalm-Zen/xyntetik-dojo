@@ -274,19 +274,23 @@ struct PickerSheet: View {
                     Text(runnerStatus(runnerPane))
                         .font(.caption)
                         .foregroundStyle(Color(runnerUp ? Theme.tealInk : Theme.coralInk))
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 ForEach(model.runnerFits, id: \.spelling) { fit in
                     let current = fit.spelling == model.runnerChoice || (!model.runnerModel.isEmpty && model.runnerModel.contains(fit.stem))
-                    HStack(spacing: 8) {
+                    // The whole name on the button, the sizes under it: nothing is cut off.
+                    VStack(alignment: .leading, spacing: 2) {
                         Button(fit.id) { model.chooseRunnerModel(fit.spelling); model.picking = false }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
                             .tint(Color(current ? Theme.coral : Theme.teal))
+                            .fixedSize()
                         Text("\(fit.resident) GiB resident, \(fit.flags)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    .lineLimit(1)
+                    .padding(.bottom, 4)
                 }
             }
             .font(.callout)
@@ -296,7 +300,7 @@ struct PickerSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 440)
+        .frame(width: 560)
         .background(Paper(tone: Theme.surface, density: 0.6))
         .onAppear { model.refreshRunner() }
     }
