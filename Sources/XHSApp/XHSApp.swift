@@ -22,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             for window in NSApp.windows {
                 window.backgroundColor = Theme.bg
                 window.titlebarAppearsTransparent = true
+                AppDelegate.addMark(to: window)
                 AppDelegate.tintTitle(window)
             }
             for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
@@ -36,6 +37,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 NSApp.activate(ignoringOtherApps: true)
             }
         }
+    }
+
+    /// The Dojo mark in the title bar, before the window's name.
+    static func addMark(to window: NSWindow) {
+        guard !window.titlebarAccessoryViewControllers.contains(where: { $0.view.identifier?.rawValue == "dojo-mark" }) else { return }
+        let accessory = NSTitlebarAccessoryViewController()
+        let hosting = NSHostingView(rootView: EnsoMark().frame(width: 20, height: 20).padding(.leading, 6).padding(.trailing, 4))
+        hosting.identifier = NSUserInterfaceItemIdentifier("dojo-mark")
+        hosting.frame = NSRect(x: 0, y: 0, width: 30, height: 22)
+        accessory.view = hosting
+        accessory.layoutAttribute = .left
+        window.addTitlebarAccessoryViewController(accessory)
     }
 
     /// The window's name in the brand green. AppKit draws the title in a text field inside the title bar;
