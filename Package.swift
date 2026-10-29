@@ -17,10 +17,10 @@ let testSettings: [SwiftSetting] = usingCLT && FileManager.default.fileExists(at
     : []
 
 let package = Package(
-    name: "XyntetikHarnessSupervisor",
+    name: "XyntetikDojo",
     platforms: [.macOS(.v14)],
     products: [
-        .executable(name: "XyntetikHarnessSupervisor", targets: ["XHSApp"]),
+        .executable(name: "XyntetikDojo", targets: ["XHSApp"]),
     ],
     dependencies: [
         .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", exact: "1.99.1"),

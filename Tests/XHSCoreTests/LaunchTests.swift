@@ -23,9 +23,9 @@ import Testing
                                  runnerModel: nil, loginShell: "/bin/zsh")
         #expect(plan.executable == "/bin/zsh")
         #expect(Array(plan.args.prefix(3)) == ["-l", "-i", "-c"])
-        #expect(plan.environment == ["XHS_PANE": "claude-1", "XHS_PORT": "7788", "XHS_TOKEN": "tok"])
+        #expect(plan.environment == ["DOJO_PANE": "claude-1", "DOJO_PORT": "7788", "DOJO_TOKEN": "tok"])
         let argv = shellArgs(plan.args[3], home: home)
-        #expect(argv.prefix(4) == ["env", "PATH=/home/tester/.xhs/bin:/usr/bin:/bin", "claude",
+        #expect(argv.prefix(4) == ["env", "PATH=/home/tester/.dojo/bin:/usr/bin:/bin", "claude",
                                    "--dangerously-skip-permissions"])
         let settings = try #require(argv.firstIndex(of: "--settings"))
         let parsed = try JSONSerialization.jsonObject(with: Data(argv[settings + 1].utf8)) as! NSDictionary
@@ -48,8 +48,8 @@ import Testing
         let remote = shellArgs(ssh[5], home: "/remote/home")
         #expect(Array(remote.prefix(4)) == ["/bin/remote-shell", "-l", "-i", "-c"])
         let harness = shellArgs(remote[4], home: "/remote/home")
-        #expect(Array(harness.prefix(6)) == ["env", "XHS_PANE=codex-2", "XHS_PORT=7788", "XHS_TOKEN=tok",
-                                             "PATH=/remote/home/.xhs/bin:/usr/bin:/bin", "codex"])
+        #expect(Array(harness.prefix(6)) == ["env", "DOJO_PANE=codex-2", "DOJO_PORT=7788", "DOJO_TOKEN=tok",
+                                             "PATH=/remote/home/.dojo/bin:/usr/bin:/bin", "codex"])
         #expect(Array(harness[6...8]) == ["--yolo", "--dangerously-bypass-hook-trust", "-c"])
         #expect(harness[9] == "developer_instructions=" + Shell.toml(PeerRule.launchPrompt(paneName: "codex-2")))
     }
@@ -64,9 +64,9 @@ import Testing
         let local = Launcher.plan(kind: .pi, paneName: "pi-1", host: nil, port: 7788, token: "t",
                                   runnerModel: "qwen3-8b", loginShell: "/bin/zsh")
         let argv = shellArgs(local.args[3], home: home)
-        #expect(Array(argv[2...7]) == ["pi", "-e", "/home/tester/.xhs/xhs-pi.ts", "--provider", "runner", "--model"])
+        #expect(Array(argv[2...7]) == ["pi", "-e", "/home/tester/.dojo/dojo-pi.ts", "--provider", "runner", "--model"])
         #expect(argv[8] == "qwen3-8b")
-        // Tools are passed explicitly: the owner's pi settings may turn them all off, and xhs needs bash.
+        // Tools are passed explicitly: the owner's pi settings may turn them all off, and dojo needs bash.
         let tools = try #require(argv.firstIndex(of: "--tools"))
         #expect(argv[tools + 1] == "read,bash,edit,write")
         // Full-screen layout, whatever the owner's tuiMode setting says: the composer sits at the bottom.
@@ -98,8 +98,8 @@ import Testing
         let posixInner = shellArgs(shellArgs(posix.args[3], home: home)[5], home: "/remote/home")[4]
         #expect(Launcher.windowsInnerCommand(remote) == posixInner)
         let harness = shellArgs(try #require(Launcher.windowsInnerCommand(remote)), home: "/c/Users/me")
-        #expect(Array(harness.prefix(6)) == ["env", "XHS_PANE=claude-3", "XHS_PORT=7788", "XHS_TOKEN=tok",
-                                             "PATH=/c/Users/me/.xhs/bin:/usr/bin:/bin", "claude"])
+        #expect(Array(harness.prefix(6)) == ["env", "DOJO_PANE=claude-3", "DOJO_PORT=7788", "DOJO_TOKEN=tok",
+                                             "PATH=/c/Users/me/.dojo/bin:/usr/bin:/bin", "claude"])
     }
 
     @Test func remoteShellProbe() {
@@ -136,7 +136,7 @@ import Testing
     }
 
     @Test func recentHostsRememberTheLatestFirst() throws {
-        let file = FileManager.default.temporaryDirectory.appendingPathComponent("xhs-hosts-\(UUID().uuidString)")
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("dojo-hosts-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: file) }
         #expect(RecentHosts.load(file) == [])
         #expect(RecentHosts.remember("me@box", in: file) == ["me@box"])
@@ -154,12 +154,12 @@ import Testing
     @Test func paneEnvironmentDropsWhatAClaudeSessionHandsDown() {
         let base = ["PATH": "/usr/bin", "CLAUDECODE": "1", "CLAUDE_CODE_CHILD_SESSION": "1", "CLAUDE_CODE_SESSION_ID": "s",
                     "CLAUDE_PID": "7", "LANG": "sv_SE.UTF-8", "HOME": "/home/tester"]
-        let env = Launcher.paneEnvironment(from: base, adding: ["XHS_TOKEN": "tok"])
+        let env = Launcher.paneEnvironment(from: base, adding: ["DOJO_TOKEN": "tok"])
         #expect(env.keys.filter { $0.hasPrefix("CLAUDE") }.isEmpty)
         #expect(env["PATH"] == "/usr/bin")
         #expect(env["LANG"] == "sv_SE.UTF-8")
         #expect(env["TERM"] == "xterm-256color")
-        #expect(env["XHS_TOKEN"] == "tok")
+        #expect(env["DOJO_TOKEN"] == "tok")
         #expect(Launcher.paneEnvironment(from: [:], adding: [:])["LANG"] == "en_US.UTF-8")
     }
 
@@ -205,7 +205,7 @@ import Testing
 
     @Test func aRunnerPaneRunsTheStartScript() {
         let line = Shell.line(Launcher.harnessWords(kind: .runner, paneName: "runner-1", port: 7788, runnerModel: nil))
-        #expect(line == "/bin/sh \"$HOME/.xhs/runner-start.sh\"")
+        #expect(line == "/bin/sh \"$HOME/.dojo/runner-start.sh\"")
         #expect(PaneNames.next(for: .runner, taken: []) == "runner-1")
     }
 

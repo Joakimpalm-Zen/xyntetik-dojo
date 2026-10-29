@@ -3,15 +3,15 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleIdentifier</key>
-	<string>com.xyntetik.harness-supervisor</string>
+	<string>com.xyntetik.dojo</string>
 	<key>CFBundleName</key>
-	<string>Xyntetik Harness Supervisor</string>
+	<string>Xyntetik Dojo</string>
 	<key>CFBundleDisplayName</key>
-	<string>Xyntetik Harness Supervisor</string>
+	<string>Xyntetik Dojo</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
 	<key>CFBundleExecutable</key>
-	<string>XyntetikHarnessSupervisor</string>
+	<string>XyntetikDojo</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

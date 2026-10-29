@@ -48,7 +48,7 @@ JSON
 esac
 STUB
 chmod +x "$tmp/bin/runner" "$tmp/bin/curl" "$tmp/bin/sysctl"
-run() { XHS_RUNNER_HOME="$tmp/home" PATH="$tmp/bin:$PATH" sh "$here/runner-start.sh" --pick 2>"$tmp/log"; }
+run() { DOJO_RUNNER_HOME="$tmp/home" PATH="$tmp/bin:$PATH" sh "$here/runner-start.sh" --pick 2>"$tmp/log"; }
 fail() { echo "$1"; cat "$tmp/log"; [ -f "$tmp/home/fits" ] && cat "$tmp/home/fits"; exit 1; }
 
 # An 8 GiB machine with little free: the 30B file is larger than RAM and never asked; the dense 8B is over

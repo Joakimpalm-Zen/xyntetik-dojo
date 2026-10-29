@@ -1,19 +1,19 @@
 #!/bin/sh
 # Starts Xyntetik Runner for the pi panes. Nothing about Runner versions or models is written here:
-#  - the binary is `runner` on PATH (yours), else ~/.xhs/runner/runner, downloaded from the latest release
+#  - the binary is `runner` on PATH (yours), else ~/.dojo/runner/runner, downloaded from the latest release
 #    and replaced when a newer release exists (checked against SHA256SUMS);
 #  - the models are Runner's own roster, docs/model-tiers.json in its repository (Tier 1 and Tier 2 text
 #    models), fetched on every start and kept as a copy for when the network is away.
 # Every roster file no larger than this machine's RAM is asked about with `runner --info fit` on its first
 # 16 MiB. A model fits when the weights that stay resident (the hot set for a Gemma E-series model, whose
 # row-gathered token table is never resident; the whole file otherwise) are within half of the RAM. All
-# that fit are written to ~/.xhs/runner/fits, largest resident weights first; the one named in ~/.xhs/runner/model (the
+# that fit are written to ~/.dojo/runner/fits, largest resident weights first; the one named in ~/.dojo/runner/model (the
 # picker writes it) or else the first is served, wired into RAM (--mlock): at Runner's context and cache
 # when its free-RAM verdict says FITS, else at context 16384 with a q8 cache. `--pick` prints the choice
 # and stops.
 set -eu
 mode=${1:-serve}
-home="${XHS_RUNNER_HOME:-$HOME/.xhs/runner}"
+home="${DOJO_RUNNER_HOME:-$HOME/.dojo/runner}"
 release="https://github.com/Joakimpalm-Zen/xyntetik-runner/releases/latest"
 roster_url="https://raw.githubusercontent.com/Joakimpalm-Zen/xyntetik-runner/main/docs/model-tiers.json"
 contexts="16384 8192 4096"

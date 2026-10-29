@@ -1,6 +1,6 @@
-# Xyntetik Harness Supervisor. SwiftPM only; no Xcode needed.
-APP := build/XyntetikHarnessSupervisor.app
-BIN := .build/release/XyntetikHarnessSupervisor
+# Xyntetik Dojo. SwiftPM only; no Xcode needed.
+APP := build/XyntetikDojo.app
+BIN := .build/release/XyntetikDojo
 
 .PHONY: build test icon app run smoke remote-setup clean
 
@@ -26,7 +26,7 @@ app: build build/AppIcon.icns
 	rm -rf $(APP)
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources/tools
 	cp $(BIN) $(APP)/Contents/MacOS/
-	cp tools/xhs-mcp.py tools/xhs-pi.ts tools/runner-start.sh $(APP)/Contents/Resources/tools/
+	cp tools/dojo-mcp.py tools/dojo-pi.ts tools/runner-start.sh $(APP)/Contents/Resources/tools/
 	cp packaging/Info.plist $(APP)/Contents/Info.plist
 	cp build/AppIcon.icns $(APP)/Contents/Resources/AppIcon.icns
 	codesign --force --sign - $(APP)
@@ -36,14 +36,14 @@ run: app
 
 # The app in /Applications, replacing the copy there.
 install: app
-	rm -rf /Applications/XyntetikHarnessSupervisor.app
+	rm -rf /Applications/XyntetikDojo.app
 	cp -R $(APP) /Applications/
-	open /Applications/XyntetikHarnessSupervisor.app
+	open /Applications/XyntetikDojo.app
 
 # Launch proof without a human: one local pane runs `echo ok`, the bus answers, the app quits.
 # With HOST=user@box the pane runs `echo ok` on that host over ssh instead (POSIX or Windows).
 smoke: app
-	XHS_SMOKE=1 XHS_SMOKE_HOST=$(HOST) XHS_PORT=7799 $(APP)/Contents/MacOS/XyntetikHarnessSupervisor
+	DOJO_SMOKE=1 DOJO_SMOKE_HOST=$(HOST) DOJO_PORT=7799 $(APP)/Contents/MacOS/XyntetikDojo
 
 # Install the shim and the pi extension on a remote host (POSIX or Windows): make remote-setup HOST=user@box
 remote-setup:

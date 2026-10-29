@@ -5,10 +5,10 @@
         "hooks": [
           {
             "allowedEnvVars": [
-              "XHS_TOKEN"
+              "DOJO_TOKEN"
             ],
             "headers": {
-              "X-XHS-Token": "$XHS_TOKEN"
+              "X-Dojo-Token": "$DOJO_TOKEN"
             },
             "timeout": 5,
             "type": "http",
@@ -23,10 +23,10 @@
         "hooks": [
           {
             "allowedEnvVars": [
-              "XHS_TOKEN"
+              "DOJO_TOKEN"
             ],
             "headers": {
-              "X-XHS-Token": "$XHS_TOKEN"
+              "X-Dojo-Token": "$DOJO_TOKEN"
             },
             "timeout": 5,
             "type": "http",
@@ -39,7 +39,7 @@
       {
         "hooks": [
           {
-            "command": "python3 \"$HOME/.xhs/xhs-mcp.py\" hook",
+            "command": "python3 \"$HOME/.dojo/dojo-mcp.py\" hook",
             "timeout": 5,
             "type": "command"
           }
@@ -51,10 +51,10 @@
         "hooks": [
           {
             "allowedEnvVars": [
-              "XHS_TOKEN"
+              "DOJO_TOKEN"
             ],
             "headers": {
-              "X-XHS-Token": "$XHS_TOKEN"
+              "X-Dojo-Token": "$DOJO_TOKEN"
             },
             "timeout": 5,
             "type": "http",
@@ -67,7 +67,7 @@
       {
         "hooks": [
           {
-            "command": "python3 \"$HOME/.xhs/xhs-mcp.py\" hook",
+            "command": "python3 \"$HOME/.dojo/dojo-mcp.py\" hook",
             "timeout": 5,
             "type": "command"
           }
@@ -79,10 +79,10 @@
         "hooks": [
           {
             "allowedEnvVars": [
-              "XHS_TOKEN"
+              "DOJO_TOKEN"
             ],
             "headers": {
-              "X-XHS-Token": "$XHS_TOKEN"
+              "X-Dojo-Token": "$DOJO_TOKEN"
             },
             "timeout": 5,
             "type": "http",
@@ -96,10 +96,10 @@
         "hooks": [
           {
             "allowedEnvVars": [
-              "XHS_TOKEN"
+              "DOJO_TOKEN"
             ],
             "headers": {
-              "X-XHS-Token": "$XHS_TOKEN"
+              "X-Dojo-Token": "$DOJO_TOKEN"
             },
             "timeout": 5,
             "type": "http",

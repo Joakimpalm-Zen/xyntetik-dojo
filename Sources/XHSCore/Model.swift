@@ -54,7 +54,7 @@ public enum Hosts {
     }
 }
 
-/// Values the owner used before (hosts in ~/.xhs/hosts, folders in ~/.xhs/folders), latest first, one per
+/// Values the owner used before (hosts in ~/.dojo/hosts, folders in ~/.dojo/folders), latest first, one per
 /// line. The picker offers them so an address or a path is typed once.
 public enum RecentHosts {
     public static let limit = 8
@@ -83,7 +83,7 @@ public enum RecentHosts {
     public static func isFolder(_ s: String) -> Bool { !s.isEmpty && !s.contains("\n") }
 }
 
-/// One model the Runner start script found to fit this machine (a line of ~/.xhs/runner/fits):
+/// One model the Runner start script found to fit this machine (a line of ~/.dojo/runner/fits):
 /// the roster id, the `REPO:STEM` spelling `runner -hf` takes, the serve flags and the resident GiB.
 public struct RunnerFit: Equatable, Sendable {
     public let id: String

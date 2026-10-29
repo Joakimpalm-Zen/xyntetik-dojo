@@ -77,14 +77,14 @@ public struct LaunchPlan: Equatable, Sendable {
 public enum Launcher {
     public static let defaultPort = 7788
     public static let runnerURL = "http://127.0.0.1:8080/v1"
-    /// The tools a pi pane runs with: pi's own four. The bus command xhs runs through bash.
+    /// The tools a pi pane runs with: pi's own four. The bus command dojo runs through bash.
     public static let piTools = "read,bash,edit,write"
     /// Spelled out for the small local models pi runs on: how to answer a peer.
-    public static let piReplyHint = "You have no xhs tool, only the bash tool. To answer a [from: <name>] message, run the bash command " +
-        "xhs send <name> \"<your reply>\" and then say what you sent. " +
+    public static let piReplyHint = "You have no dojo tool, only the bash tool. To answer a [from: <name>] message, run the bash command " +
+        "dojo send <name> \"<your reply>\" and then say what you sent. " +
         "For web pages use curl -sL: without -L a redirect prints nothing at all. Prefer a site's RSS feed to its HTML."
     /// The shim as the harness runs it; $HOME is expanded on the host the harness runs on.
-    public static let shimCommand = #"exec python3 "$HOME/.xhs/xhs-mcp.py""#
+    public static let shimCommand = #"exec python3 "$HOME/.dojo/dojo-mcp.py""#
 
     /// Claude Code settings passed with --settings: hooks that report state to the bus.
     /// SessionStart is a command hook through the shim: Claude Code does not run http hooks for that event.
@@ -94,8 +94,8 @@ public enum Launcher {
             "type": "http",
             "url": "http://127.0.0.1:\(port)/hook",
             "timeout": 5,
-            "headers": ["X-XHS-Token": "$XHS_TOKEN"],
-            "allowedEnvVars": ["XHS_TOKEN"],
+            "headers": ["X-Dojo-Token": "$DOJO_TOKEN"],
+            "allowedEnvVars": ["DOJO_TOKEN"],
         ]
         let group: [[String: Any]] = [["hooks": [hook]]]
         let command: [String: Any] = ["type": "command", "command": shimCommand.replacingOccurrences(of: "exec ", with: "") + " hook", "timeout": 5]
@@ -112,7 +112,7 @@ public enum Launcher {
 
     /// Claude Code MCP config passed with --mcp-config.
     public static func claudeMCP() -> [String: Any] {
-        ["mcpServers": ["xhs": ["command": "sh", "args": ["-c", shimCommand]]]]
+        ["mcpServers": ["dojo": ["command": "sh", "args": ["-c", shimCommand]]]]
     }
 
     public static func json(_ object: Any) -> String {
@@ -131,15 +131,15 @@ public enum Launcher {
                     .literal("--append-system-prompt"), .literal(prompt),
                     .literal("--mcp-config"), .literal(json(claudeMCP()))]
         case .codex:
-            // MCP server and hooks live in ~/.codex/config.toml (written by "xhs install").
+            // MCP server and hooks live in ~/.codex/config.toml (written by "dojo install").
             // Owner default: --yolo (no approvals, no sandbox); the hook-trust bypass
             // means the pane's state hooks run without a /hooks confirmation.
             return [.literal("codex"), .literal("--yolo"), .literal("--dangerously-bypass-hook-trust"),
                     .literal("-c"), .literal("developer_instructions=" + Shell.toml(prompt))]
         case .pi:
             // The pane's pi gets its four coding tools whatever the owner's pi settings say
-            // (a `defaultTools: []` there would leave it without bash, and so without xhs).
-            var words: [ShellWord] = [.literal("pi"), .literal("-e"), .raw(#""$HOME/.xhs/xhs-pi.ts""#),
+            // (a `defaultTools: []` there would leave it without bash, and so without dojo).
+            var words: [ShellWord] = [.literal("pi"), .literal("-e"), .raw(#""$HOME/.dojo/dojo-pi.ts""#),
                                       .literal("--provider"), .literal("runner")]
             if let runnerModel { words += [.literal("--model"), .literal(runnerModel)] }
             // Full-screen layout with the composer at the bottom, whatever the owner's tuiMode setting says;
@@ -148,7 +148,7 @@ public enum Launcher {
                             .literal("--append-system-prompt"), .literal(prompt + " " + piReplyHint)]
         case .runner:
             // Finds or fetches Runner, picks a model that fits this machine and serves it (tools/runner-start.sh).
-            return [.literal("/bin/sh"), .raw(#""$HOME/.xhs/runner-start.sh""#)]
+            return [.literal("/bin/sh"), .raw(#""$HOME/.dojo/runner-start.sh""#)]
         case .shell:
             return [.literal("/bin/sh"), .literal("-c"), .literal("echo ok")]
         }
@@ -160,7 +160,7 @@ public enum Launcher {
     public static func plan(kind: HarnessKind, paneName: String, host: String?, port: Int, token: String,
                             runnerModel: String?, loginShell: String, remoteShell: RemoteShell = .posix,
                             directory: String? = nil) -> LaunchPlan {
-        let env = ["XHS_PANE": paneName, "XHS_PORT": String(port), "XHS_TOKEN": token]
+        let env = ["DOJO_PANE": paneName, "DOJO_PORT": String(port), "DOJO_TOKEN": token]
         let local = host == nil || host!.isEmpty
         let directory = directory?.isEmpty == false ? directory : nil
         if kind == .shell, local {
@@ -168,12 +168,12 @@ public enum Launcher {
             return LaunchPlan(executable: "/bin/sh", args: ["-c", "read line; echo \"ok $line\""], environment: env, directory: directory)
         }
         let harness = harnessWords(kind: kind, paneName: paneName, port: port, runnerModel: runnerModel)
-        let path: ShellWord = .raw(#"PATH="$HOME/.xhs/bin:$PATH""#)
+        let path: ShellWord = .raw(#"PATH="$HOME/.dojo/bin:$PATH""#)
         guard let host, !local else {
             let line = "exec " + Shell.line([.literal("env"), path] + harness)
             return LaunchPlan(executable: loginShell, args: ["-l", "-i", "-c", line], environment: env, directory: directory)
         }
-        let assignments: [ShellWord] = ["XHS_PANE", "XHS_PORT", "XHS_TOKEN"].map { .literal("\($0)=\(env[$0]!)") }
+        let assignments: [ShellWord] = ["DOJO_PANE", "DOJO_PORT", "DOJO_TOKEN"].map { .literal("\($0)=\(env[$0]!)") }
         let cd = directory.map { "cd " + Shell.quote($0) + " && " } ?? ""
         let inner = cd + "exec " + Shell.line([.literal("env")] + assignments + [path] + harness)
         let remote: String

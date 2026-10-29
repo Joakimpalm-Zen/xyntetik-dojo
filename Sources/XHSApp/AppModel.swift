@@ -26,15 +26,15 @@ final class AppModel: NSObject, ObservableObject {
     @Published var picking = false
     /// The Runner log is open above the bottom strip (it opens while Runner starts, closes once it serves).
     @Published var runnerLogOpen = false
-    /// Hosts used for remote panes, latest first (~/.xhs/hosts).
+    /// Hosts used for remote panes, latest first (~/.dojo/hosts).
     @Published private(set) var recentHosts: [String] = []
-    /// Start folders used before, latest first (~/.xhs/folders).
+    /// Start folders used before, latest first (~/.dojo/folders).
     @Published private(set) var recentFolders: [String] = []
     /// What Runner serves on this Mac, empty when it does not answer; refreshed when the picker opens.
     @Published private(set) var runnerModel = ""
-    /// The models the last Runner pane found to fit this Mac (~/.xhs/runner/fits), largest first.
+    /// The models the last Runner pane found to fit this Mac (~/.dojo/runner/fits), largest first.
     @Published private(set) var runnerFits: [RunnerFit] = []
-    /// The model the owner chose for Runner panes (~/.xhs/runner/model), empty for the largest that fits.
+    /// The model the owner chose for Runner panes (~/.dojo/runner/model), empty for the largest that fits.
     @Published private(set) var runnerChoice = ""
 
     let bus = Bus()
@@ -49,8 +49,8 @@ final class AppModel: NSObject, ObservableObject {
 
     override init() {
         let env = ProcessInfo.processInfo.environment
-        port = Int(env["XHS_PORT"] ?? "") ?? Launcher.defaultPort
-        smoke = env["XHS_SMOKE"] == "1"
+        port = Int(env["DOJO_PORT"] ?? "") ?? Launcher.defaultPort
+        smoke = env["DOJO_SMOKE"] == "1"
         loginShell = AppModel.userShell()
         super.init()
         recentHosts = RecentHosts.load(AppModel.hostsFile)
@@ -95,7 +95,7 @@ final class AppModel: NSObject, ObservableObject {
         }
     }
 
-    static let runnerHome = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".xhs/runner")
+    static let runnerHome = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".dojo/runner")
 
     /// Asks Runner what it serves and reads what the start script found to fit, for the picker.
     func refreshRunner() {
@@ -260,13 +260,13 @@ final class AppModel: NSObject, ObservableObject {
 
     // MARK: smoke test
 
-    /// XHS_SMOKE=1: open one pane running `echo ok` (locally, or on XHS_SMOKE_HOST over ssh), check its screen
+    /// DOJO_SMOKE=1: open one pane running `echo ok` (locally, or on DOJO_SMOKE_HOST over ssh), check its screen
     /// and the bus, then quit.
     func runSmoke() {
         let name = "shell-1"
-        let host = ProcessInfo.processInfo.environment["XHS_SMOKE_HOST"] ?? ""
+        let host = ProcessInfo.processInfo.environment["DOJO_SMOKE_HOST"] ?? ""
         if let problem = addPane(kind: .shell, host: host, name: name) {
-            print("XHS_SMOKE failed: \(problem)")
+            print("DOJO_SMOKE failed: \(problem)")
             exit(1)
         }
         let deadline = Date().addingTimeInterval(15)
@@ -285,7 +285,7 @@ final class AppModel: NSObject, ObservableObject {
                                                         windowNumber: view.window?.windowNumber ?? 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!)
                 view.mouseUp(with: NSEvent.mouseEvent(with: .leftMouseUp, location: NSPoint(x: 20, y: 20), modifierFlags: [], timestamp: 0,
                                                       windowNumber: view.window?.windowNumber ?? 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 0)!)
-                guard view.window?.firstResponder === view else { print("XHS_SMOKE failed: a click did not focus the pane"); exit(1) }
+                guard view.window?.firstResponder === view else { print("DOJO_SMOKE failed: a click did not focus the pane"); exit(1) }
                 for character in typed + "\r" {
                     let c = String(character)
                     if let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
@@ -306,7 +306,7 @@ final class AppModel: NSObject, ObservableObject {
                     Task { await self.finishSmoke(name) }
                 } else if Date() > deadline {
                     timer.invalidate()
-                    print("XHS_SMOKE failed: state \(self.bus.info(name)?.state.rawValue ?? "none"), screen \(screen.debugDescription), problem \(self.problem.debugDescription)")
+                    print("DOJO_SMOKE failed: state \(self.bus.info(name)?.state.rawValue ?? "none"), screen \(screen.debugDescription), problem \(self.problem.debugDescription)")
                     exit(1)
                 }
             }
@@ -316,25 +316,25 @@ final class AppModel: NSObject, ObservableObject {
     private func finishSmoke(_ name: String) async {
         var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/panes")!)
         request.httpMethod = "POST"
-        request.setValue(tokens[name], forHTTPHeaderField: "X-XHS-Token")
+        request.setValue(tokens[name], forHTTPHeaderField: "X-Dojo-Token")
         request.timeoutInterval = 5
         guard let (data, response) = try? await URLSession.shared.data(for: request),
               (response as? HTTPURLResponse)?.statusCode == 200,
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               object["you"] as? String == name else {
-            print("XHS_SMOKE failed: the bus did not answer on 127.0.0.1:\(port)")
+            print("DOJO_SMOKE failed: the bus did not answer on 127.0.0.1:\(port)")
             exit(1)
         }
         let host = bus.info(name)?.host ?? ""
         let location = host.isEmpty ? "locally" : "on \(host) (\(remoteShells[name] == .windows ? "Windows" : "POSIX") shell)"
         let dims = items.first?.view.terminalDimensions
-        print("XHS_SMOKE ok: pane \(name) echoed the typed line \(location), the bus answered on 127.0.0.1:\(port), terminal \(dims?.cols ?? 0)x\(dims?.rows ?? 0)")
+        print("DOJO_SMOKE ok: pane \(name) echoed the typed line \(location), the bus answered on 127.0.0.1:\(port), terminal \(dims?.cols ?? 0)x\(dims?.rows ?? 0)")
         closeAll()
         exit(0)
     }
 
-    static let hostsFile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".xhs/hosts")
-    static let foldersFile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".xhs/folders")
+    static let hostsFile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".dojo/hosts")
+    static let foldersFile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".dojo/folders")
 
     /// A folder picker for the New terminal sheet; nil when cancelled.
     static func chooseFolder() -> String? {
