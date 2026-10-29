@@ -43,38 +43,45 @@ enum ToolInstall {
     }
 
     /// The folder was ~/.xhs until 2026-10-29: hosts, folders and Runner's files move over once. When
-    /// ~/.dojo already exists (a smoke run made it), each entry that is not there yet moves on its own.
-    /// Returns a problem to show, or nil; nothing here stops the install.
+    /// ~/.dojo already exists (a smoke run made it), the two are merged: what is missing on the new side
+    /// moves, folder by folder; a file that exists on both sides stays where it was, and ~/.xhs is
+    /// removed only when nothing is left in it. Returns a problem to show, or nil; nothing here stops
+    /// the install.
     static func moveOldHome(to target: URL) -> String? {
         let fm = FileManager.default
         let old = fm.homeDirectoryForCurrentUser.appendingPathComponent(".xhs")
         guard fm.fileExists(atPath: old.path) else { return nil }
         let stale = ["xhs-mcp.py", "xhs-pi.ts", "bin/xhs"]
         do {
+            for name in stale { try? fm.removeItem(at: old.appendingPathComponent(name)) }
             if !fm.fileExists(atPath: target.path) {
                 try fm.moveItem(at: old, to: target)
-            } else {
-                for entry in try fm.contentsOfDirectory(atPath: old.path) where !stale.contains(entry) {
-                    let destination = target.appendingPathComponent(entry)
-                    if entry == "bin" {
-                        // Runner's binary may live in bin; the old xhs link does not come along.
-                        for inner in (try? fm.contentsOfDirectory(atPath: old.appendingPathComponent("bin").path)) ?? [] where inner != "xhs" {
-                            let to = destination.appendingPathComponent(inner)
-                            if !fm.fileExists(atPath: to.path) {
-                                try fm.createDirectory(at: destination, withIntermediateDirectories: true)
-                                try fm.moveItem(at: old.appendingPathComponent("bin/\(inner)"), to: to)
-                            }
-                        }
-                    } else if !fm.fileExists(atPath: destination.path) {
-                        try fm.moveItem(at: old.appendingPathComponent(entry), to: destination)
-                    }
-                }
-                try fm.removeItem(at: old)
+                return nil
             }
-            for name in stale { try? fm.removeItem(at: target.appendingPathComponent(name)) }
-            return nil
+            try merge(from: old, into: target)
+            if try fm.contentsOfDirectory(atPath: old.path).isEmpty {
+                try fm.removeItem(at: old)
+                return nil
+            }
+            return "~/.xhs still holds files that ~/.dojo has too; the ones in ~/.dojo were kept. Merge or delete ~/.xhs by hand."
         } catch {
             return "~/.xhs could not be moved to ~/.dojo: \(error.localizedDescription). Move what you want by hand."
+        }
+    }
+
+    /// Moves every entry of `from` that `into` lacks; descends into folders both have; leaves files both have.
+    private static func merge(from: URL, into: URL) throws {
+        let fm = FileManager.default
+        for entry in try fm.contentsOfDirectory(atPath: from.path) {
+            let source = from.appendingPathComponent(entry), destination = into.appendingPathComponent(entry)
+            var sourceIsDir: ObjCBool = false, destinationIsDir: ObjCBool = false
+            fm.fileExists(atPath: source.path, isDirectory: &sourceIsDir)
+            if !fm.fileExists(atPath: destination.path, isDirectory: &destinationIsDir) {
+                try fm.moveItem(at: source, to: destination)
+            } else if sourceIsDir.boolValue, destinationIsDir.boolValue {
+                try merge(from: source, into: destination)
+                if try fm.contentsOfDirectory(atPath: source.path).isEmpty { try fm.removeItem(at: source) }
+            }
         }
     }
 }

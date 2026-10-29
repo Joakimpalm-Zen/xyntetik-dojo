@@ -363,9 +363,28 @@ x = true
         "timeout = 5\r\n"
         "\r\n"
         "# the owner's own table\r\n"
-        "[features]\r\n"
-        "x = true\r\n"
+        "  [features]\r\n"
+        "  x = true\r\n"
     )
+
+    def test_top_level_settings_before_the_old_block_survive(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("dojo_mcp3", SHIM)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        top = 'model = "gpt-x"\napproval_policy = "never"\n\n' + self.OLD[self.OLD.index("# Xyntetik"):]
+        with tempfile.TemporaryDirectory() as home:
+            os.makedirs(os.path.join(home, ".dojo"))
+            shutil.copy(SHIM, os.path.join(home, ".dojo", "dojo-mcp.py"))
+            os.makedirs(os.path.join(home, ".codex"))
+            config = os.path.join(home, ".codex", "config.toml")
+            with open(config, "w") as f:
+                f.write(top)
+            self.assertEqual(mod.install(home=home, out=io.StringIO(), windows=False), 0)
+            parsed = tomllib.loads(open(config).read())
+            self.assertEqual(parsed["model"], "gpt-x")
+            self.assertEqual(parsed["approval_policy"], "never")
+            self.assertEqual(list(parsed["mcp_servers"]), ["dojo"])
 
     def test_a_mixed_hook_group_subtables_comments_and_line_endings_survive(self):
         import importlib.util
@@ -388,7 +407,8 @@ x = true
             self.assertEqual([h["hooks"][0]["command"] for h in parsed["hooks"]["Stop"] if "say done" in h["hooks"][0]["command"]], ["say done"])
             self.assertEqual(len(parsed["hooks"]["Stop"]), 2, "the owner's Stop hook and ours")
             self.assertIn("# my fast profile\r\n[profiles.fast]", text)
-            self.assertIn("# the owner's own table\r\n[features]", text)
+            self.assertIn("# the owner's own table\r\n  [features]", text)
+            self.assertEqual(parsed["features"], {"x": True}, "an indented table after the old block survives")
             self.assertIn("\r\n", text, "line endings kept")
             with open(config + ".before-dojo", "rb") as f:
                 self.assertEqual(f.read(), self.MIXED.encode())
