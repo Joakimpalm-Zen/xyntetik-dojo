@@ -1,12 +1,16 @@
 name: ci
 
-# Build, the Swift tests, the shim's Python tests, the Runner pick test and the app bundle, on macOS.
-# The smoke (two panes, a click, typed keys echoed back) runs too but does not block until it has
-# proved itself on the hosted runners.
+# The Swift tests, the shim's Python tests, the Runner pick test, the hygiene tree check and the app
+# bundle, on macOS. It runs on pull requests (where it gates the merge) and once a week on main, not on
+# every push: a merged pull request was just checked. The SwiftPM build directory is cached on the
+# dependency lock, so SwiftTerm compiles once per lock change rather than twice per run. The smoke (two
+# panes, a click, typed keys echoed back) runs too but does not block until it has proved itself on
+# the hosted runners.
 on:
   pull_request:
-  push:
-    branches: [main]
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -18,8 +22,10 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: toolchain
         run: swift --version && python3 --version
-      - name: build
-        run: swift build
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .build
+          key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved', 'Package.swift') }}
       - name: tests
         run: make test
       - name: app bundle
