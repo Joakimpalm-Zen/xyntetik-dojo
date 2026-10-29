@@ -197,7 +197,10 @@ final class AppModel: NSObject, ObservableObject {
     /// Swaps two panes' places in the grid.
     func swap(_ a: String, with b: String) {
         guard a != b, let i = items.firstIndex(where: { $0.name == a }), let j = items.firstIndex(where: { $0.name == b }) else { return }
+        // Re-parenting drops the first responder; give it back to the pane that had it.
+        let focused = items.first { $0.view.window?.firstResponder === $0.view }?.view
         items.swapAt(i, j)
+        if let focused { DispatchQueue.main.async { focused.window?.makeFirstResponder(focused) } }
     }
 
     func close(_ name: String) {
@@ -246,11 +249,38 @@ final class AppModel: NSObject, ObservableObject {
             exit(1)
         }
         let deadline = Date().addingTimeInterval(15)
+        // A local pane gets a line typed in through the view, as keys, after it has had a second to start.
+        let typed = host.isEmpty ? "typed" : ""
+        let expected = host.isEmpty ? "ok typed" : "ok"
+        if host.isEmpty {
+            // A second pane, swapped with the first as a drag would do it: the first must still take keys.
+            addPane(kind: .shell, host: "", name: "shell-2")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.swap(name, with: "shell-2") }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                guard let view = self?.items.first(where: { $0.name == name })?.view else { return }
+                // Focus comes from the click, not from the model, as in the window.
+                view.window?.makeFirstResponder(nil)
+                view.mouseDown(with: NSEvent.mouseEvent(with: .leftMouseDown, location: NSPoint(x: 20, y: 20), modifierFlags: [], timestamp: 0,
+                                                        windowNumber: view.window?.windowNumber ?? 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!)
+                view.mouseUp(with: NSEvent.mouseEvent(with: .leftMouseUp, location: NSPoint(x: 20, y: 20), modifierFlags: [], timestamp: 0,
+                                                      windowNumber: view.window?.windowNumber ?? 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 0)!)
+                guard view.window?.firstResponder === view else { print("XHS_SMOKE failed: a click did not focus the pane"); exit(1) }
+                for character in typed + "\r" {
+                    let c = String(character)
+                    if let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                                    windowNumber: view.window?.windowNumber ?? 0, context: nil,
+                                                    characters: c, charactersIgnoringModifiers: c, isARepeat: false,
+                                                    keyCode: character == "\r" ? 36 : 0) {
+                        view.keyDown(with: event)
+                    }
+                }
+            }
+        }
         Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] timer in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                let screen = self.items.first?.view.screenText() ?? ""
-                if self.bus.info(name)?.state == .exited, screen.contains("ok"), self.problem.isEmpty {
+                let screen = self.items.first(where: { $0.name == name })?.view.screenText() ?? ""
+                if self.bus.info(name)?.state == .exited, screen.contains(expected), self.problem.isEmpty {
                     timer.invalidate()
                     Task { await self.finishSmoke(name) }
                 } else if Date() > deadline {
@@ -277,7 +307,7 @@ final class AppModel: NSObject, ObservableObject {
         let host = bus.info(name)?.host ?? ""
         let location = host.isEmpty ? "locally" : "on \(host) (\(remoteShells[name] == .windows ? "Windows" : "POSIX") shell)"
         let dims = items.first?.view.terminalDimensions
-        print("XHS_SMOKE ok: pane \(name) printed ok \(location), the bus answered on 127.0.0.1:\(port), terminal \(dims?.cols ?? 0)x\(dims?.rows ?? 0)")
+        print("XHS_SMOKE ok: pane \(name) echoed the typed line \(location), the bus answered on 127.0.0.1:\(port), terminal \(dims?.cols ?? 0)x\(dims?.rows ?? 0)")
         closeAll()
         exit(0)
     }
