@@ -46,7 +46,7 @@ cert:
 	openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj "/CN=Xyntetik Dojo" \
 	    -addext "keyUsage=digitalSignature" -addext "extendedKeyUsage=codeSigning" \
 	    -keyout "$$tmp/key.pem" -out "$$tmp/cert.pem" 2>/dev/null && \
-	openssl pkcs12 -export -name "Xyntetik Dojo" -inkey "$$tmp/key.pem" -in "$$tmp/cert.pem" -passout pass:dojo -out "$$tmp/dojo.p12" && \
+	openssl pkcs12 -export -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1 -name "Xyntetik Dojo" -inkey "$$tmp/key.pem" -in "$$tmp/cert.pem" -passout pass:dojo -out "$$tmp/dojo.p12" && \
 	security import "$$tmp/dojo.p12" -k ~/Library/Keychains/login.keychain-db -P dojo -T /usr/bin/codesign >/dev/null && \
 	security add-trusted-cert -r trustRoot -p codeSign -k ~/Library/Keychains/login.keychain-db "$$tmp/cert.pem" && \
 	rm -rf "$$tmp" && echo "made the Xyntetik Dojo certificate; make app signs with it from now on"
