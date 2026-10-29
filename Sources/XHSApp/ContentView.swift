@@ -72,9 +72,15 @@ struct RunnerStrip: View {
             }
             Rectangle().fill(Color(Theme.line)).frame(height: 1)
             HStack(spacing: 8) {
-                StateDot(state: info?.state)
                 EnsoMark().frame(width: 14, height: 14)
                 Text("Runner").bold().foregroundStyle(Color(Theme.ink))
+                // The phase in capitals and colour, a spinner while it loads: serving must read at a glance.
+                let phase = RunnerStrip.phase(info)
+                if info?.state == .starting { ProgressView().controlSize(.small) }
+                Text(phase.word).font(.system(.caption, design: .rounded)).bold().tracking(1)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(Color(phase.color).opacity(0.18), in: Capsule())
+                    .foregroundStyle(Color(phase.color))
                 Text(RunnerStrip.status(info)).foregroundStyle(Color(info?.state == .exited ? Theme.coralInk : Theme.muted))
                     .lineLimit(1).truncationMode(.middle)
                 Spacer(minLength: 4)
@@ -97,13 +103,22 @@ struct RunnerStrip: View {
         .onChange(of: info?.state) { _, state in if state == .running { model.runnerLogOpen = false } }
     }
 
-    /// One phrase for the strip: what is being picked or fetched, what is served, or that it stopped.
+    /// The phase word and its colour: coral while loading, teal once serving, coral-ink when stopped.
+    static func phase(_ info: Bus.Info?) -> (word: String, color: NSColor) {
+        switch info?.state {
+        case .running: return ("SERVING", Theme.tealInk)
+        case .exited: return ("STOPPED", Theme.coralInk)
+        default: return ("LOADING", Theme.coral)
+        }
+    }
+
+    /// One phrase after the phase: what is being picked or fetched, what is served, or where to look.
     static func status(_ info: Bus.Info?) -> String {
         guard let info else { return "" }
         switch info.state {
-        case .running: return info.model.isEmpty ? "serving on 127.0.0.1:8080" : "serving \(info.model)"
-        case .exited: return "stopped; open the log to see why"
-        default: return info.model.isEmpty ? "picking a model that fits this Mac" : info.model
+        case .running: return info.model.isEmpty ? "on 127.0.0.1:8080" : "\(info.model) on 127.0.0.1:8080"
+        case .exited: return "open the log to see why"
+        default: return info.model.isEmpty ? "picking a model that fits this Mac" : info.model.replacingOccurrences(of: "fetching ", with: "fetching and loading ")
         }
     }
 }
