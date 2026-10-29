@@ -228,4 +228,14 @@ import Testing
         #expect(plan.args.last?.contains("cd ~/" + Shell.quote("repo") + " && ") == true)
         #expect(Launcher.probeNote(error: "ssh: connect to host box port 22: No route to host\n").hasPrefix("The host did not answer the shell probe (ssh: connect to host box port 22: No route to host); assuming a POSIX shell."))
     }
+
+    @Test func askFirstKeepsTheHarnessesOwnApprovals() {
+        let claude = Launcher.harnessWords(kind: .claude, paneName: "claude-1", port: 7788, runnerModel: nil, askFirst: true)
+        #expect(!claude.contains(.literal("--dangerously-skip-permissions")))
+        #expect(claude.contains(.literal("--mcp-config")))
+        let codex = Launcher.harnessWords(kind: .codex, paneName: "codex-1", port: 7788, runnerModel: nil, askFirst: true)
+        #expect(!codex.contains(.literal("--yolo")))
+        #expect(codex.contains(.literal("--dangerously-bypass-hook-trust")), "the state hooks are still trusted")
+        #expect(Launcher.harnessWords(kind: .claude, paneName: "claude-1", port: 7788, runnerModel: nil).contains(.literal("--dangerously-skip-permissions")))
+    }
 }

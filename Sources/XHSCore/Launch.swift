@@ -130,20 +130,21 @@ public enum Launcher {
     }
 
     /// The harness command line, the same locally and remotely.
-    public static func harnessWords(kind: HarnessKind, paneName: String, port: Int, runnerModel: String?) -> [ShellWord] {
+    /// `askFirst` keeps the harness's own approvals: Claude asks for each permission, Codex keeps its
+    /// approvals and sandbox. Off by default: a supervised pane runs without prompts.
+    public static func harnessWords(kind: HarnessKind, paneName: String, port: Int, runnerModel: String?, askFirst: Bool = false) -> [ShellWord] {
         let prompt = PeerRule.launchPrompt(paneName: paneName)
         switch kind {
         case .claude:
-            // Owner default: no permission prompts in a supervised pane.
-            return [.literal("claude"), .literal("--dangerously-skip-permissions"),
-                    .literal("--settings"), .literal(json(claudeSettings(port: port))),
+            return [.literal("claude")] + (askFirst ? [] : [.literal("--dangerously-skip-permissions")]) +
+                   [.literal("--settings"), .literal(json(claudeSettings(port: port))),
                     .literal("--append-system-prompt"), .literal(prompt),
                     .literal("--mcp-config"), .literal(json(claudeMCP()))]
         case .codex:
             // MCP server and hooks live in ~/.codex/config.toml (written by "dojo install").
             // Owner default: --yolo (no approvals, no sandbox); the hook-trust bypass
             // means the pane's state hooks run without a /hooks confirmation.
-            return [.literal("codex"), .literal("--yolo"), .literal("--dangerously-bypass-hook-trust"),
+            return [.literal("codex")] + (askFirst ? [] : [.literal("--yolo")]) + [.literal("--dangerously-bypass-hook-trust"),
                     .literal("-c"), .literal("developer_instructions=" + Shell.toml(prompt))]
         case .pi:
             // The pane's pi gets its four coding tools whatever the owner's pi settings say
@@ -168,7 +169,7 @@ public enum Launcher {
     /// A Windows host (cmd.exe over OpenSSH) runs the same inner command in MSYS2 bash; see `windowsRemoteCommand`.
     public static func plan(kind: HarnessKind, paneName: String, host: String?, port: Int, token: String,
                             runnerModel: String?, loginShell: String, remoteShell: RemoteShell = .posix,
-                            directory: String? = nil) -> LaunchPlan {
+                            directory: String? = nil, askFirst: Bool = false) -> LaunchPlan {
         let env = ["DOJO_PANE": paneName, "DOJO_PORT": String(port), "DOJO_TOKEN": token]
         let local = host == nil || host!.isEmpty
         let directory = directory?.isEmpty == false ? directory : nil
@@ -176,7 +177,7 @@ public enum Launcher {
             // The smoke types a line into this pane and expects it back.
             return LaunchPlan(executable: "/bin/sh", args: ["-c", "read line; echo \"ok $line\""], environment: env, directory: directory)
         }
-        let harness = harnessWords(kind: kind, paneName: paneName, port: port, runnerModel: runnerModel)
+        let harness = harnessWords(kind: kind, paneName: paneName, port: port, runnerModel: runnerModel, askFirst: askFirst)
         let path: ShellWord = .raw(#"PATH="$HOME/.dojo/bin:$PATH""#)
         guard let host, !local else {
             let line = "exec " + Shell.line([.literal("env"), path] + harness)
