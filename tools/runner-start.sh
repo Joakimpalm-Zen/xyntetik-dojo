@@ -1,20 +1,24 @@
 #!/bin/sh
 # Starts Xyntetik Runner for the pi panes. Finds the runner binary (on PATH, in ~/.xhs/runner, or the
 # latest release downloaded and checked against its SHA256SUMS), picks the largest of a short list of
-# models that fits this machine (runner --info fit on the first 16 MiB of each, nothing else fetched)
-# and serves it on http://127.0.0.1:8080. `--pick` prints the choice and stops.
+# models that fits this machine (runner --info fit on the first 16 MiB of each, nothing else fetched),
+# at the largest of three context sizes it fits with, and serves it on http://127.0.0.1:8080.
+# `--pick` prints the choice and stops.
 set -eu
 mode=${1:-serve}
 home="${XHS_RUNNER_HOME:-$HOME/.xhs/runner}"
 release="https://github.com/Joakimpalm-Zen/xyntetik-runner/releases/latest/download"
-ctx=16384
-# Largest first; the first that fits is served. REPO[:TAG] as runner -hf takes it.
+# Context sizes to try for each model, largest first.
+contexts="16384 8192 4096"
+# Largest first; the first that fits at any of the contexts is served. REPO[:TAG] as runner -hf takes it.
 candidates="
 Joakimpalm-Zen/Qwen3-Coder-30B-A3B-Instruct-keep120-Q4_K_M-GGUF
 Joakimpalm-Zen/Qwen3-30B-A3B-selective-attnQ8_0-expQ4_0-GGUF
 ibm-granite/granite-4.2-8b-GGUF:Q4_K_M
+nvidia/NVIDIA-Nemotron-3.5-Bolt-E4B-4GB
 bartowski/Qwen_Qwen3-4B-GGUF:Q4_K_M
 ibm-granite/granite-4.1-3b-GGUF:Q8_0
+ibm-granite/granite-4.1-3b-GGUF:Q4_K_M
 "
 
 say() { printf '%s\n' "$*"; }
@@ -62,20 +66,22 @@ pick_model() {
             curl -fsL -r 0-16777215 -o "$head" "https://huggingface.co/$repo/resolve/main/$file" \
                 || { rm -f "$head"; note "  $c: could not fetch the file's first 16 MiB, skipped"; continue; }
         fi
-        verdict=$("$runner" -m "$head" --info fit -c "$ctx" 2>/dev/null | sed -n 's/^ *verdict *//p' | head -1)
-        note "  $c: ${verdict:-no verdict}"
-        case $verdict in
-            "FITS WITH --kv "*) kv=${verdict#FITS WITH --kv }; say "$c --kv ${kv%% *}"; return ;;
-            FITS*) say "$c"; return ;;
-        esac
+        for ctx in $contexts; do
+            verdict=$("$runner" -m "$head" --info fit -c "$ctx" 2>/dev/null | sed -n 's/^ *verdict *//p' | head -1)
+            note "  $c at context $ctx: ${verdict:-no verdict}"
+            case $verdict in
+                "FITS WITH --kv "*) kv=${verdict#FITS WITH --kv }; say "$c -c $ctx --kv ${kv%% *}"; return ;;
+                FITS*) say "$c -c $ctx"; return ;;
+            esac
+        done
     done
-    note "None of the candidate models fits this machine at context $ctx."
+    note "None of the candidate models fits this machine, even at context 4096."
     exit 3
 }
 
 runner=$(find_runner)
 note "Runner $("$runner" --version 2>/dev/null | head -1 || true) at $runner"
-note "Which model fits this machine (first 16 MiB of each, largest first):"
+note "Which model fits this machine (first 16 MiB of each, largest model and context first):"
 choice=$(pick_model "$runner")
 say "Serving $choice"
 if [ "$mode" = "--pick" ]; then exit 0; fi
@@ -83,4 +89,4 @@ if [ "$mode" = "--pick" ]; then exit 0; fi
 set -- $choice
 model=$1
 shift
-exec "$runner" -hf "$model" --serve -c "$ctx" "$@"
+exec "$runner" -hf "$model" --serve "$@"
