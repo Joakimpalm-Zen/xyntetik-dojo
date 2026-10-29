@@ -33,6 +33,18 @@ final class TerminalPane: LocalProcessTerminalView, PaneIO {
         String(decoding: getBufferAsData(), as: UTF8.self)
     }
 
+    /// Only the visible rows: cheap enough to take once a second for every pane, unlike the whole buffer.
+    func visibleText() -> String {
+        visibleRowsText(0..<terminalDimensions.rows).joined(separator: "\n")
+    }
+
+    /// Frames are drawn on the GPU: a harness repaints its whole screen many times a second, which the
+    /// CoreGraphics path draws on the main thread, glyph by glyph. SwiftTerm leaves Metal off by default.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil, !isUsingMetalRenderer { try? setUseMetal(true) }
+    }
+
     var bracketedPasteEnabled: Bool {
         terminalInputStateSnapshot()?.bracketedPasteMode ?? false
     }
