@@ -97,9 +97,9 @@ import Testing
         // bash.exe then runs exactly the line a POSIX host's login shell gets.
         let posixInner = shellArgs(shellArgs(posix.args[3], home: home)[5], home: "/remote/home")[4]
         #expect(Launcher.windowsInnerCommand(remote) == posixInner)
-        let harness = shellArgs(try #require(Launcher.windowsInnerCommand(remote)), home: "/c/Users/zen")
+        let harness = shellArgs(try #require(Launcher.windowsInnerCommand(remote)), home: "/c/Users/me")
         #expect(Array(harness.prefix(6)) == ["env", "XHS_PANE=claude-3", "XHS_PORT=7788", "XHS_TOKEN=tok",
-                                             "PATH=/c/Users/zen/.xhs/bin:/usr/bin:/bin", "claude"])
+                                             "PATH=/c/Users/me/.xhs/bin:/usr/bin:/bin", "claude"])
     }
 
     @Test func remoteShellProbe() {
