@@ -30,7 +30,7 @@ watch, you type, you stay in charge.
 - **A local model, fitted.** A Runner pane fetches Xyntetik Runner if needed, asks it about seven models from the first 16 MiB of each, and serves the largest whose resident weights fit in half of this Mac's RAM, wired in, for the pi panes.
 - **Small on purpose.** SwiftPM only, no Xcode. One port, two text files of recent hosts and folders, nothing else kept. Apache 2.0.
 
-**On this page:** [Requirements](#requirements) · [Build and run](#build-and-run) · [First run](#first-run) · [Adding a pane](#adding-a-pane) · [Remote panes](#remote-panes) · [How harnesses talk](#how-harnesses-talk) · [Safety rules](#safety-rules) · [What was verified](#what-was-verified-and-what-needs-a-human) · [Not built](#not-built) · [Files](#files) · [Troubleshooting](#troubleshooting) · [License](#license)
+**On this page:** [Install](#install) · [Requirements](#requirements) · [Build and run](#build-and-run) · [First run](#first-run) · [Adding a pane](#adding-a-pane) · [Remote panes](#remote-panes) · [How harnesses talk](#how-harnesses-talk) · [Safety rules](#safety-rules) · [What was verified](#what-was-verified-and-what-needs-a-human) · [Not built](#not-built) · [Files](#files) · [Troubleshooting](#troubleshooting) · [License](#license)
 
 <a id="what-it-does"></a>
 ## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> What it does
@@ -41,6 +41,23 @@ watch, you type, you stay in charge.
 - Panes draw on the GPU (SwiftTerm's Metal renderer), so a harness repainting its whole screen keeps up with a plain terminal.
 - Each pane header shows the name, kind, host, model, queued messages and a state colour: grey starting, blue running, green idle, orange prompt, red exited.
 - The app runs a bus on `127.0.0.1:7788`. Every harness in the window can call four operations: `panes`, `send`, `read` and `state`.
+
+<a id="install"></a>
+## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> Install
+
+Three commands on a Mac with the Command Line Tools (`xcode-select --install` once):
+
+```sh
+git clone https://github.com/Joakimpalm-Zen/xyntetik-harness-supervisor.git
+cd xyntetik-harness-supervisor
+make install    # builds the app and puts it in /Applications; make run opens it from the build instead
+```
+
+Or let the agent you already have do it. Paste this into Claude Code, Codex or pi:
+
+> Install Xyntetik Harness Supervisor on this Mac: clone https://github.com/Joakimpalm-Zen/xyntetik-harness-supervisor.git, run `make install` in it (it needs the Command Line Tools and python3; tell me if either is missing), then open /Applications/XyntetikHarnessSupervisor.app and tell me what it asked for on first run.
+
+The first run copies its small tools to `~/.xhs` and, if you have Codex, adds its bus entry to `~/.codex/config.toml` once. Everything it keeps is listed under [Build and run](#build-and-run).
 
 <a id="requirements"></a>
 ## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> Requirements
@@ -56,7 +73,8 @@ watch, you type, you stay in charge.
 ```
 make test    # swift test (64 tests), the shim's Python tests (10) and the Runner pick test
 make app     # build/XyntetikHarnessSupervisor.app, assembled by hand and ad-hoc signed
-make run     # open the app
+make run     # open the app from build/
+make install # copy the app to /Applications (replacing the one there) and open it
 make smoke   # launch proof: two panes, swapped as a drag does it; a click focuses the first and typed keys come back from its shell; the bus answers; the app quits (exit 0)
 make smoke HOST=user@box   # the same, with the pane on that host over ssh
 ```
