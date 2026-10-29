@@ -6,10 +6,13 @@ import SwiftUI
 enum Theme {
     // MARK: colours
 
-    /// Recycled paper: warm, a little grey, with a lighter sheet for the panes and headers.
+    /// Recycled paper: warm, a little grey, for the window; a shade lighter for headers and the picker;
+    /// the lightest sheet for the terminals. `shade` is the header tone as an RGB triple, for the bands a
+    /// harness paints white.
     static let bg = color(0xE3DED1)
-    static let paper = color(0xECE7DB)
-    static let surface = color(0xF3EFE6)
+    static let surface = color(0xECE7DB)
+    static let paper = color(0xF3EFE6)
+    static let shade = (red: 0xEC, green: 0xE7, blue: 0xDB)
     static let ink = color(0x16232A)
     static let muted = color(0x6F6A5F)
     static let line = color(0xCDC6B5)
