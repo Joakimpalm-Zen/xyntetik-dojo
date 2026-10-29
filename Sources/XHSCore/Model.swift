@@ -30,6 +30,9 @@ public enum PaneNames {
         return "\(kind.rawValue)-\(n)"
     }
 
+    /// The rule, as the window states it.
+    public static let rule = "A name uses a-z, 0-9, '-', '_' or '.', up to 24 characters."
+
     /// A user-set name: 1 to 24 characters, lowercase letters, digits, '-', '_' or '.', starting with a letter or digit.
     public static func isValid(_ name: String) -> Bool {
         guard (1...24).contains(name.count), let first = name.unicodeScalars.first else { return false }

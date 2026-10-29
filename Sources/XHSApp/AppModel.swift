@@ -8,7 +8,9 @@ final class AppModel: NSObject, ObservableObject, LocalProcessTerminalViewDelega
     static let shared = AppModel()
 
     struct Item: Identifiable {
-        let id: String
+        /// The pane's identity for the grid: the terminal view, which outlives a rename.
+        var id: ObjectIdentifier { ObjectIdentifier(view) }
+        var name: String
         let view: TerminalPane
         /// The start folder as given, empty for the home folder.
         let directory: String
@@ -83,7 +85,7 @@ final class AppModel: NSObject, ObservableObject, LocalProcessTerminalViewDelega
         if name.isEmpty {
             name = PaneNames.next(for: kind, taken: Set(bus.names))
         } else if !PaneNames.isValid(name) {
-            return "A name uses a-z, 0-9, '-', '_' or '.', up to 24 characters."
+            return PaneNames.rule
         } else if bus.names.contains(name) {
             return "\(name) is already open."
         }
@@ -93,7 +95,7 @@ final class AppModel: NSObject, ObservableObject, LocalProcessTerminalViewDelega
         tokens[name] = token
         if !host.isEmpty { recentHosts = RecentHosts.remember(host, in: AppModel.hostsFile) }
         if !directory.isEmpty { recentFolders = RecentHosts.remember(directory, in: AppModel.foldersFile, valid: RecentHosts.isFolder) }
-        items.append(Item(id: name, view: view, directory: directory))
+        items.append(Item(name: name, view: view, directory: directory))
         Task { await launch(view, kind: kind, host: host, token: token, directory: directory) }
         DispatchQueue.main.async { view.window?.makeFirstResponder(view) }
         return nil
@@ -116,7 +118,7 @@ final class AppModel: NSObject, ObservableObject, LocalProcessTerminalViewDelega
             remoteShell = await Launcher.probeRemoteShell(host: host)
             remoteShells[view.paneName] = remoteShell
         }
-        guard items.contains(where: { $0.id == view.paneName }) else { return }
+        guard items.contains(where: { $0.view === view }) else { return }
         start(view, Launcher.plan(kind: kind, paneName: view.paneName, host: host.isEmpty ? nil : host, port: port,
                                   token: token, runnerModel: model, loginShell: loginShell, remoteShell: remoteShell,
                                   directory: directory))
@@ -129,18 +131,30 @@ final class AppModel: NSObject, ObservableObject, LocalProcessTerminalViewDelega
                           execName: nil, currentDirectory: plan.directory ?? NSHomeDirectory())
     }
 
+    /// Renames a pane. Returns a message for the header when the name is not usable.
+    func rename(_ name: String, to rawNew: String) -> String? {
+        let new = rawNew.trimmingCharacters(in: .whitespaces).lowercased()
+        guard let index = items.firstIndex(where: { $0.name == name }) else { return "no pane named '\(name)'" }
+        if let problem = bus.rename(name, to: new) { return problem }
+        tokens[new] = tokens.removeValue(forKey: name)
+        remoteShells[new] = remoteShells.removeValue(forKey: name)
+        items[index].name = new
+        items[index].view.paneName = new
+        return nil
+    }
+
     func close(_ name: String) {
-        guard let item = items.first(where: { $0.id == name }) else { return }
+        guard let item = items.first(where: { $0.name == name }) else { return }
         item.view.processDelegate = nil
         item.view.terminate()
         bus.remove(name)
         tokens[name] = nil
         remoteShells[name] = nil
-        items.removeAll { $0.id == name }
+        items.removeAll { $0.name == name }
     }
 
     func closeAll() {
-        for item in items { close(item.id) }
+        for item in items { close(item.name) }
     }
 
     // MARK: bus server

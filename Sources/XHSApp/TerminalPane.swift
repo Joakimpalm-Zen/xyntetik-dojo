@@ -5,7 +5,8 @@ import XHSCore
 /// One terminal: a SwiftTerm view with its pty, readable and writable by the bus.
 @MainActor
 final class TerminalPane: LocalProcessTerminalView, PaneIO {
-    let paneName: String
+    /// The pane's name on the bus; a rename changes it.
+    var paneName: String
 
     init(name: String) {
         paneName = name
