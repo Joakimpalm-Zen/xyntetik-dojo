@@ -33,8 +33,8 @@ latest_tag() {
 
 download_runner() {
     case "$(uname -s)-$(uname -m)" in
-        Darwin-arm64) asset=runner-macos-arm64 ;;
-        Linux-x86_64) asset=runner-linux-x86_64 ;;
+        Darwin-arm64) asset="runner-macos-arm64" ;;
+        Linux-x86_64) asset="runner-linux-x86_64" ;;
         *) note "No Runner release for $(uname -s) $(uname -m): build it from source and put runner on PATH."; exit 2 ;;
     esac
     note "Downloading Runner $1 ($asset) to $home ..."
@@ -123,7 +123,7 @@ list_fits() {
     half=$(awk -v b="$ram" 'BEGIN { printf "%.2f", b / 2 / 1073741824 }')
     note "Half of this machine's RAM is $half GiB; a model's resident weights must fit in that."
     : > "$home/fits.new"
-    candidates "$(roster_file)" "$ram" | while read -r id repo file bytes; do
+    candidates "$(roster_file)" "$ram" | while read -r id repo file _; do
         head="$home/heads/$(say "$repo" | tr / -)-$file"
         if [ ! -s "$head" ]; then
             curl -fsL -r 0-16777215 -o "$head" "https://huggingface.co/$repo/resolve/main/$file" \

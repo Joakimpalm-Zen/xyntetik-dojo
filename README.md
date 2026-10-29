@@ -71,7 +71,7 @@ The first run copies its small tools to `~/.xhs` and, if you have Codex, adds it
 ## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> Build and run
 
 ```
-make test    # swift test (64 tests), the shim's Python tests (10) and the Runner pick test
+make test    # swift test (65 tests), the shim's Python tests (10), the Runner pick test and the hygiene check of the tree
 make app     # build/XyntetikHarnessSupervisor.app, assembled by hand and ad-hoc signed
 make run     # open the app from build/
 make install # copy the app to /Applications (replacing the one there) and open it
@@ -223,7 +223,7 @@ Needs a human click-through:
 - `Sources/XHSCore/`: the bus, HTTP server, hook mapping, message delivery and launch commands. No UI; all tested.
 - `Sources/XHSApp/`: the window (SwiftUI and AppKit, SwiftTerm panes). View state uses ObservableObjects because `@State` is a macro whose plugin ships only with Xcode.
 - `tools/xhs-mcp.py`: the shim (MCP server, `xhs` command, `xhs hook`, `xhs install`). `tools/xhs-pi.ts`: the pi extension.
-- `tools/snippets/`: peer-rule paragraphs and the hook and MCP config. `tools/remote-setup.sh`: the one-time install on an ssh host, POSIX or Windows. `tools/runner-start.sh`: find or fetch the latest Runner, read its roster, list what fits, serve the choice (`tools/test_runner_start.sh` checks it against a stub runner, Hub, GitHub and machine size, online and offline).
+- `tools/snippets/`: peer-rule paragraphs and the hook and MCP config. `tools/remote-setup.sh`: the one-time install on an ssh host, POSIX or Windows. `tools/check-hygiene.py`: the mechanical half of AGENTS.md (commit trailers, no session ids or addresses, no em dashes in prose, nothing personal in the tree), run by `make test` and by the `hygiene` workflow on every pull request; `.github/workflows/ci.yml` builds, tests and bundles on macOS. `tools/runner-start.sh`: find or fetch the latest Runner, read its roster, list what fits, serve the choice (`tools/test_runner_start.sh` checks it against a stub runner, Hub, GitHub and machine size, online and offline).
 - `packaging/Info.plist`, `packaging/make-icon.swift` (the icon), `Makefile`. `Sources/XHSApp/Theme.swift` holds the brand colours and the Ensō.
 - `Package.swift` passes the swift-testing macro plugin path to the test target. Without it, test builds with the Command Line Tools fail on about every other run.
 
