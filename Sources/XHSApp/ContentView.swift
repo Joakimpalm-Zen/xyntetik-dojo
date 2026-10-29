@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 import XHSCore
 
 // No @State here: in this SDK @State is a macro whose plugin ships only with Xcode.
@@ -128,7 +129,17 @@ struct PaneCell: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(Paper(tone: Theme.surface, density: 0.6))
+            // Drag a header onto another pane and the two swap places.
+            .onDrag { NSItemProvider(object: item.name as NSString) }
             TerminalHost(view: item.view)
+        }
+        .onDrop(of: [.plainText], isTargeted: nil) { providers in
+            guard let provider = providers.first else { return false }
+            _ = provider.loadObject(ofClass: NSString.self) { object, _ in
+                guard let dragged = object as? String else { return }
+                DispatchQueue.main.async { model.swap(dragged, with: item.name) }
+            }
+            return true
         }
     }
 
