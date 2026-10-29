@@ -1,12 +1,11 @@
 #!/bin/sh
 # Starts Xyntetik Runner for the pi panes. Finds the runner binary (on PATH, in ~/.xhs/runner, or the
 # latest release downloaded and checked against its SHA256SUMS), picks the largest of a short list of
-# models that fits this machine (runner --info fit on the first 16 MiB of each, nothing else fetched),
-# at the largest of three context sizes it fits with, and serves it on http://127.0.0.1:8080. A model whose
-# whole file fits in the RAM free right now wins over one that fits by its hot set alone (a mixture of
-# experts whose file exceeds RAM, which Runner rates usable); that one is the fallback. The weights are
-# wired into RAM (--mlock) so a loaded machine cannot evict them; when the OS refuses, Runner says so and
-# serves anyway. `--pick` prints the choice and stops.
+# models whose resident weights fit in half of this machine's RAM (runner --info fit on the first 16 MiB
+# of each, nothing else fetched), and serves it on http://127.0.0.1:8080 with the weights wired into RAM
+# (--mlock). Runner's own verdict counts the RAM free right now; when it says the model fits, its context
+# and cache setting are used; when it does not, the model is served at context 16384 with a q8 cache and
+# the wired weights make the rest of the machine make room. `--pick` prints the choice and stops.
 set -eu
 mode=${1:-serve}
 home="${XHS_RUNNER_HOME:-$HOME/.xhs/runner}"
@@ -55,16 +54,26 @@ hub_file() {
         | grep -o '"path":"[^"]*\.gguf"' | sed 's/"path":"//; s/"$//' | grep -i -- "$2" | head -1
 }
 
-# Does the whole file (the weights line) fit in the RAM available right now? Both in GiB; MiB counts as fitting.
-whole_file_fits() {
-    weights=$(printf '%s\n' "$1" | awk '/^ *weights/ { print ($3 == "GiB") ? $2 : 0 }')
-    avail=$(printf '%s\n' "$1" | awk '/^ *available RAM/ { print ($4 == "GiB") ? $3 : 0 }')
-    [ -n "$weights" ] && [ -n "$avail" ] && awk -v w="$weights" -v a="$avail" 'BEGIN { exit !(w <= a) }'
+# This machine's RAM in GiB.
+total_ram_gib() {
+    if [ -r /proc/meminfo ]; then awk '/^MemTotal:/ { printf "%.2f", $2 / 1048576 }' /proc/meminfo
+    else sysctl -n hw.memsize | awk '{ printf "%.2f", $1 / 1073741824 }'; fi
+}
+
+# The weights that stay resident, in GiB, from a fit report: the hot set when the report separates a
+# row-gathered table (Gemma E-series: that table is read by row and never resident), else the whole file.
+resident_gib() {
+    if printf '%s\n' "$1" | grep -q '^ *row-gathered'; then
+        printf '%s\n' "$1" | awk '/^ *hot set/ { print ($3 == "GiB") ? $2 : 0; exit }'
+    else
+        printf '%s\n' "$1" | awk '/^ *weights/ { print ($3 == "GiB") ? $2 : 0; exit }'
+    fi
 }
 
 pick_model() {
     runner=$1
-    fallback=""
+    half=$(total_ram_gib | awk '{ printf "%.2f", $1 / 2 }')
+    note "Half of this machine's RAM is $half GiB; a model's resident weights must fit in that."
     mkdir -p "$home/heads"
     for c in $candidates; do
         repo=${c%%:*}
@@ -77,28 +86,26 @@ pick_model() {
             curl -fsL -r 0-16777215 -o "$head" "https://huggingface.co/$repo/resolve/main/$file" \
                 || { rm -f "$head"; note "  $c: could not fetch the file's first 16 MiB, skipped"; continue; }
         fi
+        report=$("$runner" -m "$head" --info fit -c 16384 2>/dev/null || true)
+        resident=$(resident_gib "$report")
+        if [ -z "$resident" ] || ! awk -v r="$resident" -v h="$half" 'BEGIN { exit !(r <= h) }'; then
+            note "  $c: ${resident:-?} GiB stay resident, more than half of this machine's RAM; skipped"
+            continue
+        fi
         for ctx in $contexts; do
-            report=$("$runner" -m "$head" --info fit -c "$ctx" 2>/dev/null || true)
+            [ "$ctx" = 16384 ] || report=$("$runner" -m "$head" --info fit -c "$ctx" 2>/dev/null || true)
             verdict=$(printf '%s\n' "$report" | sed -n 's/^ *verdict *//p' | head -1)
             note "  $c at context $ctx: ${verdict:-no verdict}"
-            choice=""
             case $verdict in
-                "FITS WITH --kv "*) kv=${verdict#FITS WITH --kv }; choice="$c -c $ctx --kv ${kv%% *}" ;;
-                FITS*) choice="$c -c $ctx" ;;
+                "FITS WITH --kv "*) kv=${verdict#FITS WITH --kv }; say "$c -c $ctx --kv ${kv%% *} --mlock"; return ;;
+                FITS*) say "$c -c $ctx --mlock"; return ;;
             esac
-            [ -n "$choice" ] || continue
-            if whole_file_fits "$report"; then say "$choice --mlock"; return; fi
-            note "    the whole file does not fit in the RAM free right now; kept as the fallback"
-            [ -n "$fallback" ] || fallback=$choice
-            break
         done
-    done
-    if [ -n "$fallback" ]; then
-        note "No model's whole file fits in the RAM free right now (quit what you are not using and try again); serving the one Runner rates usable by its hot set."
-        say "$fallback --mlock"
+        note "  $c: $resident GiB stay resident, within half of this machine's RAM; wired in, the rest makes room"
+        say "$c -c 16384 --kv q8 --mlock"
         return
-    fi
-    note "None of the candidate models fits this machine, even at context 4096."
+    done
+    note "No candidate model keeps its resident weights within half of this machine's RAM."
     exit 3
 }
 
