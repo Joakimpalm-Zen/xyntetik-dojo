@@ -253,6 +253,29 @@ class ShimTest(unittest.TestCase):
 
 
 
+class ServerRobustness(unittest.TestCase):
+    def test_bad_arguments_get_errors_and_the_server_lives_on(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("dojo_mcp_srv", SHIM)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        lines = [
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "read", "arguments": {"pane": "x", "lines": [5]}}},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "send", "arguments": "{\"pane\": \"x\"}"}},
+            {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": ["send"]}},
+            {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "read", "arguments": {"pane": "x", "lines": 1e400}}},
+            {"jsonrpc": "2.0", "id": 5, "method": "ping"},
+        ]
+        out = io.StringIO()
+        mod.serve(stdin=io.StringIO("".join(json.dumps(l) + "\n" for l in lines)), stdout=out)
+        replies = [json.loads(l) for l in out.getvalue().splitlines()]
+        self.assertEqual([r["id"] for r in replies], [1, 2, 3, 4, 5])
+        for r in replies[:4]:
+            self.assertIn("error", r, r)
+            self.assertIn(r["error"]["code"], (-32602, -32603), r)
+        self.assertEqual(replies[4].get("result"), {})
+
+
 class OldNameMigration(unittest.TestCase):
     OLD = """[projects."/x"]
 trust_level = "trusted"
@@ -315,6 +338,60 @@ x = true
             out = io.StringIO()
             mod.install(home=home, out=out, windows=False)
             self.assertEqual(open(config).read(), text)
+
+    MIXED = (
+        "# my fast profile\r\n"
+        "[profiles.fast]\r\n"
+        "model = \"x\"\r\n"
+        "\r\n"
+        "# Xyntetik Harness Supervisor: bus tools and state hooks (added by \"xhs install\")\r\n"
+        "[mcp_servers.xhs]\r\n"
+        "command = \"sh\"\r\n"
+        "args = [\"-c\", \"exec python3 \\\"$HOME/.xhs/xhs-mcp.py\\\"\"]\r\n"
+        "\r\n"
+        "[mcp_servers.xhs.env]\r\n"
+        "X = \"1\"\r\n"
+        "\r\n"
+        "[[hooks.Stop]]\r\n"
+        "[[hooks.Stop.hooks]]\r\n"
+        "type = \"command\"\r\n"
+        "command = \"python3 \\\"$HOME/.xhs/xhs-mcp.py\\\" hook\"\r\n"
+        "timeout = 5\r\n"
+        "[[hooks.Stop.hooks]]\r\n"
+        "type = \"command\"\r\n"
+        "command = \"say done\"\r\n"
+        "timeout = 5\r\n"
+        "\r\n"
+        "# the owner's own table\r\n"
+        "[features]\r\n"
+        "x = true\r\n"
+    )
+
+    def test_a_mixed_hook_group_subtables_comments_and_line_endings_survive(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("dojo_mcp2", SHIM)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        with tempfile.TemporaryDirectory() as home:
+            os.makedirs(os.path.join(home, ".dojo"))
+            shutil.copy(SHIM, os.path.join(home, ".dojo", "dojo-mcp.py"))
+            os.makedirs(os.path.join(home, ".codex"))
+            config = os.path.join(home, ".codex", "config.toml")
+            with open(config, "w", newline="") as f:
+                f.write(self.MIXED)
+            self.assertEqual(mod.install(home=home, out=io.StringIO(), windows=False), 0)
+            with open(config, newline="") as f:
+                text = f.read()
+            parsed = tomllib.loads(text)
+            self.assertEqual(list(parsed["mcp_servers"]), ["dojo"])
+            self.assertNotIn("xhs", text)
+            self.assertEqual([h["hooks"][0]["command"] for h in parsed["hooks"]["Stop"] if "say done" in h["hooks"][0]["command"]], ["say done"])
+            self.assertEqual(len(parsed["hooks"]["Stop"]), 2, "the owner's Stop hook and ours")
+            self.assertIn("# my fast profile\r\n[profiles.fast]", text)
+            self.assertIn("# the owner's own table\r\n[features]", text)
+            self.assertIn("\r\n", text, "line endings kept")
+            with open(config + ".before-dojo", "rb") as f:
+                self.assertEqual(f.read(), self.MIXED.encode())
 
 
 if __name__ == "__main__":

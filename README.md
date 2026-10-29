@@ -76,7 +76,7 @@ The first run copies its small tools to `~/.dojo` and, if you have Codex, adds i
 ## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> Build and run
 
 ```
-make test    # swift test (65 tests), the shim's Python tests (10), the Runner pick test and the hygiene check of the tree
+make test    # swift test (70 tests), the shim's Python tests (13), the Runner pick test and the hygiene check of the tree
 make app     # build/XyntetikDojo.app, assembled by hand and ad-hoc signed
 make run     # open the app from build/
 make install # copy the app to /Applications (replacing the one there) and open it
@@ -163,6 +163,11 @@ The four operations, as MCP tools for Claude and Codex (`mcp__dojo__panes` and s
 ```
 dojo panes                         # name, kind, host, state, queued, model; * marks you
 dojo send codex-1 "please review the diff in src/bus.rs"
+dojo send codex-1 - <<'EOF'              # quotes, backticks, several lines: on stdin, nothing runs
+Two things:
+1. `make test` fails on main
+2. the diff in src/bus.rs
+EOF
 dojo read claude-1 60              # last 60 lines of claude-1's screen
 dojo state pi-1
 ```
@@ -211,7 +216,7 @@ To install the peer rule permanently as well (for sessions started outside the a
 Verified without a human:
 
 - `swift test`, 64 tests: the bus operations, the `[from: ...]` prefix, refusal and queueing at a prompt, delivery into a running pane and the queue as one input, the owner-typing and unsent-text holds, control-character stripping, the HTTP server over loopback, the local and ssh command lines (parsed back by a real POSIX shell), and the snippets equal to what the app passes.
-- Python tests, 10: the shim speaking MCP (initialize, tools/list, tools/call, errors) over pipes, the CLI, `dojo hook` and `dojo install`.
+- Python tests, 13: the shim speaking MCP (initialize, tools/list, tools/call, errors) over pipes, the CLI, `dojo hook` and `dojo install`.
 - `sh tools/test_runner_start.sh`: the Runner pick against a stub runner and a stub Hub: the largest model with a FITS verdict wins, with the `--kv` setting the verdict names.
 - `make smoke`: the bundled app opens a pane running `echo ok`, sees `ok` on its screen, gets an answer from its own bus, and quits with exit code 0.
 - Probes against a stand-in bus (not part of the test suite), on this Mac:

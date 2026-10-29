@@ -89,7 +89,8 @@ public enum Launcher {
     public static let piTools = "read,bash,edit,write"
     /// Spelled out for the small local models pi runs on: how to answer a peer.
     public static let piReplyHint = "You have no dojo tool, only the bash tool. To answer a [from: <name>] message, run the bash command " +
-        "dojo send <name> \"<your reply>\" and then say what you sent. " +
+        "dojo send <name> - <<'EOF' with your reply on the lines after it and EOF on a line of its own, then say what you sent; " +
+        "never put the reply in double quotes, a backtick or $( ) inside them would run. " +
         "For web pages use curl -sL: without -L a redirect prints nothing at all. Prefer a site's RSS feed to its HTML."
     /// The shim as the harness runs it; $HOME is expanded on the host the harness runs on.
     public static let shimCommand = #"exec python3 "$HOME/.dojo/dojo-mcp.py""#
