@@ -61,7 +61,7 @@ make smoke   # launch proof: two panes, swapped as a drag does it; a click focus
 make smoke HOST=user@box   # the same, with the pane on that host over ssh
 ```
 
-`XHS_PORT` overrides the bus port. There is no other setting. The only files the app keeps are `~/.xhs/hosts` and `~/.xhs/folders`, the hosts and start folders you used, latest first, one per line; edit or delete them by hand.
+`XHS_PORT` overrides the bus port. There is no other setting. The only files the app keeps are `~/.xhs/hosts` and `~/.xhs/folders` (the hosts and start folders you used, latest first, one per line) and `~/.xhs/runner/` (Runner's binary, its roster copy, the 16 MiB model heads, the fits list and your model choice); edit or delete them by hand.
 
 <a id="first-run"></a>
 ## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> First run
@@ -84,7 +84,15 @@ Press plus, pick Claude, Codex or pi. Leave the host empty for this Mac. A pane 
 
 A local pi pane first asks Runner for its models (`GET /v1/models`), starts pi with the first one and shows it in the header. If Runner does not answer, the pane says so and pi is not started.
 
-**Runner.** The picker says whether Runner is serving on this Mac and what. If it is not, add a Runner pane: it runs `tools/runner-start.sh`, which uses `runner` from your PATH or `~/.xhs/runner/runner`, downloading the latest release there (checked against its `SHA256SUMS`) when neither exists; then asks `runner --info fit` about each of seven models, largest first (the Qwen3-Coder-30B and Qwen3-30B selective files, Granite-4.2-8B, Nemotron 3.5 Bolt E4B, Qwen3-4B, Granite-4.1-3B at Q8_0 and at Q4_K_M), reading only the first 16 MiB of each from the Hub. The rule: the weights that stay resident (the hot set for a Gemma E-series model, whose row-gathered token table is never resident; the whole file otherwise, a mixture of experts included) must fit in half of this machine's RAM. The first model that does is served and that one model fetched. Runner's own verdict counts the RAM free right now: when it says the model fits, its context (16384, 8192 or 4096) and cache setting are used; when it says the model pages, the model is served anyway at context 16384 with a q8 cache, wired into RAM, and the rest of the machine makes room (what an 8 GB Mac with harnesses open does with Bolt E4B). Runner serves with `--mlock`, so a loaded machine cannot evict the weights (when the OS refuses the lock, Runner says so and serves anyway). The pane shows every verdict and then Runner's log; while the model downloads the header says what is being fetched, and it turns `running` and names the model once the server listens. The picker follows the same pane and offers one Runner pane at a time. Close the pane to stop Runner. A Runner pane is local; on a host, start Runner yourself. Messages are never sent to a Runner pane.
+**Runner.** The picker says whether Runner is serving on this Mac and what. If it is not, add a Runner pane: it runs `tools/runner-start.sh`, which keeps nothing about versions or models of its own:
+
+- The binary is `runner` on your PATH if you have one; else `~/.xhs/runner/runner`, downloaded from the latest release (checked against its `SHA256SUMS`) and replaced when the latest release moves on.
+- The models are Runner's own roster, `docs/model-tiers.json` in its repository: the Tier 1 and Tier 2 text models, fetched on every start (a copy is kept for when the network is away). A model admitted there is a candidate here the next time a Runner pane starts; nothing in this app changes.
+- Every roster file no larger than this Mac's RAM is asked about with `runner --info fit` on its first 16 MiB. A model fits when the weights that stay resident (the hot set for a Gemma E-series model, whose row-gathered token table is never resident; the whole file otherwise, a mixture of experts included) are within half of the RAM. All that fit are listed in the pane and in `~/.xhs/runner/fits`, largest resident weights first.
+- The pane serves the model you chose, or else the largest that fits, wired into RAM (`--mlock`). Runner's own verdict counts the RAM free right now: when it says the model fits, its context (16384, 8192 or 4096) and cache setting are used; when it says the model pages, the model is served anyway at context 16384 with a q8 cache and the rest of the machine makes room (what an 8 GB Mac with harnesses open does with Bolt E4B).
+- **Choosing.** Once a Runner pane has run, the picker lists the models that fit as buttons; the one serving or chosen is filled in. Click another and the Runner pane is replaced by one serving it, and that choice is kept in `~/.xhs/runner/model` for later Runner panes (delete the file to go back to the largest that fits).
+
+The pane shows every verdict and then Runner's log; while the model downloads the header says what is being fetched, and it turns `running` and names the model once the server listens. The picker follows the same pane and offers one Runner pane at a time. Close the pane to stop Runner. A Runner pane is local; on a host, start Runner yourself. Messages are never sent to a Runner pane.
 
 <a id="remote-panes"></a>
 ## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> Remote panes
@@ -197,7 +205,7 @@ Needs a human click-through:
 - `Sources/XHSCore/`: the bus, HTTP server, hook mapping, message delivery and launch commands. No UI; all tested.
 - `Sources/XHSApp/`: the window (SwiftUI and AppKit, SwiftTerm panes). View state uses ObservableObjects because `@State` is a macro whose plugin ships only with Xcode.
 - `tools/xhs-mcp.py`: the shim (MCP server, `xhs` command, `xhs hook`, `xhs install`). `tools/xhs-pi.ts`: the pi extension.
-- `tools/snippets/`: peer-rule paragraphs and the hook and MCP config. `tools/remote-setup.sh`: the one-time install on an ssh host, POSIX or Windows. `tools/runner-start.sh`: find or fetch Runner, pick a model that fits, serve it (`tools/test_runner_start.sh` checks the pick with a stub runner and Hub).
+- `tools/snippets/`: peer-rule paragraphs and the hook and MCP config. `tools/remote-setup.sh`: the one-time install on an ssh host, POSIX or Windows. `tools/runner-start.sh`: find or fetch the latest Runner, read its roster, list what fits, serve the choice (`tools/test_runner_start.sh` checks it against a stub runner, Hub, GitHub and machine size, online and offline).
 - `packaging/Info.plist`, `packaging/make-icon.swift` (the icon), `Makefile`. `Sources/XHSApp/Theme.swift` holds the brand colours and the Ensō.
 - `Package.swift` passes the swift-testing macro plugin path to the test target. Without it, test builds with the Command Line Tools fail on about every other run.
 
