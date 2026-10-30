@@ -165,7 +165,7 @@ A Windows host with OpenSSH Server and MSYS2 at `C:\msys64` works the same way. 
 
 `make remote-setup HOST=user@winbox` detects Windows too. There, `dojo install` writes two small sh scripts in `~/.dojo/bin` instead of a symlink: `dojo`, and a `python3` that runs the Python it was installed with (on Windows, `python3` on PATH is usually the Microsoft Store stub). The harness line puts `~/.dojo/bin` first on PATH, so the MCP shim and hooks find a working `python3`.
 
-Claude Code on a Windows host reaches the bus through the tunnel. Codex on a Windows host has not been tried: its config hooks call `python3 "$HOME/.dojo/dojo-mcp.py" hook`, which depends on the shell Codex uses for hook commands there.
+Claude Code and Codex both run on a Windows host and reach the bus through the tunnel. Codex's config hooks call `python3 "$HOME/.dojo/dojo-mcp.py" hook`, which finds the working `python3` in `~/.dojo/bin`.
 
 Two remote panes on the same host share the forwarded port: the first pane's tunnel serves both (ssh warns about the second forward). If the first pane closes, the second loses the bus until you reopen it.
 
