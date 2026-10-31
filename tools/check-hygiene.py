@@ -26,7 +26,13 @@ PERSONAL = [
     (re.compile(r"/c/Users/(?!me\b)[A-Za-z]"), "a Windows home path with a user name"),
     (re.compile(r"\b(?:192\.168|10\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}\b"), "a private network address"),
     (re.compile(r"@(?:hotmail|gmail|outlook|icloud)\.", re.I), "a personal e-mail address"),
-    (re.compile(r"\b(?:zenzombie|zen@|mainbox|blackwell|galaxa|strata)\b", re.I), "a machine or user name"),
+    (re.compile(r"\b(?:zenzombie|zen@|mainbox|blackwell|galaxa\d*|strata|zen-gaming|windows3070)\b", re.I),
+     "a machine or user name"),
+    # the agent sessions and the hosts' work paths (a runner record PR carried the lab's paths into that
+    # public repository on 2026-10-31; its check-content-hygiene.py lists the same)
+    (re.compile(r"\bDawn-\d\b"), "an agent session name"),
+    (re.compile(r"C:[\\/]+projectgrid", re.I), "the Windows host's work path"),
+    (re.compile(r"\bexec-share/"), "the lab's shared work directory"),
     (re.compile(r"(?<![\w/])/home/(?!me\b|tester\b)[A-Za-z]"), "a Linux home path with a user name"),
     (re.compile(r"[A-Z]:\\Users\\(?!me\b)[A-Za-z]"), "a Windows home path with a user name"),
     (re.compile(r"\b100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}\b"), "a Tailscale address"),
@@ -100,7 +106,9 @@ def self_test():
     ok &= any("e-mail" in p for p in check_message("mail me at someone@example.com\n", "mail"))
     ok &= any("em dash" in p for p in check_message("a — b\n", "dash"))
     ok &= check_message("plain words, no trailer\n", "plain") == []
-    for sample, what in [("/Users/someone/x", "home"), ("192.168.1.9", "network"), ("a@hotmail.com", "e-mail"), ("ZENZOMBIE", "name"),
+    for sample, what in [("galaxa1", "session"), ("windows3070", "session"), ("ZEN-GAMING", "machine"),
+                         ("Dawn-1", "session"), ("C:\\projectgrid\\x", "work path"), ("/home/lab/workspace/exec-share/x", "lab"),
+                         ("/Users/someone/x", "home"), ("192.168.1.9", "network"), ("a@hotmail.com", "e-mail"), ("ZENZOMBIE", "name"),
                          ("/home/someone/x", "linux home"), ("C:\\Users\\someone\\x", "windows home"), ("100.101.2.3", "tailscale"),
                          ("fd7a:115c:a1e0::1", "ipv6"), ("mybox.ts.net", "tailnet"), ("ghp_abcdefghijklmnop1234", "token"),
                          ("https://user:secret@host/x", "url credentials"), ("someone@acme.com", "any e-mail")]:
