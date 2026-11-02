@@ -37,6 +37,25 @@ def header(ink, muted, teal):
             f'<text x="101" y="74" font-family="{FONT}" font-size="19" font-weight="500" fill="{muted}">Dojo</text></svg>\n')
 
 
+def social():
+    """The repository's social preview (1280 x 640, GitHub's size), laid out like the Runner card."""
+    s = 3.25
+    t = lambda y, size, weight, fill, text, ls=0: (
+        f'<text x="630" y="{y}" font-family="{FONT}" font-size="{size}" font-weight="{weight}" '
+        f'letter-spacing="{ls}" fill="{fill}">{text}</text>')
+    return ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640" role="img" aria-label="Xyntetik Dojo"><title>Xyntetik Dojo</title>'
+            '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#159A89"/><stop offset="1" stop-color="#2FD0B9"/></linearGradient></defs>'
+            '<rect width="1280" height="640" fill="#FFFFFF"/>'
+            + mark(s, 390 - 50 * s, 325 - 50 * s)
+            + t(238, 21, 500, "#6B7A81", "XYNTETIK", 5)
+            + t(332, 104, 700, "#16232A", "Dojo", -2)
+            + t(392, 31, 500, "#3A4A51", "Your agent harnesses in one window.")
+            + '<rect x="630" y="421" width="56" height="4" rx="2" fill="#FFA033"/>'
+            + t(466, 20, 500, "#6B7A81", "LOCAL AND OVER SSH, ON ONE BUS", 3)
+            + '</svg>\n')
+
+
 (OUT / "header-light.svg").write_text(header("#16232A", "#6B7A81", "#14A08F"))
 (OUT / "header-dark.svg").write_text(header("#E8ECEA", "#8C9A98", "#3ED2BD"))
-print("wrote", OUT / "header-light.svg", "and header-dark.svg")
+(OUT / "social.svg").write_text(social())
+print("wrote", OUT / "header-light.svg", "header-dark.svg and social.svg")
