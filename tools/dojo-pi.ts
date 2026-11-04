@@ -15,6 +15,42 @@ async function runnerModels(): Promise<any[]> {
   }
 }
 
+const DEFAULT_CONTEXT = 32768;
+const MAX_OUTPUT = 16384;
+
+/// The context the server runs at, when its model list does not say: llama.cpp reports it on /props
+/// (default_generation_settings.n_ctx), one level above /v1. Nothing found: 0.
+async function servedContext(): Promise<number> {
+  try {
+    const root = RUNNER_URL.replace(/\/v1\/?$/, "");
+    const res = await fetch(`${root}/props`, { signal: AbortSignal.timeout(3000) });
+    const body: any = await res.json();
+    const n = Number(body?.default_generation_settings?.n_ctx ?? 0);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function positive(...values: unknown[]): number {
+  for (const v of values) {
+    const n = Number(v);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return 0;
+}
+
+/// The context window and output limit pi is told for a served model. The server's own figures first
+/// (Runner's context_window, the OpenAI-style context_length), then what the server runs at, then the
+/// model's trained context (llama.cpp's meta.n_ctx_train), then the old default. An output limit the
+/// server does not state is a quarter of the context, up to 16k: a 262k agent context gets room to write,
+/// a 16k one keeps room to read.
+export function modelLimits(m: any, served: number): { contextWindow: number; maxTokens: number } {
+  const contextWindow = positive(m?.context_window, m?.context_length, served, m?.meta?.n_ctx_train) || DEFAULT_CONTEXT;
+  const maxTokens = positive(m?.max_tokens) || Math.min(MAX_OUTPUT, Math.floor(contextWindow / 4));
+  return { contextWindow, maxTokens };
+}
+
 function report(event: string, extra: Record<string, unknown> = {}): void {
   const token = process.env.DOJO_TOKEN;
   if (!token) return;
@@ -63,6 +99,8 @@ export default async function (pi: any) {
   }
 
   const models = await runnerModels();
+  // One question to the server about its context, only when its model list leaves it out.
+  const served = models.some((m) => !positive(m.context_window, m.context_length)) ? await servedContext() : 0;
   if (models.length > 0) {
     pi.registerProvider("runner", {
       baseUrl: RUNNER_URL,
@@ -75,8 +113,7 @@ export default async function (pi: any) {
         reasoning: false,
         input: ["text"],
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-        contextWindow: Number(m.context_window ?? m.context_length ?? 32768),
-        maxTokens: Number(m.max_tokens ?? 4096),
+        ...modelLimits(m, served),
       })),
     });
   }
