@@ -198,6 +198,19 @@ list_fits() {
     rm -f "$home/fits.new"
 }
 
+# A server already on Runner's port (llama-server, Runner started by hand) is used by the pi panes as it is;
+# this one steps aside rather than failing to bind.
+taken() {
+    curl -s -m 2 http://127.0.0.1:8080/v1/models 2>/dev/null | python3 -I -c '
+import json, sys
+m = (json.load(sys.stdin).get("data") or [{}])[0]
+print(m.get("owned_by") or "a server", m.get("id") or "a model")' 2>/dev/null
+}
+if [ "$mode" != "--pick" ] && held=$(taken) && [ -n "$held" ]; then
+    note "A server already answers on 127.0.0.1:8080 (${held% *}, serving ${held#* }); the pi panes use it as it is."
+    note "Stop it to let Runner serve."
+    exit 5
+fi
 runner=$(find_runner)
 list_fits "$runner"
 [ -s "$home/fits" ] || { note "No roster model keeps its resident weights within half of this machine's RAM."; exit 3; }

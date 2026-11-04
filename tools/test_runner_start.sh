@@ -31,6 +31,7 @@ cat > "$tmp/bin/curl" <<'STUB'
 out=""; url=""; head=0
 while [ $# -gt 0 ]; do case $1 in -o) out=$2; shift ;; -I|-sI) head=1 ;; http*) url=$1 ;; esac; shift; done
 case $url in
+    *127.0.0.1:8080/v1/models) [ -n "${STUB_PORT_TAKEN:-}" ] && printf '{"data":[{"id":"kolibri.gguf","owned_by":"llamacpp"}]}' || exit 7 ;;
     *releases/latest) [ $head = 1 ] && printf 'HTTP/2 302\r\nlocation: https://github.com/Joakimpalm-Zen/xyntetik-runner/releases/tag/v9.9.9\r\n\r\n' ;;
     *releases/latest/download/runner-*) cp "$STUB_RUNNER" "$out" ;;
     *releases/latest/download/SHA256SUMS)
@@ -103,6 +104,12 @@ grep -q "Downloading Runner v9.9.9" "$tmp/log" || fail "the release was not down
 grep -q "could not be downloaded" "$tmp/log" && fail "the checksum must match a line of the form 'hash  name'"
 [ -x "$tmp/home/runner" ] || fail "the downloaded runner is not in place"
 # A stop-gap runner in the Dojo folder is removed, never used.
+
+# A server already on the port: the script steps aside and says who holds it; --pick still picks.
+got=$(STUB_PORT_TAKEN=1 STUB_AVAIL=0.85 DOJO_RUNNER_HOME="$tmp/home" PATH="$tmp/bin:$PATH" sh "$here/runner-start.sh" 2>"$tmp/log") && fail "a taken port must stop the script"
+grep -q "already answers on 127.0.0.1:8080 (llamacpp, serving kolibri.gguf)" "$tmp/log" || fail "the taken-port note is missing"
+got=$(STUB_PORT_TAKEN=1 STUB_AVAIL=0.85 run)
+[ "$got" = "Serving nvidia/NVIDIA-Nemotron-3.5-Bolt-E4B-4GB:Nemotron-3.5-Bolt-E4B-Q4_K_M -c 16384 --kv q8 --mlock" ] || fail "--pick with a taken port: got '$got'"
 
 # Offline: the kept roster copy serves.
 mv "$tmp/bin/curl" "$tmp/bin/curl.off"; printf '#!/bin/sh\nexit 6\n' > "$tmp/bin/curl"; chmod +x "$tmp/bin/curl"
