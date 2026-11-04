@@ -17,6 +17,17 @@ struct XHSApp: App {
                 Button("Smaller Text") { model.zoom(-1) }.keyboardShortcut("-", modifiers: .command)
                 Button("Default Text Size") { model.zoom(nil) }.keyboardShortcut("0", modifiers: .command)
             }
+            // The tabs: All on Cmd-1, the first eight panes on Cmd-2 to Cmd-9, and the step keys Terminal.app uses.
+            CommandMenu("Tabs") {
+                Button("All") { model.show(tab: nil) }.keyboardShortcut("1", modifiers: .command)
+                ForEach(Array(model.agents.prefix(8).enumerated()), id: \.element.id) { i, item in
+                    Button(item.name) { model.show(tab: item.id) }
+                        .keyboardShortcut(KeyEquivalent(Character(String(i + 2))), modifiers: .command)
+                }
+                Divider()
+                Button("Next Tab") { model.stepTab(1) }.keyboardShortcut("]", modifiers: [.command, .shift])
+                Button("Previous Tab") { model.stepTab(-1) }.keyboardShortcut("[", modifiers: [.command, .shift])
+            }
         }
     }
 }

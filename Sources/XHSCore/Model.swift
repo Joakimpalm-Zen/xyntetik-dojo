@@ -103,3 +103,18 @@ public struct RunnerFit: Equatable, Sendable {
     /// The file name stem the spelling names, as Runner reports the served model.
     public var stem: String { String(spelling.split(separator: ":").last ?? "") }
 }
+
+/// The window's tabs: the overview (nil, every pane in the grid) and one tab per pane, in pane order.
+public enum TabOrder {
+    /// The tab after `current`: the overview leads to the first pane, the last pane back to the overview.
+    public static func next<T: Equatable>(after current: T?, in panes: [T]) -> T? {
+        guard let current, let i = panes.firstIndex(of: current) else { return panes.first }
+        return i + 1 < panes.count ? panes[i + 1] : nil
+    }
+
+    /// The tab before `current`: the overview leads to the last pane, the first pane back to the overview.
+    public static func previous<T: Equatable>(before current: T?, in panes: [T]) -> T? {
+        guard let current, let i = panes.firstIndex(of: current) else { return panes.last }
+        return i > 0 ? panes[i - 1] : nil
+    }
+}
