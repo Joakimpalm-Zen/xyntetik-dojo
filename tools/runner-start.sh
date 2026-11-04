@@ -6,11 +6,13 @@
 #    models), fetched on every start and kept as a copy for when the network is away.
 # Every roster file no larger than this machine's RAM is asked about with `runner --info fit` on its first
 # 16 MiB. A model fits when the weights that stay resident (the hot set for a Gemma E-series model, whose
-# row-gathered token table is never resident; the whole file otherwise) are within half of the RAM. All
-# that fit are written to ~/.dojo/runner/fits, largest resident weights first; the one named in ~/.dojo/runner/model (the
-# picker writes it) or else the first is served, wired into RAM (--mlock): at Runner's context and cache
-# when its free-RAM verdict says FITS, else at context 16384 with a q8 cache. `--pick` prints the choice
-# and stops.
+# row-gathered token table is never resident; the whole file otherwise) are within a share of the RAM:
+# half, or DOJO_RUNNER_RAM_SHARE (0.75 for a machine that runs nothing else). All that fit are written to
+# ~/.dojo/runner/fits, largest resident weights first; the one named in ~/.dojo/runner/model (the picker
+# writes it) or else the first is served, wired into RAM (--mlock): at the largest context of
+# DOJO_RUNNER_CONTEXTS (262144 down to 4096) that the model was trained for and Runner's free-RAM verdict
+# says FITS, with the cache that verdict names; when every context pages, at 16384 (or the trained
+# context, if smaller) with a q8 cache. `--pick` prints the choice and stops.
 set -eu
 # Numbers are compared and sorted as numbers whatever the owner's locale writes decimals with.
 export LC_ALL=C
@@ -18,7 +20,10 @@ mode=${1:-serve}
 home="${DOJO_RUNNER_HOME:-$HOME/.dojo/runner}"
 release="https://github.com/Joakimpalm-Zen/xyntetik-runner/releases/latest"
 roster_url="https://raw.githubusercontent.com/Joakimpalm-Zen/xyntetik-runner/main/docs/model-tiers.json"
-contexts="16384 8192 4096"
+contexts="${DOJO_RUNNER_CONTEXTS:-262144 131072 65536 32768 16384 8192 4096}"
+share="${DOJO_RUNNER_RAM_SHARE:-0.5}"
+# The context served when Runner's verdict says every context pages right now.
+fallback_ctx=16384
 mkdir -p "$home/heads"
 
 say() { printf '%s\n' "$*"; }
@@ -124,6 +129,58 @@ for total, rid, repo, name, parts in sorted(out, reverse=True):
 PY
 }
 
+# The context a GGUF head says its model was trained for ({arch}.context_length), or nothing when the
+# head does not carry it (a stub, a head cut before the key). The metadata is read key by key up to the
+# tensor list; a head that ends inside it gives nothing.
+trained_context() {
+    python3 -I - "$1" <<'PYGGUF' 2>/dev/null
+import struct, sys
+f = open(sys.argv[1], "rb")
+def take(n):
+    b = f.read(n)
+    if len(b) < n: raise EOFError
+    return b
+def u32(): return struct.unpack("<I", take(4))[0]
+def u64(): return struct.unpack("<Q", take(8))[0]
+def string(): return take(u64()).decode("utf-8", "replace")
+sizes = {0: 1, 1: 1, 2: 2, 3: 2, 4: 4, 5: 4, 6: 4, 7: 1, 10: 8, 11: 8, 12: 8}
+ints = {4: "<I", 5: "<i", 10: "<Q", 11: "<q"}
+def value(t):
+    if t == 8: return string()
+    if t == 9:
+        et, n = u32(), u64()
+        return [value(et) for _ in range(n)]
+    raw = take(sizes[t])
+    return struct.unpack(ints[t], raw)[0] if t in ints else None
+try:
+    if take(4) != b"GGUF": sys.exit(1)
+    if u32() < 2: sys.exit(1)
+    n_tensors, n_kv = u64(), u64()
+    found = {}
+    for _ in range(n_kv):
+        key = string()
+        found[key] = value(u32())
+        arch = found.get("general.architecture")
+        if arch and arch + ".context_length" in found:
+            print(found[arch + ".context_length"]); sys.exit(0)
+except EOFError:
+    pass
+sys.exit(1)
+PYGGUF
+}
+
+# The contexts to try for a model: those of the list no larger than its trained context, largest first;
+# the smallest of the list when all are larger. An unknown trained context keeps 16384 as the ceiling.
+contexts_for() {
+    ceiling=${1:-16384}
+    out=""
+    for ctx in $contexts; do [ "$ctx" -le "$ceiling" ] && out="$out $ctx"; done
+    [ -n "$out" ] || out=$(printf '%s\n' $contexts | sort -n | head -1)
+    # shellcheck disable=SC2086
+    set -- $out
+    printf '%s\n' "$*"
+}
+
 # The weights that stay resident, in GiB, from a fit report: the hot set when the report separates a
 # row-gathered table (Gemma E-series: that table is read by row and never resident), else the whole file.
 resident_gib() {
@@ -138,8 +195,12 @@ resident_gib() {
 list_fits() {
     runner=$1
     ram=$(total_ram_bytes)
-    half=$(awk -v b="$ram" 'BEGIN { printf "%.2f", b / 2 / 1073741824 }')
-    note "Half of this machine's RAM is $half GiB; a model's resident weights must fit in that."
+    case $share in
+        0.[1-9]*|1|1.0) ;;
+        *) note "DOJO_RUNNER_RAM_SHARE is '$share'; it is a share of the RAM from 0.1 to 1. Using 0.5."; share=0.5 ;;
+    esac
+    half=$(awk -v b="$ram" -v s="$share" 'BEGIN { printf "%.2f", b * s / 1073741824 }')
+    note "A model's resident weights must fit in $half GiB, $share of this machine's RAM."
     : > "$home/fits.new"
     roster=$(roster_file)
     candidates "$roster" "$ram" > "$home/candidates" || { note "Runner's model roster could not be read."; exit 4; }
@@ -153,7 +214,7 @@ list_fits() {
                 note "  $id: fits, $resident GiB in $parts parts, wired in"
                 printf '%s\t%s\t%s\t%s\n' "$id" "$spelling" "-c 16384 --kv q8 --mlock" "$resident" >> "$home/fits.new"
             else
-                note "  $id: $resident GiB in $parts parts, more than half of this machine's RAM"
+                note "  $id: $resident GiB in $parts parts, more than $share of this machine's RAM"
             fi
             continue
         fi
@@ -167,18 +228,22 @@ list_fits() {
                 rm -f "$head.part"; note "  $id: could not fetch the file's first 16 MiB, skipped"; continue
             fi
         fi
-        report=$("$runner" -m "$head" --info fit -c 16384 2>/dev/null || true)
+        trained=$(trained_context "$head" || true)
+        tried=$(contexts_for "$trained")
+        first=${tried%% *}
+        report=$("$runner" -m "$head" --info fit -c "$first" 2>/dev/null || true)
         resident=$(resident_gib "$report")
         if [ -z "$resident" ]; then
             rm -f "$head"; note "  $id: Runner could not read its head (removed), skipped"; continue
         fi
         if ! awk -v r="$resident" -v h="$half" 'BEGIN { exit !(r <= h) }'; then
-            note "  $id: $resident GiB stay resident, more than half of this machine's RAM"
+            note "  $id: $resident GiB stay resident, more than $share of this machine's RAM"
             continue
         fi
+        [ -n "$trained" ] && note "  $id: trained for a context of $trained; trying $tried"
         flags=""
-        for ctx in $contexts; do
-            [ "$ctx" = 16384 ] || report=$("$runner" -m "$head" --info fit -c "$ctx" 2>/dev/null || true)
+        for ctx in $tried; do
+            [ "$ctx" = "$first" ] || report=$("$runner" -m "$head" --info fit -c "$ctx" 2>/dev/null || true)
             verdict=$(printf '%s\n' "$report" | sed -n 's/^ *verdict *//p' | head -1)
             case $verdict in
                 "FITS WITH --kv "*) kv=${verdict#FITS WITH --kv }; flags="-c $ctx --kv ${kv%% *}"; break ;;
@@ -188,7 +253,9 @@ list_fits() {
         if [ -n "$flags" ]; then
             note "  $id: fits, $resident GiB resident; Runner says $verdict"
         else
-            flags="-c 16384 --kv q8"
+            ctx=$fallback_ctx
+            [ -n "$trained" ] && [ "$trained" -lt "$ctx" ] && ctx=$trained
+            flags="-c $ctx --kv q8"
             note "  $id: fits, $resident GiB resident, wired in; Runner's free-RAM verdict said it pages right now"
         fi
         printf '%s\t%s\t%s\t%s\n' "$id" "$spelling" "$flags --mlock" "$resident" >> "$home/fits.new"
@@ -213,7 +280,7 @@ if [ "$mode" != "--pick" ] && held=$(taken) && [ -n "$held" ]; then
 fi
 runner=$(find_runner)
 list_fits "$runner"
-[ -s "$home/fits" ] || { note "No roster model keeps its resident weights within half of this machine's RAM."; exit 3; }
+[ -s "$home/fits" ] || { note "No roster model keeps its resident weights within $share of this machine's RAM."; exit 3; }
 chosen=""
 if [ -s "$home/model" ]; then
     want=$(head -1 "$home/model")
