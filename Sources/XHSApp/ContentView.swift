@@ -20,7 +20,7 @@ struct ContentView: View {
                     .background(Color(Theme.coral))
             }
             // Agents fill the grid; Runner, the local model server, lives in a strip along the bottom.
-            let agents = model.items.filter { $0.kind != .runner }
+            let agents = model.agents
             if agents.isEmpty {
                 VStack(spacing: 14) {
                     EnsoMark().frame(width: 96, height: 96)
@@ -35,7 +35,13 @@ struct ContentView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                PaneGrid(items: agents)
+                // The overview tab is the grid; every pane has a tab of its own that fills the window.
+                TabStrip(agents: agents)
+                if let selected = agents.first(where: { $0.id == model.selectedTab }) {
+                    PaneCell(item: selected).id(selected.id)
+                } else {
+                    PaneGrid(items: agents)
+                }
             }
             if let runner = model.items.last(where: { $0.kind == .runner }) {
                 // Its own identity per pane, so a replacement Runner gets a fresh strip (and its log open).
@@ -121,6 +127,47 @@ struct RunnerStrip: View {
         case .exited: return "open the log to see why"
         default: return info.model.isEmpty ? "picking a model that fits this Mac" : info.model.replacingOccurrences(of: "fetching ", with: "fetching and loading ")
         }
+    }
+}
+
+/// The tabs above the panes: All (the grid, with the pane count) and one per pane with its state dot and name.
+struct TabStrip: View {
+    @EnvironmentObject private var model: AppModel
+    let agents: [AppModel.Item]
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 2) {
+                tab(id: nil, selected: model.selectedTab == nil) {
+                    EnsoMark().frame(width: 12, height: 12)
+                    Text("All").bold()
+                    Text("\(agents.count)").foregroundStyle(Color(Theme.muted))
+                }
+                ForEach(agents) { item in
+                    let selected = model.selectedTab == item.id
+                    tab(id: item.id, selected: selected) {
+                        StateDot(state: model.bus.info(item.name)?.state)
+                        Text(item.name).font(.system(.callout, design: .monospaced)).fontWeight(selected ? .bold : .regular)
+                    }
+                }
+            }
+            .padding(.horizontal, 6)
+        }
+        .font(.callout)
+        .background(Paper(tone: Theme.bg, density: 0.6))
+        .overlay(alignment: .bottom) { Rectangle().fill(Color(Theme.line)).frame(height: 1) }
+    }
+
+    /// A tab: the selected one in ink on the surface with a teal line under it, the others muted on the paper.
+    private func tab<Content: View>(id: ObjectIdentifier?, selected: Bool, @ViewBuilder content: () -> Content) -> some View {
+        HStack(spacing: 6, content: content)
+            .foregroundStyle(Color(selected ? Theme.ink : Theme.muted))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(selected ? Color(Theme.surface) : Color.clear)
+            .overlay(alignment: .bottom) { Rectangle().fill(Color(selected ? Theme.teal : .clear)).frame(height: 2) }
+            .contentShape(Rectangle())
+            .onTapGesture { model.show(tab: id) }
     }
 }
 

@@ -20,6 +20,8 @@ final class AppModel: NSObject, ObservableObject {
     }
 
     @Published private(set) var items: [Item] = []
+    /// The tab shown: nil for the overview (every agent pane in the grid), else one pane filling the window.
+    @Published private(set) var selectedTab: ObjectIdentifier?
     /// Problems the owner should see (bus port taken, tools not installed).
     @Published private(set) var problem = ""
     /// Bumped on every bus change so headers redraw.
@@ -83,6 +85,23 @@ final class AppModel: NSObject, ObservableObject {
     }
 
     private var ticks = 0
+
+    /// The panes with a tab each, in grid order: every pane but Runner, which has the strip at the bottom.
+    var agents: [Item] { items.filter { $0.kind != .runner } }
+
+    /// Shows a pane's tab, or the overview for nil, and gives that pane the keys.
+    func show(tab id: ObjectIdentifier?) {
+        selectedTab = id.flatMap { id in agents.contains { $0.id == id } ? id : nil }
+        let focus = selectedTab.flatMap { id in agents.first { $0.id == id }?.view }
+            ?? agents.first { $0.view.window?.firstResponder === $0.view }?.view
+        if let focus { DispatchQueue.main.async { focus.window?.makeFirstResponder(focus) } }
+    }
+
+    /// The next tab (Cmd-Shift-]) or the previous (Cmd-Shift-[), through the overview.
+    func stepTab(_ step: Int) {
+        let ids = agents.map(\.id)
+        show(tab: step > 0 ? TabOrder.next(after: selectedTab, in: ids) : TabOrder.previous(before: selectedTab, in: ids))
+    }
 
     /// The Runner pane that is starting or serving, if any: the newest, since a stopped one may still be open.
     var runnerPane: Bus.Info? {
@@ -248,6 +267,8 @@ final class AppModel: NSObject, ObservableObject {
         tokens[name] = nil
         remoteShells[name] = nil
         items.removeAll { $0.name == name }
+        // Its tab goes with it; the overview shows what is left.
+        if selectedTab == item.id { selectedTab = nil }
         if let focused { DispatchQueue.main.async { focused.window?.makeFirstResponder(focused) } }
     }
 
@@ -302,9 +323,14 @@ final class AppModel: NSObject, ObservableObject {
         let typed = host.isEmpty ? "typed" : ""
         let expected = host.isEmpty ? "ok typed" : "ok"
         if host.isEmpty {
-            // A second pane, swapped with the first as a drag would do it: the first must still take keys.
+            // A second pane, swapped with the first as a drag would do it, then the first shown in its own tab:
+            // re-parented twice, it must still take keys.
             addPane(kind: .shell, host: "", name: "shell-2")
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.swap(name, with: "shell-2") }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) { [weak self] in
+                guard let self else { return }
+                self.show(tab: self.items.first(where: { $0.name == name })?.id)
+            }
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
                 guard let view = self?.items.first(where: { $0.name == name })?.view else { return }
                 // Focus comes from the click, not from the model, as in the window.
@@ -357,7 +383,8 @@ final class AppModel: NSObject, ObservableObject {
         let location = host.isEmpty ? "locally" : "on \(host) (\(remoteShells[name] == .windows ? "Windows" : "POSIX") shell)"
         let dims = items.first(where: { $0.name == name })?.view.terminalDimensions
         let font = items.first(where: { $0.name == name })?.view.font
-        print("DOJO_SMOKE ok: pane \(name) echoed the typed line \(location), the bus answered on 127.0.0.1:\(port), terminal \(dims?.cols ?? 0)x\(dims?.rows ?? 0), font \(font?.fontName ?? "none") \(font?.pointSize ?? 0)")
+        let tab = selectedTab == nil ? "the overview" : "its own tab"
+        print("DOJO_SMOKE ok: pane \(name) echoed the typed line \(location) in \(tab), the bus answered on 127.0.0.1:\(port), terminal \(dims?.cols ?? 0)x\(dims?.rows ?? 0), font \(font?.fontName ?? "none") \(font?.pointSize ?? 0)")
         closeAll()
         exit(0)
     }
