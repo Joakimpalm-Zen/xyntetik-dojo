@@ -24,6 +24,13 @@ import Testing
         #expect(Delivery.sanitize("  a\r\nb\rc \n") == "a\nb\nc")
     }
 
+    @Test func droppedPathsAreQuotedForTheShell() {
+        #expect(Delivery.droppedPaths(["/Users/me/repo"]) == "/Users/me/repo ")
+        #expect(Delivery.droppedPaths(["/Users/me/My Book/ch 1.md", "/tmp/a"]) == "'/Users/me/My Book/ch 1.md' /tmp/a ")
+        #expect(Delivery.droppedPaths(["/x/it's"]) == "'/x/it'\\''s' ")
+        #expect(Delivery.droppedPaths([]) == "")
+    }
+
     @Test func withoutBracketedPasteLinesJoin() {
         #expect(Delivery.bytes("a\nb", bracketedPaste: false) == Array("a b".utf8))
     }

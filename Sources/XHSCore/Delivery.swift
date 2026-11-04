@@ -41,6 +41,12 @@ public enum Delivery {
         return String(t)
     }
 
+    /// What a drop of files or folders from the Finder types into a pane: each path quoted for the shell
+    /// where it needs it, one space between paths and one after the last, as Terminal.app types them.
+    public static func droppedPaths(_ paths: [String]) -> String {
+        paths.map { Shell.quote($0) + " " }.joined()
+    }
+
     /// The keystrokes for a message, without the final Enter.
     /// With bracketed paste on, a multi-line message arrives as one paste; without it, line breaks become spaces.
     public static func bytes(_ message: String, bracketedPaste: Bool) -> [UInt8] {

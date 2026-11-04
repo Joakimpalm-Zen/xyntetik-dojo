@@ -28,6 +28,26 @@ final class TerminalPane: TerminalView, PaneIO {
         applyTheme()
         terminalDelegate = self
         process = LocalProcess(delegate: self, dispatchQueue: .main)
+        // Files and folders dropped from the Finder: their paths land in the composer, as in Terminal.app.
+        registerForDraggedTypes([.fileURL])
+    }
+
+    // MARK: dropped files
+
+    private static let fileURLs: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
+
+    /// A drag of files is taken; a drag of anything else (a pane header, which swaps panes) passes on to the view behind.
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        sender.draggingPasteboard.canReadObject(forClasses: [NSURL.self], options: TerminalPane.fileURLs) ? .copy : []
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: TerminalPane.fileURLs) as? [URL],
+              !urls.isEmpty else { return false }
+        window?.makeFirstResponder(self)
+        // Through the delegate, like typed keys: the bus learns the owner has unsent text here.
+        send(txt: Delivery.droppedPaths(urls.map(\.path)))
+        return true
     }
 
     /// Paper, Novel's ink and Novel's sixteen colours for the terminal.
