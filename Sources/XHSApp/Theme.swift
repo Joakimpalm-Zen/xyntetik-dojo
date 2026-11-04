@@ -17,6 +17,12 @@ enum Theme {
     static let ink = color(0x16232A)
     static let muted = color(0x6F6A5F)
     static let line = color(0xC5BEA5)
+    /// The rule between panes, and under the tabs and over the Runner strip: deeper and wider than a
+    /// hairline, so two terminals on the same paper read as two.
+    static let rule = color(0xB3AB92)
+    static let ruleWidth: CGFloat = 2
+    /// The corner of a tab and of the buttons in the picker.
+    static let corner: CGFloat = 6
     /// The terminal's text and its sixteen colours: Terminal.app's Novel profile, the warm brown ink and
     /// its muted palette, on a paper that is greyer than Novel's yellow.
     static let terminalInk = color(0x3B2322)

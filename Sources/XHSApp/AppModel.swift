@@ -385,6 +385,24 @@ final class AppModel: NSObject, ObservableObject {
         let font = items.first(where: { $0.name == name })?.view.font
         let tab = selectedTab == nil ? "the overview" : "its own tab"
         print("DOJO_SMOKE ok: pane \(name) echoed the typed line \(location) in \(tab), the bus answered on 127.0.0.1:\(port), terminal \(dims?.cols ?? 0)x\(dims?.rows ?? 0), font \(font?.fontName ?? "none") \(font?.pointSize ?? 0)")
+        // DOJO_SMOKE_SHOT=<file.png>: a picture of the overview with both panes, for a look at the chrome.
+        if let shot = ProcessInfo.processInfo.environment["DOJO_SMOKE_SHOT"], !shot.isEmpty {
+            show(tab: nil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                guard let self else { return }
+                if let view = self.items.first(where: { $0.name == name })?.view.window?.contentView,
+                   let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+                    view.cacheDisplay(in: view.bounds, to: rep)
+                    if let png = rep.representation(using: .png, properties: [:]) {
+                        try? png.write(to: URL(fileURLWithPath: shot))
+                        print("DOJO_SMOKE shot: \(shot)")
+                    }
+                }
+                self.closeAll()
+                exit(0)
+            }
+            return
+        }
         closeAll()
         exit(0)
     }

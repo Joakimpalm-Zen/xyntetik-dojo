@@ -73,11 +73,13 @@ struct RunnerStrip: View {
     var body: some View {
         let info = model.bus.info(item.name)
         VStack(spacing: 0) {
+            // The rule parts the strip from the panes; with the log open it sits above the log, and a
+            // hairline parts the log from the line below.
+            Rectangle().fill(Color(Theme.rule)).frame(height: Theme.ruleWidth)
             if model.runnerLogOpen {
-                Rectangle().fill(Color(Theme.line)).frame(height: 1)
                 TerminalHost(view: item.view).frame(height: 240)
+                Rectangle().fill(Color(Theme.line)).frame(height: 1)
             }
-            Rectangle().fill(Color(Theme.line)).frame(height: 1)
             HStack(spacing: 8) {
                 EnsoMark().frame(width: 14, height: 14)
                 Text("Runner").bold().foregroundStyle(Color(Theme.ink))
@@ -137,37 +139,57 @@ struct TabStrip: View {
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 2) {
-                tab(id: nil, selected: model.selectedTab == nil) {
+            HStack(spacing: 5) {
+                TabButton(selected: model.selectedTab == nil, action: { model.show(tab: nil) }) {
                     EnsoMark().frame(width: 12, height: 12)
                     Text("All").bold()
                     Text("\(agents.count)").foregroundStyle(Color(Theme.muted))
                 }
                 ForEach(agents) { item in
                     let selected = model.selectedTab == item.id
-                    tab(id: item.id, selected: selected) {
+                    TabButton(selected: selected, action: { model.show(tab: item.id) }) {
                         StateDot(state: model.bus.info(item.name)?.state)
                         Text(item.name).font(.system(.callout, design: .monospaced)).fontWeight(selected ? .bold : .regular)
                     }
                 }
             }
-            .padding(.horizontal, 6)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
         }
         .font(.callout)
         .background(Paper(tone: Theme.bg, density: 0.6))
-        .overlay(alignment: .bottom) { Rectangle().fill(Color(Theme.line)).frame(height: 1) }
+        .overlay(alignment: .bottom) { Rectangle().fill(Color(Theme.rule)).frame(height: Theme.ruleWidth) }
     }
+}
 
-    /// A tab: the selected one in ink on the surface with a teal line under it, the others muted on the paper.
-    private func tab<Content: View>(id: ObjectIdentifier?, selected: Bool, @ViewBuilder content: () -> Content) -> some View {
+/// Whether the pointer is over a tab. An object, not @State: see the note at the top of the file.
+final class HoverFlag: ObservableObject {
+    @Published var on = false
+}
+
+/// A tab as a button: a rounded sheet with a hairline edge, the selected one lifted on the lightest paper
+/// in ink with a teal line along its foot, the others muted on the surface and brighter under the pointer.
+struct TabButton<Content: View>: View {
+    @StateObject private var hover = HoverFlag()
+    let selected: Bool
+    let action: () -> Void
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: Theme.corner, style: .continuous)
         HStack(spacing: 6, content: content)
             .foregroundStyle(Color(selected ? Theme.ink : Theme.muted))
             .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(selected ? Color(Theme.surface) : Color.clear)
-            .overlay(alignment: .bottom) { Rectangle().fill(Color(selected ? Theme.teal : .clear)).frame(height: 2) }
-            .contentShape(Rectangle())
-            .onTapGesture { model.show(tab: id) }
+            .padding(.vertical, 4)
+            .background(shape.fill(Color(selected ? Theme.paper : hover.on ? Theme.surface : Theme.bg)))
+            .overlay(shape.stroke(Color(selected ? Theme.rule : Theme.line), lineWidth: 1))
+            .overlay(alignment: .bottom) {
+                Capsule().fill(Color(selected ? Theme.teal : .clear)).frame(height: 2).padding(.horizontal, 8).padding(.bottom, 1)
+            }
+            .shadow(color: Color(Theme.ink).opacity(selected ? 0.12 : 0), radius: 1.5, y: 1)
+            .contentShape(shape)
+            .onHover { hover.on = $0 }
+            .onTapGesture(perform: action)
     }
 }
 
@@ -178,16 +200,16 @@ struct PaneGrid: View {
     var body: some View {
         let columns = max(1, Int(Double(items.count).squareRoot().rounded(.up)))
         let rows = stride(from: 0, to: items.count, by: columns).map { Array(items[$0..<min($0 + columns, items.count)]) }
-        VStack(spacing: 1) {
+        VStack(spacing: Theme.ruleWidth) {
             ForEach(rows.indices, id: \.self) { r in
-                HStack(spacing: 1) {
+                HStack(spacing: Theme.ruleWidth) {
                     ForEach(rows[r]) { item in
                         PaneCell(item: item)
                     }
                 }
             }
         }
-        .background(Color(Theme.line))
+        .background(Color(Theme.rule))
     }
 }
 
@@ -249,6 +271,7 @@ struct PaneCell: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(Paper(tone: Theme.surface, density: 0.6))
+            .overlay(alignment: .bottom) { Rectangle().fill(Color(Theme.line)).frame(height: 1) }
             // Drag a header onto another pane and the two swap places.
             .onDrag { NSItemProvider(object: item.name as NSString) }
             TerminalHost(view: item.view)

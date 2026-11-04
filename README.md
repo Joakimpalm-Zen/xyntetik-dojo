@@ -93,6 +93,7 @@ make install # copy the app to /Applications (replacing the one there) and open 
 make cert    # once: a self-signed certificate so macOS privacy remembers its answers across rebuilds
 make smoke   # launch proof: two panes, swapped, a click, typed keys echoed back, the bus answering; exit 0
 make smoke HOST=user@box   # the same, with the pane on that host over ssh
+make smoke SHOT=window.png   # the same, plus a picture of the window to check the look
 ```
 
 The pi extension tests need Node.js 22.18 or later. They check actual editor submissions, including local commands and autocomplete.
