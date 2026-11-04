@@ -198,7 +198,7 @@ dojo state pi-1
 | Codex | `[mcp_servers.dojo]` in `~/.codex/config.toml` | command hooks in the same file (`dojo hook`): SessionStart, UserPromptSubmit, PermissionRequest, PostToolUse, Stop, Interrupt | `-c developer_instructions` |
 | pi | the `dojo` command (pi has no MCP by design; it runs `dojo` with its bash tool). The pane passes `--tools read,bash,edit,write`, so a `defaultTools` setting of yours cannot leave it without bash, and `--tui-mode fullscreen`, so the composer sits at the bottom of the pane whatever your `tuiMode` setting says | the `dojo-pi.ts` extension: session_start, agent_start, agent_settled, ui_prompt_start, ui_prompt_end | `--append-system-prompt` |
 
-The pi extension also registers Runner as pi's `runner` provider. It observes the editor submission callback to report prompts, built-in commands and shell lines; accepting autocomplete does not release the hold.
+The pi extension also registers Runner as pi's `runner` provider. It observes the editor submission callback to report prompts, built-in commands and shell lines; accepting autocomplete does not release the hold. It tells pi the context the server runs at: Runner's `context_window` from its model list, or for llama.cpp the `n_ctx` on `/props`, then the model's trained context, then 32k; the output limit is a quarter of that, up to 16k. Without this a 262k server was treated as 32k and pi compacted itself until it stuck.
 
 <a id="safety-rules"></a>
 ## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> Safety rules
