@@ -29,7 +29,7 @@ final class AppModel: NSObject, ObservableObject {
     /// The Runner log is open above the bottom strip (it opens while Runner starts, closes once it serves).
     @Published var runnerLogOpen = false
     /// Every pane's text size, changed by Cmd-plus, Cmd-minus and Cmd-0.
-    @Published private(set) var fontSize: CGFloat = TerminalPane.defaultFontSize
+    @Published private(set) var fontSize: CGFloat = TerminalPane.defaultFont.pointSize
     /// Hosts used for remote panes, latest first (~/.dojo/hosts).
     @Published private(set) var recentHosts: [String] = []
     /// Start folders used before, latest first (~/.dojo/folders).
@@ -151,7 +151,7 @@ final class AppModel: NSObject, ObservableObject {
             return "\(name) is already open."
         }
         let view = TerminalPane(name: name)
-        if fontSize != TerminalPane.defaultFontSize { view.font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular) }
+        if fontSize != TerminalPane.defaultFont.pointSize { view.font = TerminalPane.font(ofSize: fontSize) }
         view.onExit = { [weak self, weak view] _ in if let view { self?.bus.setState(view.paneName, .exited) } }
         // The bus holds relayed messages while the owner types in the pane and while unsent text sits there.
         view.onOwnerInput = { [weak self, weak view] key in if let view { self?.bus.noteOwnerInput(view.paneName, key) } }
@@ -212,8 +212,8 @@ final class AppModel: NSObject, ObservableObject {
 
     /// Changes every pane's text size by `step` points, within 8 and 24; nil resets to the default.
     func zoom(_ step: CGFloat?) {
-        fontSize = step.map { min(24, max(8, fontSize + $0)) } ?? TerminalPane.defaultFontSize
-        for item in items { item.view.font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular) }
+        fontSize = step.map { min(24, max(8, fontSize + $0)) } ?? TerminalPane.defaultFont.pointSize
+        for item in items { item.view.font = TerminalPane.font(ofSize: fontSize) }
     }
 
     /// Swaps two panes' places in the grid.
@@ -343,7 +343,8 @@ final class AppModel: NSObject, ObservableObject {
         let host = bus.info(name)?.host ?? ""
         let location = host.isEmpty ? "locally" : "on \(host) (\(remoteShells[name] == .windows ? "Windows" : "POSIX") shell)"
         let dims = items.first(where: { $0.name == name })?.view.terminalDimensions
-        print("DOJO_SMOKE ok: pane \(name) echoed the typed line \(location), the bus answered on 127.0.0.1:\(port), terminal \(dims?.cols ?? 0)x\(dims?.rows ?? 0)")
+        let font = items.first(where: { $0.name == name })?.view.font
+        print("DOJO_SMOKE ok: pane \(name) echoed the typed line \(location), the bus answered on 127.0.0.1:\(port), terminal \(dims?.cols ?? 0)x\(dims?.rows ?? 0), font \(font?.fontName ?? "none") \(font?.pointSize ?? 0)")
         closeAll()
         exit(0)
     }
