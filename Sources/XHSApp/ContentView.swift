@@ -336,6 +336,8 @@ struct TerminalHost: NSViewRepresentable {
 
 /// The plus button's picker: Claude, Codex or pi, an optional host and an optional name.
 final class PickerForm: ObservableObject {
+    /// The agent chosen in the segmented control; Open starts it.
+    @Published var kind: HarnessKind = .claude
     /// The harness keeps its own approvals instead of running without prompts.
     @Published var askFirst = false
     @Published var host = ""
@@ -344,130 +346,173 @@ final class PickerForm: ObservableObject {
     @Published var error = ""
 }
 
+/// A section of the picker: a rounded sheet of the lightest paper with a hairline edge, as System Settings
+/// groups its rows.
+struct Card<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+        VStack(alignment: .leading, spacing: 10, content: content)
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(shape.fill(Color(Theme.paper)))
+            .overlay(shape.stroke(Color(Theme.line), lineWidth: 1))
+    }
+}
+
+/// A field with the values used before behind a clock at its right edge (hosts, folders): typed once.
+struct RecentField: View {
+    let prompt: String
+    @Binding var text: String
+    let recents: [String]
+    var shown: (String) -> String = { $0 }
+
+    var body: some View {
+        TextField(prompt, text: $text)
+            .textFieldStyle(.roundedBorder)
+            .overlay(alignment: .trailing) {
+                if !recents.isEmpty {
+                    Menu {
+                        ForEach(recents, id: \.self) { value in Button(shown(value)) { text = value } }
+                    } label: {
+                        Image(systemName: "clock.arrow.circlepath").foregroundStyle(Color(Theme.muted))
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .padding(.trailing, 4)
+                    .help("Used before")
+                }
+            }
+    }
+}
+
 struct PickerSheet: View {
     @EnvironmentObject private var model: AppModel
     @StateObject private var form = PickerForm()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 EnsoMark().frame(width: 22, height: 22)
                 Text("New terminal").font(.headline).foregroundStyle(Color(Theme.ink))
             }
-            // The coding agents, with where they run: a host, a folder, a name.
-            Text("Coding agent").foregroundStyle(.secondary).font(.callout)
-            HStack(spacing: 10) {
-                ForEach(HarnessKind.pickable, id: \.self) { kind in
-                    Button { add(kind) } label: { Text(kind.title).frame(maxWidth: .infinity) }
-                        .controlSize(.large)
-                        .tint(Color(Theme.teal))
+            // The coding agent and where it runs, with Open and Cancel in the same card: they act on this, not on Runner.
+            Card {
+                Picker("Coding agent", selection: $form.kind) {
+                    ForEach(HarnessKind.pickable, id: \.self) { kind in Text(kind.title).tag(kind) }
                 }
-            }
-            TextField("Host (empty for this Mac)", text: $form.host)
-            if !model.recentHosts.isEmpty {
-                HStack(spacing: 6) {
-                    Text("Recent").foregroundStyle(.secondary)
-                    ForEach(model.recentHosts, id: \.self) { host in
-                        Button(host) { form.host = host }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .tint(Color(Theme.teal))
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                let remote = !form.host.trimmingCharacters(in: .whitespaces).isEmpty
+                Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 8) {
+                    GridRow {
+                        label("Host")
+                        RecentField(prompt: "This Mac", text: $form.host, recents: model.recentHosts)
+                    }
+                    GridRow {
+                        label("Folder")
+                        HStack(spacing: 6) {
+                            // The folder panel and the recent folders are this Mac's; on a host, type the path as it is there.
+                            RecentField(prompt: remote ? "Its home folder on that host" : "Your home folder", text: $form.folder,
+                                        recents: remote ? [] : model.recentFolders, shown: { ($0 as NSString).lastPathComponent })
+                            Button("Choose") { if let path = AppModel.chooseFolder() { form.folder = path } }
+                                .disabled(remote)
+                        }
+                    }
+                    GridRow {
+                        label("Name")
+                        TextField("\(form.kind.rawValue)-1", text: $form.name).textFieldStyle(.roundedBorder)
+                    }
+                    GridRow {
+                        Color.clear.frame(width: 1, height: 1).gridCellUnsizedAxes(.vertical)
+                        Toggle("Ask before acting", isOn: $form.askFirst)
+                            .toggleStyle(.checkbox)
+                            .help("Claude asks for each permission; Codex keeps its approvals and sandbox")
                     }
                 }
-                .font(.callout)
-                .lineLimit(1)
-            }
-            let remote = !form.host.trimmingCharacters(in: .whitespaces).isEmpty
-            HStack(spacing: 6) {
-                TextField(remote ? "Folder on that host (empty for its home folder)" : "Folder (empty for your home folder)",
-                          text: $form.folder)
-                // The folder panel and the recent folders are this Mac's; on a host, type the path as it is there.
-                Button("Choose") { if let path = AppModel.chooseFolder() { form.folder = path } }
-                    .tint(Color(Theme.teal))
-                    .disabled(remote)
-            }
-            if !model.recentFolders.isEmpty, !remote {
-                HStack(spacing: 6) {
-                    Text("Recent").foregroundStyle(.secondary)
-                    ForEach(model.recentFolders, id: \.self) { folder in
-                        Button((folder as NSString).lastPathComponent) { form.folder = folder }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .tint(Color(Theme.teal))
-                            .help(folder)
-                    }
-                }
-                .font(.callout)
-                .lineLimit(1)
-            }
-            TextField("Name (empty for claude-1, codex-1, pi-1 ...)", text: $form.name)
-            Toggle("Ask before acting: Claude asks for each permission, Codex keeps its approvals and sandbox", isOn: $form.askFirst)
-                .toggleStyle(.checkbox)
-                .font(.callout)
-            if !form.error.isEmpty {
-                Text(form.error).font(.caption).foregroundStyle(Color(Theme.coralInk))
-            }
-            Divider()
-            // The local model server has a section of its own after the agent's fields: a heading, then the button
-            // with Runner's state beside it, then what the last Runner pane found to fit this Mac.
-            let runnerPane = model.runnerPane
-            let runnerUp = !model.runnerModel.isEmpty || runnerPane != nil
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Local model").foregroundStyle(.secondary)
-                HStack(alignment: .center, spacing: 10) {
-                    Button { add(.runner) } label: { Text(HarnessKind.runner.title) }
-                        .controlSize(.large)
-                        .tint(Color(Theme.teal))
-                        .disabled(runnerPane != nil || model.foreignServer)
-                    Text(runnerStatus(runnerPane))
-                        .font(.caption)
-                        .foregroundStyle(Color(runnerUp ? Theme.tealInk : Theme.coralInk))
+                if !form.error.isEmpty {
+                    Text(form.error).font(.caption).foregroundStyle(Color(Theme.coralInk))
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                ForEach(model.runnerFits, id: \.spelling) { fit in
-                    let current = fit.spelling == model.runnerChoice || (!model.runnerModel.isEmpty && model.runnerModel.contains(fit.stem))
-                    // The whole name on the button, the sizes under it: nothing is cut off.
-                    VStack(alignment: .leading, spacing: 2) {
-                        Button(fit.id) { model.chooseRunnerModel(fit.spelling); model.picking = false }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .tint(Color(current ? Theme.coral : Theme.teal))
-                            .fixedSize()
-                        Text("\(fit.resident) GiB resident, \(fit.flags)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .padding(.bottom, 4)
+                HStack {
+                    Spacer()
+                    Button("Cancel") { model.picking = false }.keyboardShortcut(.cancelAction)
+                    Button("Open") { add(form.kind) }
+                        .buttonStyle(.borderedProminent)
+                        .tint(Color(Theme.teal))
+                        .keyboardShortcut(.defaultAction)
                 }
             }
-            .font(.callout)
-            HStack {
-                Spacer()
-                Button("Cancel") { model.picking = false }.keyboardShortcut(.cancelAction)
+            // The local model server: its state, a button to start it, and a popup for the model it serves.
+            let runnerPane = model.runnerPane
+            Card {
+                Text("Local model").font(.headline).foregroundStyle(Color(Theme.ink))
+                Text(runnerStatus(runnerPane))
+                    .font(.callout)
+                    .foregroundStyle(Color(model.foreignServer || runnerPane?.state == .exited ? Theme.coralInk : Theme.muted))
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 10) {
+                    Button(runnerPane == nil && model.runnerModel.isEmpty ? "Start Runner" : "Runner") { add(.runner) }
+                        .disabled(runnerPane != nil || model.foreignServer)
+                    if !model.runnerFits.isEmpty {
+                        Text("Serve").foregroundStyle(Color(Theme.muted))
+                        // Picking another model replaces the Runner pane with one serving it.
+                        Picker("Serve", selection: Binding(get: { chosenSpelling }, set: { model.chooseRunnerModel($0); model.picking = false })) {
+                            ForEach(model.runnerFits, id: \.spelling) { fit in
+                                Text("\(fit.id)  \(fit.resident) GiB").tag(fit.spelling)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(maxWidth: 320)
+                    }
+                }
+                if let fit = model.runnerFits.first(where: { $0.spelling == chosenSpelling }) {
+                    Text("\(fit.resident) GiB resident, \(fit.flags)")
+                        .font(.caption)
+                        .foregroundStyle(Color(Theme.muted))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
+        .font(.callout)
         .padding(20)
-        .frame(width: 560)
+        .frame(width: 540)
         .background(Paper(tone: Theme.surface, density: 0.6))
         .onAppear { model.refreshRunner() }
     }
 
+    private func label(_ text: String) -> some View {
+        Text(text).foregroundStyle(Color(Theme.muted)).gridColumnAlignment(.trailing)
+    }
+
+    /// The popup's selection: the model chosen for Runner, else the one serving, else the largest that fits.
+    private var chosenSpelling: String {
+        let fits = model.runnerFits
+        if fits.contains(where: { $0.spelling == model.runnerChoice }) { return model.runnerChoice }
+        if !model.runnerModel.isEmpty, let serving = fits.first(where: { model.runnerModel.contains($0.stem) }) { return serving.spelling }
+        return fits.first?.spelling ?? ""
+    }
+
     /// One line on Runner: starting in a pane, serving (in a pane or started outside), or not running.
     private func runnerStatus(_ pane: Bus.Info?) -> String {
+        if let pane, pane.state == .exited {
+            return "Runner stopped in \(pane.name); its log says why."
+        }
         if let pane, pane.state != .running {
             let what = pane.model.isEmpty ? "picking a model that fits" : pane.model
-            return "Runner is starting in \(pane.name): \(what). Follow it there; pi panes can use it once it listens."
+            return "Starting in \(pane.name): \(what). pi panes can use it once it listens."
         }
         if model.foreignServer {
-            return "\(model.servedBy) is serving \(model.runnerModel) on 127.0.0.1:8080, started outside the app; the pi panes use it as it is. Stop it to let Runner serve."
+            return "\(model.servedBy) is serving \(model.runnerModel) on 127.0.0.1:8080, started outside the app; pi panes use it as it is. Stop it to let Runner serve."
         }
         if !model.runnerModel.isEmpty {
-            let whereFrom = pane.map { " in \($0.name)" } ?? " (started outside the app)"
-            return "Runner is serving \(model.runnerModel)\(whereFrom) for the pi panes."
+            let whereFrom = pane.map { " in \($0.name)" } ?? ", started outside the app"
+            return "Serving \(model.runnerModel)\(whereFrom), for the pi panes."
         }
-        if let pane { return "Runner is up in \(pane.name), waiting for it to answer." }
-        return "Runner is not running. A Runner pane fetches it if needed, picks a model that fits this Mac and serves it; pi panes use it."
+        if let pane { return "Up in \(pane.name), waiting for it to answer." }
+        return "Not running. A Runner pane fetches Runner if needed and serves a model that fits this Mac, for the pi panes."
     }
 
     private func add(_ kind: HarnessKind) {

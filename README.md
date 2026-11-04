@@ -93,7 +93,7 @@ make install # copy the app to /Applications (replacing the one there) and open 
 make cert    # once: a self-signed certificate so macOS privacy remembers its answers across rebuilds
 make smoke   # launch proof: two panes, swapped, a click, typed keys echoed back, the bus answering; exit 0
 make smoke HOST=user@box   # the same, with the pane on that host over ssh
-make smoke SHOT=window.png   # the same, plus a picture of the window to check the look
+make smoke SHOT=window.png PICKER=picker.png   # the same, plus pictures of the window and the picker to check the look
 ```
 
 The pi extension tests need Node.js 22.18 or later. They check actual editor submissions, including local commands and autocomplete.
@@ -124,10 +124,10 @@ What needs you, once:
 ## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> Adding a pane
 
 <p align="center">
-  <img src="packaging/readme/picker.png" alt="The picker: Claude, Codex and pi with host, folder and name; under them the local model section with Runner's state and the models that fit" width="560">
+  <img src="packaging/readme/picker.png" alt="The picker: Claude, Codex and pi with host, folder and name and an Open button; under them the local model card with Runner's state, a Start Runner button and a popup of the models that fit" width="540">
 </p>
 
-Press plus, pick Claude, Codex or pi; the host, folder and name fields under them belong to that agent. Tick "Ask before acting" for a pane that should keep the harness's own approvals instead of running without prompts. Runner, the local model server, has its own section at the bottom with its state beside the button. Leave the host empty for this Mac. A pane starts in the folder you give (type it, press Choose, or click a recent one), or in your home directory. With a host set, the folder is on that host, typed as it is there; Choose and the recent folders are this Mac's, so they step aside. It runs in your login shell (`$SHELL -l -i`), so PATH is the one your terminal has. A pane never inherits `CLAUDE*` variables from the process that opened the app (so `make run` from inside a Claude Code session does not make the pane's Claude a child session). Close a pane with its x button; that ends the harness.
+Press plus, pick Claude, Codex or pi, fill in the host, folder and name as you like and press Open (or Return). Tick "Ask before acting" for a pane that should keep the harness's own approvals instead of running without prompts. Runner, the local model server, has a card of its own below with its state, its button and the model it serves. Leave the host empty for this Mac. A pane starts in the folder you give (type it, press Choose, or pick a recent one from the clock at the field's edge), or in your home directory. With a host set, the folder is on that host, typed as it is there; Choose and the recent folders are this Mac's, so they step aside. It runs in your login shell (`$SHELL -l -i`), so PATH is the one your terminal has. A pane never inherits `CLAUDE*` variables from the process that opened the app (so `make run` from inside a Claude Code session does not make the pane's Claude a child session). Close a pane with its x button; that ends the harness.
 
 A local pi pane first asks Runner for its models (`GET /v1/models`), starts pi with the first one and shows it in the header. If Runner does not answer, the pane says so and pi is not started.
 
@@ -137,7 +137,7 @@ A local pi pane first asks Runner for its models (`GET /v1/models`), starts pi w
 - The models are Runner's own roster, `docs/model-tiers.json` in its repository: the Tier 1 and Tier 2 text models, fetched on every start (a copy is kept for when the network is away). A model admitted there is a candidate here the next time a Runner pane starts; nothing in this app changes.
 - Every roster file no larger than this Mac's RAM is asked about with `runner --info fit` on its first 16 MiB. A model fits when the weights that stay resident (the hot set for a Gemma E-series model, whose row-gathered token table is never resident; the whole file otherwise, a mixture of experts included) are within half of the RAM, or the share `DOJO_RUNNER_RAM_SHARE` names in the app's environment (`0.75` for a Mac that runs nothing else: a 69 GB model on 128 GB). All that fit are listed in the pane and in `~/.dojo/runner/fits`, largest resident weights first.
 - The pane serves the model you chose, or else the largest that fits, wired into RAM (`--mlock`). Runner's own verdict counts the RAM free right now: the contexts 262144, 131072, 65536, 32768, 16384, 8192 and 4096 (or the list `DOJO_RUNNER_CONTEXTS` names) are tried largest first, skipping those above the context the model was trained for (read from its head; Runner would otherwise stretch the model with YaRN), and the first the verdict says fits is served with the cache setting it names; when every one pages, the model is served anyway at context 16384 (or its trained context, if smaller) with a q8 cache and the rest of the machine makes room (what an 8 GB Mac with harnesses open does with Bolt E4B).
-- **Choosing.** Once a Runner pane has run on this Mac (the list comes from the last start, which is when the heads are read and `--info fit` asked), the picker lists the models that fit, one per line with the resident size and serve flags; the one serving or chosen is filled in. Click another and the Runner pane is replaced by one serving it, and that choice is kept in `~/.dojo/runner/model` for later Runner panes (delete the file to go back to the largest that fits).
+- **Choosing.** Once a Runner pane has run on this Mac (the list comes from the last start, which is when the heads are read and `--info fit` asked), the picker's Serve popup lists the models that fit with their resident size, largest first, the one serving or chosen selected and its serve flags under the popup. Pick another and the Runner pane is replaced by one serving it, and that choice is kept in `~/.dojo/runner/model` for later Runner panes (delete the file to go back to the largest that fits).
 
 Runner does not take a place in the grid: it lives in a strip along the bottom of the window, one line with its state (what is being picked or fetched, then the model it serves). Its log opens above the strip while Runner starts, so you see the verdicts and the download, and closes once the server listens; click the strip to open or hide it. The picker follows the same pane and offers one Runner pane at a time. The strip's close button stops Runner. A Runner pane is local; on a host, start Runner yourself. Messages are never sent to a Runner pane.
 
@@ -152,7 +152,7 @@ tar -C tools -cf - dojo-mcp.py dojo-pi.ts | ssh user@box 'mkdir -p ~/.dojo && ta
 
 (`make remote-setup HOST=user@box` runs the same.) It puts the shim and the pi extension in `~/.dojo` on that host, links `dojo`, and adds the Codex entries there if Codex is installed. Nothing else runs on the remote host.
 
-Then press plus and enter `user@box` as the host (or click it under Recent once you have used it). The app first asks the host which shell it runs commands in (`ssh host 'echo %OS%'`), then runs:
+Then press plus and enter `user@box` as the host (or pick it from the clock at the field's edge once you have used it). The app first asks the host which shell it runs commands in (`ssh host 'echo %OS%'`), then runs:
 
 ```
 ssh -t -R 7788:127.0.0.1:7788 user@box '<harness in the remote login shell>'

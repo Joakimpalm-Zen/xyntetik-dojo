@@ -60,9 +60,10 @@ install: app
 
 # Launch proof without a human: one local pane runs `echo ok`, the bus answers, the app quits.
 # With HOST=user@box the pane runs `echo ok` on that host over ssh instead (POSIX or Windows).
-# With SHOT=file.png it also writes a picture of the window before quitting, to look at the chrome.
+# With SHOT=file.png it also writes a picture of the window before quitting, to look at the chrome;
+# PICKER=file.png adds one of the picker sheet.
 smoke: app
-	DOJO_SMOKE=1 DOJO_SMOKE_HOST=$(HOST) DOJO_SMOKE_SHOT=$(SHOT) DOJO_PORT=7799 $(APP)/Contents/MacOS/XyntetikDojo
+	DOJO_SMOKE=1 DOJO_SMOKE_HOST=$(HOST) DOJO_SMOKE_SHOT=$(SHOT) DOJO_SMOKE_SHOT_PICKER=$(PICKER) DOJO_PORT=7799 $(APP)/Contents/MacOS/XyntetikDojo
 
 # Install the shim and the pi extension on a remote host (POSIX or Windows): make remote-setup HOST=user@box
 remote-setup:

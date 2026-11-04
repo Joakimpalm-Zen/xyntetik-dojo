@@ -390,21 +390,41 @@ final class AppModel: NSObject, ObservableObject {
             show(tab: nil)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                 guard let self else { return }
-                if let view = self.items.first(where: { $0.name == name })?.view.window?.contentView,
-                   let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
-                    view.cacheDisplay(in: view.bounds, to: rep)
-                    if let png = rep.representation(using: .png, properties: [:]) {
-                        try? png.write(to: URL(fileURLWithPath: shot))
-                        print("DOJO_SMOKE shot: \(shot)")
-                    }
+                AppModel.write(shot: shot, of: self.items.first(where: { $0.name == name })?.view.window)
+                // DOJO_SMOKE_SHOT_PICKER=<file.png>: the picker sheet as well.
+                guard let picker = ProcessInfo.processInfo.environment["DOJO_SMOKE_SHOT_PICKER"], !picker.isEmpty else {
+                    self.closeAll()
+                    exit(0)
                 }
-                self.closeAll()
-                exit(0)
+                self.picking = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+                    AppModel.write(shot: picker, of: NSApp.windows.first { $0.isSheet })
+                    self?.closeAll()
+                    exit(0)
+                }
             }
             return
         }
         closeAll()
         exit(0)
+    }
+
+    /// Renders a window's content to a PNG, for the smoke's pictures.
+    private static func write(shot: String, of window: NSWindow?) {
+        // At twice the points, as a Retina screen shows it, whatever screen the window is on.
+        guard let view = window?.contentView,
+              let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(view.bounds.width * 2), pixelsHigh: Int(view.bounds.height * 2),
+                                         bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                         colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else {
+            print("DOJO_SMOKE shot failed: no window for \(shot)")
+            return
+        }
+        rep.size = view.bounds.size
+        view.cacheDisplay(in: view.bounds, to: rep)
+        if let png = rep.representation(using: .png, properties: [:]) {
+            try? png.write(to: URL(fileURLWithPath: shot))
+            print("DOJO_SMOKE shot: \(shot)")
+        }
     }
 
     static let hostsFile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".dojo/hosts")
