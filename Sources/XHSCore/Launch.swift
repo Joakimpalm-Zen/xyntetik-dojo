@@ -276,19 +276,43 @@ public enum Launcher {
         return LaunchPlan(executable: "/bin/sh", args: ["-c", "printf '\(message)'"], environment: [:])
     }
 
-    /// The first model id from Runner's GET /v1/models response.
-    public static func firstModelID(_ data: Data) -> String? {
-        guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-              let models = object["data"] as? [[String: Any]] else { return nil }
-        return models.compactMap { $0["id"] as? String }.first { !$0.isEmpty }
+    /// What answers on Runner's port: the first model and who serves it.
+    public struct Served: Equatable, Sendable {
+        public let model: String
+        /// The `owned_by` of the model list: `runner` for Xyntetik Runner, `llamacpp` for llama-server, and so on.
+        public let ownedBy: String
+        public var isRunner: Bool { ownedBy == "runner" }
+        /// The server named for the window: Runner, or the other server's own name.
+        public var serverName: String {
+            switch ownedBy {
+            case "runner": return "Runner"
+            case "llamacpp": return "llama-server"
+            case "": return "a local server (not Runner)"
+            default: return "\(ownedBy) (not Runner)"
+            }
+        }
     }
 
-    /// Asks Runner for its models; nil when it does not answer in two seconds.
-    public static func fetchRunnerModel() async -> String? {
+    /// The first model of a GET /v1/models response and its `owned_by`.
+    public static func served(_ data: Data) -> Served? {
+        guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let models = object["data"] as? [[String: Any]],
+              let first = models.first(where: { ($0["id"] as? String)?.isEmpty == false }) else { return nil }
+        return Served(model: first["id"] as! String, ownedBy: first["owned_by"] as? String ?? "")
+    }
+
+    /// The first model id from Runner's GET /v1/models response.
+    public static func firstModelID(_ data: Data) -> String? { served(data)?.model }
+
+    /// Asks the server on Runner's port for its models; nil when nothing answers in two seconds.
+    public static func fetchServed() async -> Served? {
         var request = URLRequest(url: URL(string: runnerURL + "/models")!)
         request.timeoutInterval = 2
         guard let (data, response) = try? await URLSession.shared.data(for: request),
               (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
-        return firstModelID(data)
+        return served(data)
     }
+
+    /// The model served on Runner's port, by Runner or anything else there; nil when nothing answers.
+    public static func fetchRunnerModel() async -> String? { await fetchServed()?.model }
 }

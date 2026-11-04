@@ -80,7 +80,7 @@ The first run copies its small tools to `~/.dojo` and, if you have Codex, adds i
 - macOS 14 or later. Built and tested on macOS 27 (Apple Silicon) with the Swift 6.4 Command Line Tools.
 - `python3` on every host that runs a harness (the bus shim uses only the standard library).
 - `claude`, `codex` and `pi` on your login shell's PATH, each already logged in.
-- For pi: [Xyntetik Runner](https://github.com/Joakimpalm-Zen/xyntetik-runner) serving a model at `http://127.0.0.1:8080/v1`. A Runner pane sets that up (next section); if you already run Runner, pi uses it as it is.
+- For pi: [Xyntetik Runner](https://github.com/Joakimpalm-Zen/xyntetik-runner) serving a model at `http://127.0.0.1:8080/v1`. A Runner pane sets that up (next section); if you already run Runner, or another server that answers `GET /v1/models` on that port (llama-server, for one), pi uses it as it is. The picker names that server, and a Runner pane steps aside while it holds the port.
 
 <a id="build-and-run"></a>
 ## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> Build and run

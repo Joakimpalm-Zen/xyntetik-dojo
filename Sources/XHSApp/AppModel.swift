@@ -36,6 +36,11 @@ final class AppModel: NSObject, ObservableObject {
     @Published private(set) var recentFolders: [String] = []
     /// What Runner serves on this Mac, empty when it does not answer; refreshed when the picker opens.
     @Published private(set) var runnerModel = ""
+    /// Who answers on Runner's port: Runner, or another server of the owner's (llama-server, for one), which
+    /// the pi panes use as it is and a Runner pane steps aside for. Empty when nothing answers.
+    @Published private(set) var servedBy = ""
+    /// Another server than Runner holds Runner's port.
+    var foreignServer: Bool { !runnerModel.isEmpty && servedBy != "Runner" }
     /// The models the last Runner pane found to fit this Mac (~/.dojo/runner/fits), largest first.
     @Published private(set) var runnerFits: [RunnerFit] = []
     /// The model the owner chose for Runner panes (~/.dojo/runner/model), empty for the largest that fits.
@@ -89,9 +94,10 @@ final class AppModel: NSObject, ObservableObject {
         let waiting = bus.all.filter { $0.kind == .runner && $0.state == .running && ($0.model.isEmpty || $0.model.hasPrefix("fetching ")) }.map(\.name)
         guard !waiting.isEmpty else { return }
         Task {
-            guard let model = await Launcher.fetchRunnerModel() else { return }
-            for name in waiting { bus.setModel(name, model) }
-            runnerModel = model
+            guard let served = await Launcher.fetchServed() else { return }
+            for name in waiting { bus.setModel(name, served.model) }
+            runnerModel = served.model
+            servedBy = served.serverName
         }
     }
 
@@ -102,7 +108,11 @@ final class AppModel: NSObject, ObservableObject {
         runnerFits = RunnerFit.parse((try? String(contentsOf: AppModel.runnerHome.appendingPathComponent("fits"), encoding: .utf8)) ?? "")
         runnerChoice = ((try? String(contentsOf: AppModel.runnerHome.appendingPathComponent("model"), encoding: .utf8)) ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        Task { runnerModel = await Launcher.fetchRunnerModel() ?? "" }
+        Task {
+            let served = await Launcher.fetchServed()
+            runnerModel = served?.model ?? ""
+            servedBy = served?.serverName ?? ""
+        }
     }
 
     /// Serves `spelling` in a Runner pane from now on: remembers it, replaces the Runner pane that is up.
@@ -129,6 +139,9 @@ final class AppModel: NSObject, ObservableObject {
         }
         if kind == .runner, let pane = runnerPane {
             return "Runner is already \(pane.state == .running ? "serving" : "starting") in \(pane.name)."
+        }
+        if kind == .runner, foreignServer {
+            return "\(servedBy) is serving \(runnerModel) on 127.0.0.1:8080; the pi panes use it. Stop it to let Runner serve."
         }
         // A stopped Runner pane gives way to the new one.
         if kind == .runner {

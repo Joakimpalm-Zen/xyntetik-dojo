@@ -176,6 +176,17 @@ import Testing
         #expect(Launcher.firstModelID(Data(#"{"data":[]}"#.utf8)) == nil)
         #expect(Launcher.firstModelID(Data("nope".utf8)) == nil)
     }
+
+    @Test func theServerOnRunnersPortIsNamed() {
+        let runner = Launcher.served(Data(#"{"data":[{"id":"gemma","object":"model","owned_by":"runner"}]}"#.utf8))
+        #expect(runner == Launcher.Served(model: "gemma", ownedBy: "runner"))
+        #expect(runner?.isRunner == true && runner?.serverName == "Runner")
+        let llama = Launcher.served(Data(#"{"data":[{"id":"kolibri.gguf","object":"model","owned_by":"llamacpp"}]}"#.utf8))
+        #expect(llama?.isRunner == false && llama?.serverName == "llama-server")
+        #expect(Launcher.served(Data(#"{"data":[{"id":"m"}]}"#.utf8))?.serverName == "a local server (not Runner)")
+        #expect(Launcher.served(Data(#"{"data":[{"id":"m","owned_by":"vllm"}]}"#.utf8))?.serverName == "vllm (not Runner)")
+        #expect(Launcher.served(Data(#"{"data":[]}"#.utf8)) == nil)
+    }
 }
 
 @Suite struct SnippetTests {

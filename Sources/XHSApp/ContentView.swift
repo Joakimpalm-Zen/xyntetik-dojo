@@ -348,7 +348,7 @@ struct PickerSheet: View {
                     Button { add(.runner) } label: { Text(HarnessKind.runner.title) }
                         .controlSize(.large)
                         .tint(Color(Theme.teal))
-                        .disabled(runnerPane != nil)
+                        .disabled(runnerPane != nil || model.foreignServer)
                     Text(runnerStatus(runnerPane))
                         .font(.caption)
                         .foregroundStyle(Color(runnerUp ? Theme.tealInk : Theme.coralInk))
@@ -388,6 +388,9 @@ struct PickerSheet: View {
         if let pane, pane.state != .running {
             let what = pane.model.isEmpty ? "picking a model that fits" : pane.model
             return "Runner is starting in \(pane.name): \(what). Follow it there; pi panes can use it once it listens."
+        }
+        if model.foreignServer {
+            return "\(model.servedBy) is serving \(model.runnerModel) on 127.0.0.1:8080, started outside the app; the pi panes use it as it is. Stop it to let Runner serve."
         }
         if !model.runnerModel.isEmpty {
             let whereFrom = pane.map { " in \($0.name)" } ?? " (started outside the app)"
