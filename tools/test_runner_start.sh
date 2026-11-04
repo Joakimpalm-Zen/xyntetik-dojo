@@ -51,6 +51,15 @@ case $url in
 JSON
         ;;
     *resolve/main/Bad*) printf '<html>captive portal</html>' > "$out" ;;
+    # Granite's head is a real GGUF header: trained for a context of 8192, the tensor list cut off after.
+    *resolve/main/granite*) python3 -I -c '
+import struct, sys
+def s(x): b = x.encode(); return struct.pack("<Q", len(b)) + b
+out = b"GGUF" + struct.pack("<I", 3) + struct.pack("<QQ", 1, 3)
+out += s("general.architecture") + struct.pack("<I", 8) + s("granite")
+out += s("general.name") + struct.pack("<I", 8) + s("Granite 4.2 8B")
+out += s("granite.context_length") + struct.pack("<I", 4) + struct.pack("<I", 8192)
+open(sys.argv[1], "wb").write(out)' "$out" ;;
     *resolve/main/*) printf 'GGUF' > "$out" ;;
     *) exit 22 ;;
 esac
@@ -67,7 +76,7 @@ got=$(STUB_AVAIL=0.85 run)
 want="Serving nvidia/NVIDIA-Nemotron-3.5-Bolt-E4B-4GB:Nemotron-3.5-Bolt-E4B-Q4_K_M -c 16384 --kv q8 --mlock"
 [ "$got" = "$want" ] || fail "8 GiB pick: got '$got', want '$want'"
 [ "$(cut -f 1 "$tmp/home/fits" | tr '\n' ' ')" = "bolt-e4b qwen3-4b " ] || fail "fits should list bolt-e4b then qwen3-4b"
-grep -q "granite-8b: 4.90 GiB stay resident, more than half" "$tmp/log" || fail "the 8B skip is missing from the log"
+grep -q "granite-8b: 4.90 GiB stay resident, more than 0.5 of this machine's RAM" "$tmp/log" || fail "the 8B skip is missing from the log"
 grep -q "coder-30b" "$tmp/log" && fail "the 30B file should not be asked about on an 8 GiB machine"
 grep -q "latest release is v9.9.9" "$tmp/log" || fail "the latest release tag was not read"
 
@@ -82,12 +91,27 @@ got=$(STUB_AVAIL=0.85 run)
 grep -q "does not fit this machine now" "$tmp/log" || fail "the fallback note is missing"
 rm -f "$tmp/home/model"
 
-# A 16 GiB machine with 6 GiB free: the dense 8B is within half of RAM and Runner says it fits at 8192.
+# A 16 GiB machine with 6 GiB free: the dense 8B is within half of RAM, its head says it was trained for
+# 8192, so 8192 is the first context asked, and Runner says it fits there.
 got=$(STUB_TOTAL_BYTES=17179869184 STUB_AVAIL=6.00 run)
 want="Serving ibm-granite/granite-4.2-8b-GGUF:granite-4.2-8b-Q4_K_M -c 8192 --kv q8 --mlock"
 [ "$got" = "$want" ] || fail "16 GiB pick: got '$got', want '$want'"
-grep -q "coder-30b: 16.33 GiB stay resident, more than half" "$tmp/log" || fail "the 30B skip is missing on 16 GiB"
-grep -q "split-20b: 12.11 GiB in 2 parts, more than half" "$tmp/log" || fail "the split model must be sized by the roster, not its first part"
+grep -q "granite-8b: trained for a context of 8192; trying 8192 4096" "$tmp/log" || fail "the trained context was not read from the head"
+grep -q "coder-30b: 16.33 GiB stay resident, more than 0.5" "$tmp/log" || fail "the 30B skip is missing on 16 GiB"
+grep -q "split-20b: 12.11 GiB in 2 parts, more than 0.5" "$tmp/log" || fail "the split model must be sized by the roster, not its first part"
+# The same machine with three quarters of its RAM allowed: the 30B mixture (16.33 GiB over 12 GiB) is still
+# out, and a context list of two is tried as given (16384 never asked).
+got=$(STUB_TOTAL_BYTES=17179869184 STUB_AVAIL=6.00 DOJO_RUNNER_RAM_SHARE=0.75 DOJO_RUNNER_CONTEXTS="8192 4096" run)
+[ "$got" = "Serving ibm-granite/granite-4.2-8b-GGUF:granite-4.2-8b-Q4_K_M -c 8192 --kv q8 --mlock" ] || fail "share and contexts overrides: got '$got'"
+grep -q "must fit in 12.00 GiB, 0.75 of this machine's RAM" "$tmp/log" || fail "the share note is missing"
+grep -q "granite-8b: trained for a context of 8192; trying 8192 4096" "$tmp/log" || fail "the context list override was not used"
+# An 8 GiB machine allowed 0.75: the dense 8B (4.90 GiB) is now in, and the largest resident wins.
+got=$(STUB_AVAIL=0.85 DOJO_RUNNER_RAM_SHARE=0.75 run)
+[ "$got" = "Serving ibm-granite/granite-4.2-8b-GGUF:granite-4.2-8b-Q4_K_M -c 8192 --kv q8 --mlock" ] || fail "8 GiB at 0.75: got '$got'"
+# A share that is not a share is said and replaced by half.
+got=$(STUB_AVAIL=0.85 DOJO_RUNNER_RAM_SHARE=all run)
+grep -q "DOJO_RUNNER_RAM_SHARE is 'all'" "$tmp/log" || fail "a bad share must be named"
+[ "$got" = "Serving nvidia/NVIDIA-Nemotron-3.5-Bolt-E4B-4GB:Nemotron-3.5-Bolt-E4B-Q4_K_M -c 16384 --kv q8 --mlock" ] || fail "a bad share must fall back to half: got '$got'"
 grep -q "no-bytes" "$tmp/log" && fail "a row without sizes must be skipped silently"
 # A split model that fits is served at the default context without a verdict; a head that is not GGUF is not kept.
 got=$(STUB_TOTAL_BYTES=34359738368 STUB_AVAIL=20.00 run)
