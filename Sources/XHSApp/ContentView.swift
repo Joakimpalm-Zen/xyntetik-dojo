@@ -65,8 +65,12 @@ struct ContentView: View {
                     .keyboardShortcut("t", modifiers: .command)
             }
         }
-        .sheet(isPresented: $model.picking) {
+        // AppKit pulls a window onto a screen to show a sheet, so a smoke draws the picker in the window.
+        .sheet(isPresented: model.smoke ? .constant(false) : $model.picking) {
             PickerSheet().environmentObject(model)
+        }
+        .overlay {
+            if model.smoke, model.picking { PickerSheet().environmentObject(model).background(Color(Theme.surface)) }
         }
     }
 

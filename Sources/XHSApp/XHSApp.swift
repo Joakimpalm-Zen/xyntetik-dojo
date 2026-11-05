@@ -6,6 +6,10 @@ struct XHSApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var model = AppModel.shared
 
+    init() {
+        Headless.begin()
+    }
+
     var body: some Scene {
         Window("Xyntetik Dojo", id: "main") {
             ContentView().environmentObject(model)
@@ -38,7 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         MainActor.assumeIsolated {
-            NSApp.setActivationPolicy(.regular)
+            if !Headless.isRequested { NSApp.setActivationPolicy(.regular) }
             // Paper is the same colour by night: the controls stay in their light form under dark mode.
             NSApp.appearance = NSAppearance(named: .aqua)
             for window in NSApp.windows {
