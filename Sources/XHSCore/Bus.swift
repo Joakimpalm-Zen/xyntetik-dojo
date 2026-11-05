@@ -57,6 +57,8 @@ public final class Bus {
         /// A hook reported this turn running, and none has reported its end. The still-screen rule may have
         /// called the pane idle in the meantime; that leaves the turn open, so a late Stop still counts.
         var turnOpen = false
+        /// Panes that asked to hear when this one next stops, and since when.
+        var watchers: [(asker: Pane, since: Date)] = []
         weak var io: PaneIO?
 
         init(name: String, kind: HarnessKind, host: String, token: String, model: String, state: PaneState, io: PaneIO?) {
@@ -70,6 +72,8 @@ public final class Bus {
         }
     }
 
+    /// How long a request to hear about a pane lasts.
+    public static let watchHours = 12
     public static let maxMessageLength = 16_000
     public static let maxReadLines = 500
 
@@ -131,7 +135,10 @@ public final class Bus {
     }
 
     public func remove(_ name: String) {
+        let gone = pane(named: name)
         panes.removeAll { $0.name == name }
+        for p in panes { p.watchers.removeAll { $0.asker === gone } }
+        if let gone { tellWatchers(of: gone, "\(gone.name) was closed.") }
         onChange?()
     }
 
@@ -140,6 +147,30 @@ public final class Bus {
         p.state = state
         onChange?()
         flush(p)
+        switch state {
+        // A hook's end of a turn has told them already. What is left is the still-screen rule, and the line
+        // says so while a hook-reported turn is open: the bus does not know that turn ended.
+        case .idle:
+            tellWatchers(of: p, p.turnOpen ? "\(p.name) looks idle: its screen has been still for \(Int(idleAfterQuiet)) seconds, "
+                + "but no hook has reported the end of its turn." : "\(p.name) is idle.")
+        case .prompt: tellWatchers(of: p, "\(p.name) is at a prompt.")
+        case .exited: tellWatchers(of: p, "\(p.name) has exited.")
+        case .starting, .running: break
+        }
+    }
+
+    /// Ends every request to hear about `target`, with one line to each asker. The line is queued like any
+    /// message, so the usual holds apply. It carries the target's tag and says it comes from the bus, because
+    /// the target did not write it.
+    private func tellWatchers(of target: Pane, _ news: String) {
+        let watchers = target.watchers
+        target.watchers = []
+        for watcher in watchers { tell(watcher.asker, about: target, news) }
+    }
+
+    private func tell(_ asker: Pane, about target: Pane, _ news: String) {
+        asker.queue.append((sender: target, text: "Bus notice: " + news))
+        flush(asker)
     }
 
     public func setModel(_ name: String, _ model: String) {
@@ -184,6 +215,17 @@ public final class Bus {
         for p in panes {
             if p.state == .running || p.state == .starting { watchQuiet(p) }
             flush(p)
+            expireWatchers(of: p)
+        }
+    }
+
+    private func expireWatchers(of target: Pane) {
+        let limit = TimeInterval(Bus.watchHours * 3600)
+        let expired = target.watchers.filter { now().timeIntervalSince($0.since) >= limit }
+        guard !expired.isEmpty else { return }
+        target.watchers.removeAll { watcher in expired.contains { $0.asker === watcher.asker } }
+        for watcher in expired {
+            tell(watcher.asker, about: target, "nothing from \(target.name) in \(Bus.watchHours) hours; the request is dropped.")
         }
     }
 
@@ -215,7 +257,7 @@ public final class Bus {
 
     // MARK: HTTP entry point
 
-    /// Handles one request. `path` is the operation: /panes, /send, /read, /state or /hook.
+    /// Handles one request. `path` is the operation: /panes, /send, /read, /state, /watch or /hook.
     public func handle(path: String, token: String?, body: Data) -> (status: Int, body: Data) {
         guard let token, let sender = panes.first(where: { $0.token == token }) else {
             return error(401, "unknown or missing X-Dojo-Token")
@@ -239,15 +281,28 @@ public final class Bus {
         case "state":
             guard let target = target(args) else { return noPane(args) }
             return ok(info(target).json)
+        case "watch":
+            return watch(from: sender, args)
         case "hook":
             applyHook(sender, args)
             return (200, Data())
         default:
-            return error(404, "unknown operation '\(op)'; use panes, send, read or state")
+            return error(404, "unknown operation '\(op)'; use panes, send, read, state or watch")
         }
     }
 
     // MARK: operations
+
+    /// Asks to hear once when the target next goes idle, reaches a prompt or exits. The reply gives its state
+    /// now: a target that is idle already may never change, and then the request runs out.
+    private func watch(from sender: Pane, _ args: [String: Any]) -> (status: Int, body: Data) {
+        guard let target = target(args) else { return noPane(args) }
+        guard target !== sender else { return error(400, "a pane cannot watch itself") }
+        guard target.state != .exited else { return error(409, "\(target.name) has exited") }
+        target.watchers.removeAll { $0.asker === sender }
+        target.watchers.append((asker: sender, since: now()))
+        return ok(["pane": target.name, "state": target.state.rawValue])
+    }
 
     private func send(from sender: Pane, _ args: [String: Any]) -> (status: Int, body: Data) {
         guard let target = target(args) else { return noPane(args) }
@@ -311,6 +366,9 @@ public final class Bus {
             : next == .idle && pane.turnOpen ? .finished : nil
         if next == .running { pane.turnOpen = true }
         if next == .idle { pane.turnOpen = false }
+        // Here, not in setState: after the still-screen rule the state does not change, and an asker who
+        // watched again is waiting for exactly this.
+        if attention == .finished { tellWatchers(of: pane, "\(pane.name) finished its turn.") }
         setState(pane.name, next)
         if let attention { onAttention?(pane.name, attention) }
     }
