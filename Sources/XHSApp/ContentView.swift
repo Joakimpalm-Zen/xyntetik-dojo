@@ -167,12 +167,18 @@ struct TabStrip: View {
                     EnsoMark().frame(width: 12, height: 12)
                     Text("All").bold()
                     Text("\(agents.count)").foregroundStyle(Color(Theme.muted))
+                    if model.waiting > 0 {
+                        Text("\(model.waiting)").bold().foregroundStyle(Color(Theme.ink))
+                            .padding(.horizontal, 6).background(Capsule().fill(Color(Theme.coral)))
+                            .help("Panes waiting for you")
+                    }
                 }
                 ForEach(agents) { item in
                     let selected = model.selectedTab == item.id
                     TabButton(selected: selected, action: { model.show(tab: item.id) }) {
                         StateDot(state: model.bus.info(item.name)?.state)
                         Text(item.name).font(.system(.callout, design: .monospaced)).fontWeight(selected ? .bold : .regular)
+                        if model.finishedUnseen(item) { UnseenMark() }
                     }
                 }
             }
@@ -284,7 +290,8 @@ struct PaneCell: View {
                     Text(info?.draft == true ? "\(q) queued, unsent text here" : "\(q) queued")
                         .font(.caption).foregroundStyle(Color(Theme.coralInk))
                 }
-                Text(info?.state.rawValue ?? "").font(.caption).foregroundStyle(Color(PaneCell.tone(info?.state)))
+                if model.finishedUnseen(item) { UnseenMark() }
+                Text(model.finishedUnseen(item) ? "finished" : info?.state.rawValue ?? "").font(.caption).foregroundStyle(Color(PaneCell.tone(info?.state)))
                 Button { model.close(item.name) } label: { Image(systemName: "xmark") }
                     .buttonStyle(.borderless)
                     .foregroundStyle(Color(Theme.muted))
@@ -302,6 +309,12 @@ struct PaneCell: View {
             // Drag a header onto another pane and the two swap places.
             .onDrag { NSItemProvider(object: item.name as NSString) }
             TerminalHost(view: item.view)
+        }
+        // Coral around the whole pane while it waits for the owner.
+        .overlay {
+            if info?.state == .prompt {
+                Rectangle().strokeBorder(Color(Theme.coral), lineWidth: 3).allowsHitTesting(false)
+            }
         }
         .onDrop(of: [.plainText], isTargeted: nil) { providers in
             guard let provider = providers.first else { return false }
@@ -377,6 +390,13 @@ struct StateDot: View {
         }
         .frame(width: 12, height: 12)
         .help(state?.rawValue ?? "")
+    }
+}
+
+/// A turn that finished and has not been viewed.
+struct UnseenMark: View {
+    var body: some View {
+        Circle().fill(Color(Theme.tealInk)).frame(width: 6, height: 6).help("Finished, not yet seen")
     }
 }
 
