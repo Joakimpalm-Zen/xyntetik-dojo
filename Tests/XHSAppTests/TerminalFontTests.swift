@@ -9,12 +9,39 @@ import Testing
         return ceil((CTFontGetAscent(ct) + CTFontGetDescent(ct) + CTFontGetLeading(ct)) * spacing)
     }
 
-    /// Measured in Terminal.app with the Novel profile (Courier, 1.2 spacing): 16 points between rows at
-    /// 10.5, and 23 in a window zoomed to about 15.5.
-    @Test(arguments: [(CGFloat(10.5), CGFloat(16)), (CGFloat(15.5), CGFloat(23))])
-    func rowsAreAsTallAsInTerminal(size: CGFloat, row: CGFloat) throws {
-        let font = try #require(NSFont(name: "Courier", size: size))
-        #expect(TerminalFont.rowHeight(font: font, spacing: 1.2) == row)
-        #expect(cellHeight(font, spacing: TerminalFont.lineSpacing(font: font, spacing: 1.2)) == row)
+    private func weight(_ font: NSFont) -> CGFloat {
+        let traits = font.fontDescriptor.object(forKey: .traits) as? [NSFontDescriptor.TraitKey: Any]
+        return (traits?[.weight] as? NSNumber).map { CGFloat(truncating: $0) } ?? 0
+    }
+
+    /// The panes use SF Mono, the fixed-width face of the system font the rest of the app and Bocka use.
+    @MainActor @Test func panesUseTheSystemsFixedWidthFontAtMedium() {
+        let font = TerminalPane.defaultFont
+        #expect(font.isFixedPitch)
+        #expect(font.pointSize == 11)
+        #expect(font.fontName == NSFont.monospacedSystemFont(ofSize: 11, weight: .medium).fontName)
+        #expect(weight(font) > weight(NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)))
+    }
+
+    /// Cmd-plus and Cmd-minus keep the face and its weight.
+    @MainActor @Test func anotherSizeKeepsTheFaceAndTheWeight() {
+        let font = TerminalPane.font(ofSize: 16)
+        #expect(font.pointSize == 16)
+        #expect(font.fontName == TerminalPane.defaultFont.fontName)
+        #expect(weight(font) == weight(TerminalPane.defaultFont))
+    }
+
+    /// Medium is the right weight only without font smoothing: with it the glyph masks come out far heavier.
+    @MainActor @Test func aPaneDrawsWithoutFontSmoothing() {
+        _ = NSApplication.shared
+        #expect(TerminalPane(name: "t").fontSmoothing == false)
+    }
+
+    /// 16 points between rows at the default size, as the panes had before, and 22 at 16 points.
+    @MainActor @Test(arguments: [(CGFloat(11), CGFloat(16)), (CGFloat(16), CGFloat(22))])
+    func rowsKeepTheirHeight(size: CGFloat, row: CGFloat) {
+        let font = TerminalPane.font(ofSize: size)
+        #expect(TerminalFont.rowHeight(font: font, spacing: TerminalPane.rowSpacing) == row)
+        #expect(cellHeight(font, spacing: TerminalFont.lineSpacing(font: font, spacing: TerminalPane.rowSpacing)) == row)
     }
 }

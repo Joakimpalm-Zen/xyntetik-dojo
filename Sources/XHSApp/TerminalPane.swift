@@ -9,15 +9,18 @@ import XHSCore
 /// never calls that method on a subclass.
 @MainActor
 final class TerminalPane: TerminalView, PaneIO {
-    /// The font every pane starts with: Terminal.app's, so a pane reads like the terminal next to it; SF Mono
-    /// at 11 points when Terminal.app has no font set. Cmd-plus, Cmd-minus and Cmd-0 change every pane's size
-    /// while the app runs; the size is not kept between launches.
-    static let defaultFont: NSFont = TerminalFont.terminalApp() ?? NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-    static let profileSpacing: CGFloat = TerminalFont.profileSpacing()
+    /// The font every pane starts with: SF Mono at 11 points, the fixed-width face of the system font that the
+    /// rest of the app and Bocka use. Medium, not Regular, because the panes draw on the GPU from glyph masks
+    /// rasterized white on clear: font smoothing there thickens the strokes to about 121% of ordinary text,
+    /// and Regular without it comes out at about 85%. Medium without it measures 97%. Cmd-plus, Cmd-minus and
+    /// Cmd-0 change every pane's size while the app runs; the size is not kept between launches.
+    static let defaultFont = font(ofSize: 11)
+    /// The distance between rows as a multiple of the font's line height: 16 points at the default size.
+    static let rowSpacing: CGFloat = 1.2
 
-    /// The default font at another size.
+    /// The pane font at `size`.
     static func font(ofSize size: CGFloat) -> NSFont {
-        NSFont(descriptor: defaultFont.fontDescriptor, size: size) ?? NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+        NSFont.monospacedSystemFont(ofSize: size, weight: .medium)
     }
 
     /// The pane's name on the bus; a rename changes it.
@@ -33,7 +36,7 @@ final class TerminalPane: TerminalView, PaneIO {
     init(name: String) {
         paneName = name
         super.init(frame: NSRect(x: 0, y: 0, width: 640, height: 400))
-        // Keep antialiasing, but avoid the heavier strokes SwiftTerm's font smoothing adds.
+        // Antialiased, without font smoothing: see `defaultFont` for why the weight depends on it.
         fontSmoothing = false
         setTextSize(TerminalPane.defaultFont.pointSize)
         applyTheme()
@@ -43,10 +46,10 @@ final class TerminalPane: TerminalView, PaneIO {
         registerForDraggedTypes([.fileURL])
     }
 
-    /// The default font at `size`, with the rows Terminal.app gives that size.
+    /// The pane font at `size`, with its rows.
     func setTextSize(_ size: CGFloat) {
         font = TerminalPane.font(ofSize: size)
-        lineSpacing = TerminalFont.lineSpacing(font: font, spacing: TerminalPane.profileSpacing)
+        lineSpacing = TerminalFont.lineSpacing(font: font, spacing: TerminalPane.rowSpacing)
     }
 
     // MARK: dropped files
