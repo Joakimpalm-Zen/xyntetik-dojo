@@ -39,6 +39,8 @@ enum Theme {
     static let coral = color(0xFF7A5C)
     static let coralInk = color(0x8C3A21)
     static let blue = color(0x2A47BC)
+    /// The x of the wordmark: large text, so it can stay lighter than `brand`, between it and `teal`.
+    static let wordmarkX = color(0x0E7C6E)
     /// The state dots. They are fills, not text: in the darker text tones idle, running and exited have the
     /// same lightness and only their hue would tell them apart at this size.
     static let stateIdle = color(0x0E7C6E)
@@ -167,7 +169,7 @@ struct Wordmark: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            Text("x").foregroundStyle(Color(Theme.brand))
+            Text("x").foregroundStyle(Color(Theme.wordmarkX))
             Text("yntetik").foregroundStyle(Color(Theme.ink))
         }
         .font(.system(size: size, weight: .semibold, design: .default))
