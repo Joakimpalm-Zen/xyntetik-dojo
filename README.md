@@ -53,7 +53,7 @@ watch, you type, you stay in charge.
 - It looks like a Xyntetik product: the site's colours on a recycled-paper ground (the same by day and night; the system's dark mode does not darken it), the Ensō as the app icon and in the window. The terminals use the text colour and the sixteen colours of Terminal.app's Novel profile on a paper that is greyer than Novel's. A harness paints with those; the one thing the pane changes on the way to the screen is a white background (the band behind a user message in a light theme), which becomes the paper shade. Claude Code starts with the light theme locally and over SSH, only for that session; the host's saved theme stays as it was. Codex picks its own theme. The icon is drawn by `packaging/make-icon.swift` at build time; no image file is checked in.
 - Each pane is a real terminal (SwiftTerm and a pty the pane runs itself, so every byte from the harness passes the pane on its way to the screen). The harness sees an ordinary terminal.
 - Panes draw on the GPU (SwiftTerm's Metal renderer), so a harness repainting its whole screen keeps up with a plain terminal.
-- The terminals use the font of Terminal.app's default profile (Courier 10.5 for the Novel profile), read from its preferences at launch, so a pane reads like the terminal beside it; SF Mono at 11 points when Terminal.app has no font set. Cmd-plus, Cmd-minus and Cmd-0 change every pane's text size while the app runs (8 to 24 points); the size is not kept between launches.
+- The terminals use the font and vertical line spacing of Terminal.app's default profile (Courier 10.5 and 1.2 spacing for the Novel profile), read from its preferences at launch. Text is antialiased without the extra stroke weight of font smoothing. The fallback is SF Mono at 11 points with normal spacing. Cmd-plus, Cmd-minus and Cmd-0 change every pane's text size while the app runs (8 to 24 points); the size is not kept between launches.
 - Each pane header shows the name, kind, host, model, queued messages and a state colour: grey starting, blue running, green idle, orange prompt, red exited.
 - The app runs a bus on `127.0.0.1:7788`. Every harness in the window can call four operations: `panes`, `send`, `read` and `state`.
 
@@ -99,6 +99,8 @@ make smoke SHOT=window.png PICKER=picker.png   # the same, plus pictures of the 
 The pi extension tests need Node.js 22.18 or later. They check actual editor submissions, including local commands and autocomplete.
 
 The Swift tests cover the bus and its delivery rules, the command lines (parsed back by a real POSIX shell) and the snippets; the Python tests cover the shim speaking MCP over pipes, the `dojo` command, the hooks, the install and the migration; the shell test covers the Runner pick against a stub runner and Hub. The `ci` workflow runs all of it on every pull request.
+
+For a manual font check, compare regular, bold and italic text with Terminal.app's default profile at the same text size. Check the stroke weight and the distance between lines as well as the font name.
 
 `DOJO_PORT` overrides the bus port. There is no other setting. The only files the app keeps are `~/.dojo/hosts` and `~/.dojo/folders` (the hosts and start folders you used, latest first, one per line) and `~/.dojo/runner/` (Runner's binary, its roster copy, the 16 MiB model heads, the fits list and your model choice); edit or delete them by hand.
 
