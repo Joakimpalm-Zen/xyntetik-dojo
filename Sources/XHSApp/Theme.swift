@@ -28,6 +28,9 @@ enum Theme {
     static let terminalInk = color(0x3B2322)
     static let ansi: [UInt32] = [0x000000, 0xCC0000, 0x00A600, 0x999900, 0x0000B2, 0xB200B2, 0x00A6B2, 0xBFBFBF,
                                  0x666666, 0xE50000, 0x00D900, 0xE5E500, 0x0000FF, 0xE500E5, 0x00E5E5, 0xE5E5E5]
+    /// The least contrast terminal text keeps against its background, as a WCAG ratio. Novel's colours were
+    /// made for its darker ground: half of them are under 3 on paper. Only colours below the limit shift.
+    static let minimumContrast: CGFloat = 4.5
     /// The fibre flecks in the paper, drawn over the ground by `Paper`.
     static let fleck = color(0x6B5E48)
     static let teal = color(0x14A08F)
