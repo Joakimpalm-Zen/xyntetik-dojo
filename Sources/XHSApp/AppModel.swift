@@ -399,7 +399,7 @@ final class AppModel: NSObject, ObservableObject {
         // DOJO_SMOKE_SHOT=<file.png>: a picture of the overview with both panes, for a look at the chrome.
         if let shot = ProcessInfo.processInfo.environment["DOJO_SMOKE_SHOT"], !shot.isEmpty {
             let window = items.first(where: { $0.name == name })?.view.window
-            items.first { $0.name != name }?.view.feed(text: AppModel.colourSample)
+            items.first { $0.name != name }?.view.show(Array(AppModel.sample.utf8))
             show(tab: nil)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                 guard let self else { return }
@@ -425,8 +425,8 @@ final class AppModel: NSObject, ObservableObject {
         exit(0)
     }
 
-    /// The sixteen terminal colours, one to a line, for the smoke's picture.
-    private static let colourSample = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"].enumerated().map { i, colour in
+    /// The sixteen terminal colours, one to a line, and a relayed message, for the smoke's picture.
+    private static let sample = "[from: shell-1] a relayed message\r\n" + ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"].enumerated().map { i, colour in
         "\u{1b}[\(30 + i)m\(colour) MMMM\u{1b}[0m  \u{1b}[\(90 + i)mbright \(colour) MMMM\u{1b}[0m\r\n"
     }.joined()
 

@@ -139,11 +139,11 @@ final class TerminalPane: TerminalView, PaneIO {
     private var flush: DispatchWorkItem?
 
     /// `Theme.brand` as a terminal colour code.
-    private static let tagColor = Highlight.foreground(red: 0x14, green: 0xA0, blue: 0x8F)
+    private static let tagColor = Highlight.foreground(red: 0x0B, green: 0x5E, blue: 0x54)
 
     /// On the way from the harness to the screen, a white background becomes the paper shade and every
     /// `[from: <name>]` tag is wrapped in the Xyntetik green.
-    private func show(_ bytes: [UInt8]) {
+    func show(_ bytes: [UInt8]) {
         flush?.cancel()
         let repainted = Repaint.apply(bytes, carry: &sequenceCarry, shade: Theme.shade)
         let out = Highlight.tagged(repainted, carry: &carry, color: TerminalPane.tagColor)

@@ -15,7 +15,7 @@ enum Theme {
     static let paper = color(0xE8E3CD)
     static let shade = (red: 0xDF, green: 0xD9, blue: 0xC3)
     static let ink = color(0x16232A)
-    static let muted = color(0x6F6A5F)
+    static let muted = color(0x514D45)
     static let line = color(0xC5BEA5)
     /// The rule between panes, and under the tabs and over the Runner strip: deeper and wider than a
     /// hairline, so two terminals on the same paper read as two.
@@ -33,13 +33,19 @@ enum Theme {
     static let minimumContrast: CGFloat = 4.5
     /// The fibre flecks in the paper, drawn over the ground by `Paper`.
     static let fleck = color(0x6B5E48)
+    /// A fill only: 2.15 on the window ground, too light for text or a thin glyph.
     static let teal = color(0x14A08F)
-    static let tealInk = color(0x0E7C6E)
+    static let tealInk = color(0x0B5E54)
     static let coral = color(0xFF7A5C)
-    static let coralInk = color(0xC8532F)
-    static let blue = color(0x4F6BD8)
+    static let coralInk = color(0x8C3A21)
+    static let blue = color(0x2A47BC)
+    /// The state dots. They are fills, not text: in the darker text tones idle, running and exited have the
+    /// same lightness and only their hue would tell them apart at this size.
+    static let stateIdle = color(0x0E7C6E)
+    static let stateRunning = color(0x4F6BD8)
+    static let stateExited = color(0xC8532F)
     /// The Xyntetik green for the name in the title bar and the `[from: <name>]` tags.
-    static let brand = color(0x14A08F)
+    static let brand = color(0x0B5E54)
 
     /// The mark's own colours, the same in both appearances.
     static let markTealStart = color(0x159A89)
@@ -155,13 +161,13 @@ struct EnsoMark: View {
     }
 }
 
-/// The wordmark as the site sets it: "xyntetik" with a teal x.
+/// The wordmark: "xyntetik" with a green x.
 struct Wordmark: View {
     var size: CGFloat = 22
 
     var body: some View {
         HStack(spacing: 0) {
-            Text("x").foregroundStyle(Color(Theme.teal))
+            Text("x").foregroundStyle(Color(Theme.brand))
             Text("yntetik").foregroundStyle(Color(Theme.ink))
         }
         .font(.system(size: size, weight: .semibold, design: .default))

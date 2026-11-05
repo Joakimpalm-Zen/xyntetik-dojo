@@ -60,7 +60,7 @@ struct ContentView: View {
             }
             ToolbarItem(placement: .primaryAction) {
                 Button { model.picking = true } label: { Image(systemName: "plus") }
-                    .foregroundStyle(Color(Theme.teal))
+                    .foregroundStyle(Color(Theme.tealInk))
                     .help("Add a terminal")
                     .keyboardShortcut("t", modifiers: .command)
             }
@@ -107,7 +107,7 @@ struct RunnerStrip: View {
                 EnsoMark().frame(width: 14, height: 14)
                 Text("Runner").bold().foregroundStyle(Color(Theme.ink))
                 // The phase in capitals and colour, a spinner while it loads: serving must read at a glance.
-                let phase = RunnerStrip.phase(info)
+                let phase = RunnerStrip.phase(info?.state)
                 if info?.state == .starting { ProgressView().controlSize(.small) }
                 Text(phase.word).font(.system(.caption, design: .rounded)).bold().tracking(1)
                     .padding(.horizontal, 6).padding(.vertical, 2)
@@ -135,12 +135,12 @@ struct RunnerStrip: View {
         .onChange(of: info?.state) { _, state in if state == .running { model.runnerLogOpen = false } }
     }
 
-    /// The phase word and its colour: coral while loading, teal once serving, coral-ink when stopped.
-    static func phase(_ info: Bus.Info?) -> (word: String, color: NSColor) {
-        switch info?.state {
+    /// The phase word and its colour: coral-ink while loading and when stopped, teal once serving.
+    static func phase(_ state: PaneState?) -> (word: String, color: NSColor) {
+        switch state {
         case .running: return ("SERVING", Theme.tealInk)
         case .exited: return ("STOPPED", Theme.coralInk)
-        default: return ("LOADING", Theme.coral)
+        default: return ("LOADING", Theme.coralInk)
         }
     }
 
@@ -284,7 +284,7 @@ struct PaneCell: View {
                     Text(info?.draft == true ? "\(q) queued, unsent text here" : "\(q) queued")
                         .font(.caption).foregroundStyle(Color(Theme.coralInk))
                 }
-                Text(info?.state.rawValue ?? "").font(.caption).foregroundStyle(PaneCell.color(info?.state))
+                Text(info?.state.rawValue ?? "").font(.caption).foregroundStyle(Color(PaneCell.tone(info?.state)))
                 Button { model.close(item.name) } label: { Image(systemName: "xmark") }
                     .buttonStyle(.borderless)
                     .foregroundStyle(Color(Theme.muted))
@@ -324,14 +324,24 @@ struct PaneCell: View {
         }
     }
 
-    /// The brand's three accents carry the states: teal idle, blue running, coral at a prompt.
-    static func color(_ state: PaneState?) -> Color {
+    /// The state word: the brand's three accents, in the tones that read as text.
+    static func tone(_ state: PaneState?) -> NSColor {
         switch state {
-        case .idle: return Color(Theme.tealInk)
-        case .running: return Color(Theme.blue)
-        case .prompt: return Color(Theme.coral)
-        case .exited: return Color(Theme.coralInk)
-        case .starting, .none: return Color(Theme.muted)
+        case .idle: return Theme.tealInk
+        case .running: return Theme.blue
+        case .prompt, .exited: return Theme.coralInk
+        case .starting, .none: return Theme.muted
+        }
+    }
+
+    /// The state dot: teal idle, blue running, coral at a prompt. A fill, so it keeps the brighter tones.
+    static func fill(_ state: PaneState?) -> NSColor {
+        switch state {
+        case .idle: return Theme.stateIdle
+        case .running: return Theme.stateRunning
+        case .prompt: return Theme.coral
+        case .exited: return Theme.stateExited
+        case .starting, .none: return Theme.muted
         }
     }
 }
@@ -341,7 +351,7 @@ struct StateDot: View {
     let state: PaneState?
 
     var body: some View {
-        let color = PaneCell.color(state)
+        let color = Color(PaneCell.fill(state))
         ZStack {
             Circle().stroke(color, lineWidth: 1.5).frame(width: 9, height: 9)
             if state == .idle || state == .running || state == .prompt {
@@ -464,7 +474,7 @@ struct PickerSheet: View {
                     Button("Cancel") { model.picking = false }.keyboardShortcut(.cancelAction)
                     Button("Open") { add(form.kind) }
                         .buttonStyle(.borderedProminent)
-                        .tint(Color(Theme.teal))
+                        .tint(Color(Theme.tealInk))
                         .keyboardShortcut(.defaultAction)
                 }
             }
