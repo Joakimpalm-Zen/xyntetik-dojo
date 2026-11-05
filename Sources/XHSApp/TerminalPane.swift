@@ -13,7 +13,7 @@ final class TerminalPane: TerminalView, PaneIO {
     /// at 11 points when Terminal.app has no font set. Cmd-plus, Cmd-minus and Cmd-0 change every pane's size
     /// while the app runs; the size is not kept between launches.
     static let defaultFont: NSFont = TerminalFont.terminalApp() ?? NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-    static let defaultLineSpacing: CGFloat = TerminalFont.lineSpacing()
+    static let profileSpacing: CGFloat = TerminalFont.profileSpacing()
 
     /// The default font at another size.
     static func font(ofSize size: CGFloat) -> NSFont {
@@ -31,15 +31,20 @@ final class TerminalPane: TerminalView, PaneIO {
     init(name: String) {
         paneName = name
         super.init(frame: NSRect(x: 0, y: 0, width: 640, height: 400))
-        font = TerminalPane.defaultFont
         // Keep antialiasing, but avoid the heavier strokes SwiftTerm's font smoothing adds.
         fontSmoothing = false
-        lineSpacing = TerminalPane.defaultLineSpacing
+        setTextSize(TerminalPane.defaultFont.pointSize)
         applyTheme()
         terminalDelegate = self
         process = LocalProcess(delegate: self, dispatchQueue: .main)
         // Files and folders dropped from the Finder: their paths land in the composer, as in Terminal.app.
         registerForDraggedTypes([.fileURL])
+    }
+
+    /// The default font at `size`, with the rows Terminal.app gives that size.
+    func setTextSize(_ size: CGFloat) {
+        font = TerminalPane.font(ofSize: size)
+        lineSpacing = TerminalFont.lineSpacing(font: font, spacing: TerminalPane.profileSpacing)
     }
 
     // MARK: dropped files
