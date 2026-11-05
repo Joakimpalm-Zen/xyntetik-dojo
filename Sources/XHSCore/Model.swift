@@ -117,4 +117,9 @@ public enum TabOrder {
         guard let current, let i = panes.firstIndex(of: current) else { return panes.last }
         return i > 0 ? panes[i - 1] : nil
     }
+
+    /// Which of the `remaining` panes takes the keys when the pane at `index` closes.
+    public static func heir(of index: Int, among remaining: Int) -> Int? {
+        remaining > 0 ? min(index, remaining - 1) : nil
+    }
 }

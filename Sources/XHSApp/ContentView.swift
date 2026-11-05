@@ -294,7 +294,11 @@ struct PaneCell: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(Paper(tone: Theme.surface, density: 0.6))
-            .overlay(alignment: .bottom) { Rectangle().fill(Color(Theme.line)).frame(height: 1) }
+            // The pane with the keys has the tabs' teal line along its foot.
+            .overlay(alignment: .bottom) {
+                let focused = model.focusedPane == item.id
+                Rectangle().fill(Color(focused ? Theme.teal : Theme.line)).frame(height: focused ? Theme.ruleWidth : 1)
+            }
             // Drag a header onto another pane and the two swap places.
             .onDrag { NSItemProvider(object: item.name as NSString) }
             TerminalHost(view: item.view)
@@ -346,17 +350,44 @@ struct PaneCell: View {
     }
 }
 
-/// A filled dot for a live state, a ring while starting, a hollow ring when exited.
+/// The state as a shape, so it reads without the colour: a dot idle, a triangle running, a mark on a coral
+/// disc at a prompt, a dashed ring while starting, a hollow ring when exited. The pointer names it.
 struct StateDot: View {
     let state: PaneState?
 
     var body: some View {
         let color = Color(PaneCell.fill(state))
-        ZStack {
-            Circle().stroke(color, lineWidth: 1.5).frame(width: 9, height: 9)
-            if state == .idle || state == .running || state == .prompt {
+        Group {
+            switch state {
+            case .idle:
                 Circle().fill(color).frame(width: 9, height: 9)
+            case .running:
+                Triangle().fill(color).frame(width: 9, height: 10)
+            case .prompt:
+                ZStack {
+                    Circle().fill(color)
+                    Text("!").font(.system(size: 10, weight: .black)).foregroundStyle(Color(Theme.ink))
+                }
+                .frame(width: 12, height: 12)
+            case .exited:
+                Circle().stroke(color, lineWidth: 1.5).frame(width: 9, height: 9)
+            case .starting, .none:
+                Circle().stroke(color, style: StrokeStyle(lineWidth: 1.5, dash: [2, 2])).frame(width: 9, height: 9)
             }
+        }
+        .frame(width: 12, height: 12)
+        .help(state?.rawValue ?? "")
+    }
+}
+
+/// A triangle pointing right, as on a play button.
+private struct Triangle: Shape {
+    func path(in rect: CGRect) -> Path {
+        Path { path in
+            path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
+            path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+            path.closeSubpath()
         }
     }
 }

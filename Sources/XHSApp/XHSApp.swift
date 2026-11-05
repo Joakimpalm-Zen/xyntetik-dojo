@@ -57,6 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 mainWindowCloseDelegate = closeDelegate
                 window.delegate = closeDelegate
+                AppModel.shared.watchFocus(of: window)
             }
             let model = AppModel.shared
             if model.smoke {

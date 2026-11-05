@@ -18,3 +18,18 @@ import Testing
         #expect(TabOrder.next(after: nil as String?, in: []) == nil)
     }
 }
+
+@Suite struct KeysAfterCloseTests {
+    @Test func thePaneThatTakesThePlaceGetsTheKeys() {
+        #expect(TabOrder.heir(of: 1, among: 3) == 1)
+        #expect(TabOrder.heir(of: 0, among: 2) == 0)
+    }
+
+    @Test func theLastPaneHandsBack() {
+        #expect(TabOrder.heir(of: 2, among: 2) == 1)
+    }
+
+    @Test func noPaneLeftTakesNothing() {
+        #expect(TabOrder.heir(of: 0, among: 0) == nil)
+    }
+}

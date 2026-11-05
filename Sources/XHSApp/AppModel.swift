@@ -48,6 +48,10 @@ final class AppModel: NSObject, ObservableObject {
     /// The model the owner chose for Runner panes (~/.dojo/runner/model), empty for the largest that fits.
     @Published private(set) var runnerChoice = ""
 
+    /// The pane that has the keys, nil when none has.
+    @Published private(set) var focusedPane: ObjectIdentifier?
+    private var focusWatch: NSKeyValueObservation?
+
     let bus = Bus()
     let port: Int
     let smoke: Bool
@@ -95,6 +99,16 @@ final class AppModel: NSObject, ObservableObject {
         let focus = selectedTab.flatMap { id in agents.first { $0.id == id }?.view }
             ?? agents.first { $0.view.window?.firstResponder === $0.view }?.view
         if let focus { DispatchQueue.main.async { focus.window?.makeFirstResponder(focus) } }
+    }
+
+    /// Keeps `focusedPane` true to the window. SwiftTerm closes its responder methods to subclasses, so the
+    /// window is the one to ask.
+    func watchFocus(of window: NSWindow) {
+        focusWatch = window.observe(\.firstResponder, options: [.initial]) { [weak self] window, _ in
+            MainActor.assumeIsolated {
+                self?.focusedPane = (window.firstResponder as? TerminalPane).map(ObjectIdentifier.init)
+            }
+        }
     }
 
     /// The next tab (Cmd-Shift-]) or the previous (Cmd-Shift-[), through the overview.
@@ -260,7 +274,9 @@ final class AppModel: NSObject, ObservableObject {
     func close(_ name: String) {
         guard let item = items.first(where: { $0.name == name }) else { return }
         // Re-parenting the grid drops the first responder; give it back to the pane that had it.
-        let focused = items.first { $0.view !== item.view && $0.view.window?.firstResponder === $0.view }?.view
+        var focused = items.first { $0.view !== item.view && $0.view.window?.firstResponder === $0.view }?.view
+        let hadKeys = item.view.window?.firstResponder === item.view
+        let place = agents.firstIndex { $0.id == item.id }
         item.view.onExit = nil
         item.view.terminate()
         bus.remove(name)
@@ -269,6 +285,8 @@ final class AppModel: NSObject, ObservableObject {
         items.removeAll { $0.name == name }
         // Its tab goes with it; the overview shows what is left.
         if selectedTab == item.id { selectedTab = nil }
+        // The keys go to the pane in its place, or the next key would reach no pane at all.
+        if hadKeys, let place, let heir = TabOrder.heir(of: place, among: agents.count) { focused = agents[heir].view }
         if let focused { DispatchQueue.main.async { focused.window?.makeFirstResponder(focused) } }
     }
 
@@ -377,7 +395,29 @@ final class AppModel: NSObject, ObservableObject {
         exit(1)
     }
 
+    /// The cue on the pane header follows the keys: after a click, to a tab, to the overview, and to the pane
+    /// that takes the place of one closed.
+    private func proveFocus(_ name: String) async {
+        func expect(_ pane: String, after step: String) async {
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard let id = items.first(where: { $0.name == pane })?.id, focusedPane == id else {
+                let actual = items.first { $0.id == focusedPane }?.name ?? "no pane"
+                print("DOJO_SMOKE failed: after \(step) the cue is on \(actual), not \(pane)")
+                exit(1)
+            }
+        }
+        await expect(name, after: "a click")
+        addPane(kind: .shell, host: "", name: "shell-3")
+        show(tab: items.last?.id)
+        await expect("shell-3", after: "showing a tab")
+        show(tab: nil)
+        await expect("shell-3", after: "showing the overview")
+        close("shell-3")
+        await expect(name, after: "closing the pane with the keys")
+    }
+
     private func finishSmoke(_ name: String) async {
+        if bus.info(name)?.host.isEmpty == true { await proveFocus(name) }
         var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/panes")!)
         request.httpMethod = "POST"
         request.setValue(tokens[name], forHTTPHeaderField: "X-Dojo-Token")
@@ -400,9 +440,13 @@ final class AppModel: NSObject, ObservableObject {
         if let shot = ProcessInfo.processInfo.environment["DOJO_SMOKE_SHOT"], !shot.isEmpty {
             let window = items.first(where: { $0.name == name })?.view.window
             items.first { $0.name != name }?.view.show(Array(AppModel.sample.utf8))
+            // One pane in each of the states a smoke does not reach by itself.
+            let states: [(String, PaneState)] = [("shell-3", .running), ("shell-4", .prompt), ("shell-5", .starting)]
+            for (pane, _) in states { addPane(kind: .shell, host: "", name: pane) }
             show(tab: nil)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                 guard let self else { return }
+                for (pane, state) in states { self.bus.setState(pane, state) }
                 self.failIfSeen()
                 self.write(shot: shot, of: window)
                 // DOJO_SMOKE_SHOT_PICKER=<file.png>: the picker as well, drawn in the window.
