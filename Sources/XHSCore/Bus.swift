@@ -181,7 +181,7 @@ public final class Bus {
     public func sessionId(_ name: String) -> String? { pane(named: name)?.sessionId }
 
     /// For a pane whose session the app chose or already knows.
-    public func setSession(_ name: String, _ id: String) { pane(named: name)?.sessionId = id }
+    public func setSession(_ name: String, _ id: String?) { pane(named: name)?.sessionId = id }
 
     public func setModel(_ name: String, _ model: String) {
         guard let p = pane(named: name), p.model != model else { return }

@@ -63,9 +63,19 @@ public struct SavedPane: Codable, Equatable, Sendable {
 public enum SavedPanes {
     public static func save(_ panes: [SavedPane], to file: URL) {
         guard let data = try? JSONEncoder().encode(panes) else { return }
-        try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? data.write(to: file, options: .atomic)
-        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+        let folder = file.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let temporary = folder.appendingPathComponent(".panes-\(UUID().uuidString)")
+        guard let handle = openPrivate(temporary) else { return }
+        let written = (try? handle.write(contentsOf: data)) != nil
+        try? handle.close()
+        if !written || rename(temporary.path, file.path) != 0 { try? FileManager.default.removeItem(at: temporary) }
+    }
+
+    /// A new file only the owner can read, from the moment it exists: the mode is set as it is created.
+    static func openPrivate(_ file: URL) -> FileHandle? {
+        let descriptor = open(file.path, O_CREAT | O_EXCL | O_WRONLY, 0o600)
+        return descriptor < 0 ? nil : FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
     }
 
     /// What can be trusted of the file: a pane with a bad name or host goes, a bad session id reopens fresh.

@@ -63,6 +63,7 @@ final class AppModel: NSObject, ObservableObject {
     @Published private(set) var lastPanes: [SavedPane] = []
     /// Set while quitting: the panes close, and the list of them must outlive that.
     private var keepingList = false
+    private var piFlagCheck: Task<Bool, Never>?
     /// The pane that has the keys, nil when none has.
     @Published private(set) var focusedPane: ObjectIdentifier?
     private var focusWatch: NSKeyValueObservation?
@@ -281,20 +282,28 @@ final class AppModel: NSObject, ObservableObject {
         if !host.isEmpty { recentHosts = RecentHosts.remember(host, in: AppModel.hostsFile) }
         if !directory.isEmpty { recentFolders = RecentHosts.remember(directory, in: AppModel.foldersFile, valid: RecentHosts.isFolder) }
         items.append(Item(name: name, kind: kind, askFirst: askFirst, view: view, directory: directory))
-        let startsFresh = reopened && session == nil && HarnessKind.pickable.contains(kind)
-        // pi takes the id it is given; Claude Code and Codex report theirs through hooks.
-        let session = session ?? (kind == .pi ? UUID().uuidString.lowercased() : nil)
         if let session { bus.setSession(name, session) }
         lastPanes = []
         savePanes()
-        if startsFresh { view.feed(text: "No session to resume: this pane starts fresh.\r\n\r\n") }
-        Task { await launch(view, kind: kind, host: host, token: token, directory: directory, askFirst: askFirst, session: session) }
+        Task { await launch(view, kind: kind, host: host, token: token, directory: directory, askFirst: askFirst, saved: session, reopened: reopened) }
         give(keys: view)
         return nil
     }
 
     private func launch(_ view: TerminalPane, kind: HarnessKind, host: String, token: String, directory: String, askFirst: Bool,
-                        session: String?) async {
+                        saved: String?, reopened: Bool) async {
+        var session = saved
+        if kind == .pi {
+            // Claude Code and Codex report their session through hooks; a pi that can take one is given it.
+            let listed = host.isEmpty ? await piListsSession() : false
+            guard items.contains(where: { $0.view === view }) else { return }
+            session = Launcher.piSession(saved: saved, host: host, listed: listed, newId: UUID().uuidString.lowercased())
+            bus.setSession(view.paneName, session)
+            savePanes()
+        }
+        if reopened, HarnessKind.pickable.contains(kind), saved == nil || session != saved {
+            view.feed(text: "No session to resume: this pane starts fresh.\r\n\r\n")
+        }
         var model: String?
         if kind == .pi, host.isEmpty {
             model = await Launcher.fetchRunnerModel()
@@ -395,6 +404,14 @@ final class AppModel: NSObject, ObservableObject {
     }
 
     // MARK: reopening
+
+    /// Whether the local pi knows --session-id, asked once per run.
+    private func piListsSession() async -> Bool {
+        let shell = loginShell
+        let check = piFlagCheck ?? Task { await Launcher.helpLists("--session-id", command: "pi --help", loginShell: shell) }
+        piFlagCheck = check
+        return await check.value
+    }
 
     private func savePanes() {
         guard !keepingList else { return }
