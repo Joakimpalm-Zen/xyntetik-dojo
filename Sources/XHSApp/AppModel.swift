@@ -183,7 +183,7 @@ final class AppModel: NSObject, ObservableObject {
             return "\(name) is already open."
         }
         let view = TerminalPane(name: name)
-        if fontSize != TerminalPane.defaultFont.pointSize { view.font = TerminalPane.font(ofSize: fontSize) }
+        if fontSize != TerminalPane.defaultFont.pointSize { view.setTextSize(fontSize) }
         view.onExit = { [weak self, weak view] _ in if let view { self?.bus.setState(view.paneName, .exited) } }
         // The bus holds relayed messages while the owner types in the pane and while unsent text sits there.
         view.onOwnerInput = { [weak self, weak view] key in if let view { self?.bus.noteOwnerInput(view.paneName, key) } }
@@ -245,7 +245,7 @@ final class AppModel: NSObject, ObservableObject {
     /// Changes every pane's text size by `step` points, within 8 and 24; nil resets to the default.
     func zoom(_ step: CGFloat?) {
         fontSize = step.map { min(24, max(8, fontSize + $0)) } ?? TerminalPane.defaultFont.pointSize
-        for item in items { item.view.font = TerminalPane.font(ofSize: fontSize) }
+        for item in items { item.view.setTextSize(fontSize) }
     }
 
     /// Swaps two panes' places in the grid.
