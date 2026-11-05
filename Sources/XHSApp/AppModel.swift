@@ -399,6 +399,7 @@ final class AppModel: NSObject, ObservableObject {
         // DOJO_SMOKE_SHOT=<file.png>: a picture of the overview with both panes, for a look at the chrome.
         if let shot = ProcessInfo.processInfo.environment["DOJO_SMOKE_SHOT"], !shot.isEmpty {
             let window = items.first(where: { $0.name == name })?.view.window
+            items.first { $0.name != name }?.view.feed(text: AppModel.colourSample)
             show(tab: nil)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                 guard let self else { return }
@@ -423,6 +424,11 @@ final class AppModel: NSObject, ObservableObject {
         closeAll()
         exit(0)
     }
+
+    /// The sixteen terminal colours, one to a line, for the smoke's picture.
+    private static let colourSample = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"].enumerated().map { i, colour in
+        "\u{1b}[\(30 + i)m\(colour) MMMM\u{1b}[0m  \u{1b}[\(90 + i)mbright \(colour) MMMM\u{1b}[0m\r\n"
+    }.joined()
 
     /// Writes a window to a PNG, for the smoke's pictures: the window server's own image of it, title bar
     /// included, because the panes draw on the GPU and a view's cached drawing leaves them blank. An app

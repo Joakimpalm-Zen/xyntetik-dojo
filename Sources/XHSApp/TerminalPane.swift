@@ -72,6 +72,7 @@ final class TerminalPane: TerminalView, PaneIO {
         installColors(Theme.ansi.map { rgb in
             SwiftTerm.Color(red: UInt16((rgb >> 16) & 0xFF) * 257, green: UInt16((rgb >> 8) & 0xFF) * 257, blue: UInt16(rgb & 0xFF) * 257)
         })
+        minimumContrastRatio = Theme.minimumContrast
         caretColor = Theme.teal
         selectedTextBackgroundColor = Theme.teal.withAlphaComponent(0.35)
     }
