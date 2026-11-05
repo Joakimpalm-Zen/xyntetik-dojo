@@ -179,7 +179,7 @@ Two remote panes on the same host share the forwarded port: the first pane's tun
 <a id="how-harnesses-talk"></a>
 ## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> How harnesses talk
 
-The four operations, as MCP tools for Claude and Codex (`mcp__dojo__panes` and so on) and as the `dojo` command for pi and any shell in a pane:
+The five operations, as MCP tools for Claude and Codex (`mcp__dojo__panes` and so on) and as the `dojo` command for pi and any shell in a pane:
 
 ```
 dojo panes                         # name, kind, host, state, queued, model; * marks you
@@ -191,11 +191,14 @@ Two things:
 EOF
 dojo read claude-1 60              # last 60 lines of claude-1's screen
 dojo state pi-1
+dojo watch codex-1                 # one line comes here when codex-1 next goes idle, reaches a prompt or exits
 ```
 
 <p align="center">
   <img src="packaging/readme/window.png" alt="Claude Code asks Codex and pi to reply over the bus; both replies land in its pane as green [from: name] lines" width="900">
 </p>
+
+`watch` replaces waiting and polling. A pane asks once and gets one `[from: codex-1] Bus notice: codex-1 is idle.` line, delivered like any message. The notice says it comes from the bus, since the target did not write it. A target that closes ends the request with a line, and so do 12 hours with no news. Idle means what `dojo state` means, so a still screen for 15 seconds counts. Remote hosts need `make remote-setup` once for the new command.
 
 `send` types `[from: <your pane>] <text>` into the target terminal and presses Enter, so the target harness gets it as typed input. Ask any harness to do it in plain words: "send codex-1 a summary of what you changed".
 

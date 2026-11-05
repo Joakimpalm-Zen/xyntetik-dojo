@@ -2,7 +2,7 @@
 """Xyntetik Dojo bus shim. Python 3 standard library only.
 
 Modes:
-  dojo-mcp.py                 MCP stdio server with the tools panes, send, read, state
+  dojo-mcp.py                 MCP stdio server with the tools panes, send, read, state, watch
   dojo panes                  list the terminals in the supervisor window
   dojo send <pane> <text...>  type a message into another terminal ("-" reads stdin)
   dojo read <pane> [lines]    print the last lines of a terminal's screen
@@ -67,6 +67,17 @@ TOOLS = [
         "name": "state",
         "description": "State of one terminal: starting, running, idle, prompt or exited, "
         "plus the number of queued messages.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"pane": {"type": "string", "description": "Terminal name"}},
+            "required": ["pane"],
+        },
+    },
+    {
+        "name": "watch",
+        "description": "Ask to hear when a terminal stops. One line is typed in here when it next "
+        "goes idle, reaches a prompt or exits, instead of waiting or polling. The reply gives its "
+        "state now. If it closes, or nothing happens in 12 hours, a line says so and the request ends.",
         "inputSchema": {
             "type": "object",
             "properties": {"pane": {"type": "string", "description": "Terminal name"}},
@@ -405,7 +416,7 @@ def install(home=None, out=sys.stdout, windows=None):
 
 # ---------------------------------------------------------------- CLI
 
-USAGE = """usage: dojo panes | send <pane> <text...> | send <pane> - (text on stdin) | read <pane> [lines] | state <pane> | hook | install"""
+USAGE = """usage: dojo panes | send <pane> <text...> | send <pane> - (text on stdin) | read <pane> [lines] | state <pane> | watch <pane> | hook | install"""
 
 
 def cli(argv, out=sys.stdout, err=sys.stderr, stdin=sys.stdin):
@@ -445,6 +456,10 @@ def cli(argv, out=sys.stdout, err=sys.stderr, stdin=sys.stdin):
         if cmd == "state" and len(rest) == 1:
             res = bus_call("state", {"pane": rest[0]})
             out.write("%s %s queued=%s\n" % (rest[0], res.get("state"), res.get("queued", 0)))
+            return 0
+        if cmd == "watch" and len(rest) == 1:
+            res = bus_call("watch", {"pane": rest[0]})
+            out.write("%s is %s now; a line comes here when it next stops\n" % (rest[0], res.get("state")))
             return 0
     except (BusError, ValueError) as e:
         err.write("dojo: %s\n" % e)

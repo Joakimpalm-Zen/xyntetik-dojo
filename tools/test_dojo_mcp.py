@@ -41,6 +41,8 @@ class FakeBus:
                     out, code = {"pane": body["pane"], "state": "idle", "text": "line a\nline b"}, 200
                 elif self.path == "/state":
                     out, code = {"pane": body["pane"], "state": "idle", "queued": 0}, 200
+                elif self.path == "/watch":
+                    out, code = {"pane": body["pane"], "state": "running"}, 200
                 elif self.path == "/hook":
                     out, code = None, 200
                 else:
@@ -107,7 +109,7 @@ class ShimTest(unittest.TestCase):
         self.assertIn("tools", init["capabilities"])
         self.assertEqual(init["serverInfo"]["name"], "dojo")
         names = [t["name"] for t in by_id[2]["result"]["tools"]]
-        self.assertEqual(names, ["panes", "send", "read", "state"])
+        self.assertEqual(names, ["panes", "send", "read", "state", "watch"])
         for t in by_id[2]["result"]["tools"]:
             self.assertEqual(t["inputSchema"]["type"], "object")
         sent = by_id[3]["result"]
@@ -165,6 +167,9 @@ class ShimTest(unittest.TestCase):
         self.assertEqual(r.stdout, "line a\nline b\n")
         r = self.run_cli("state", "codex-1")
         self.assertEqual(r.stdout, "codex-1 idle queued=0\n")
+        r = self.run_cli("watch", "codex-1")
+        self.assertEqual(r.stdout, "codex-1 is running now; a line comes here when it next stops\n")
+        self.assertEqual(self.bus.requests[-1][:1] + (self.bus.requests[-1][2],), ("/watch", {"pane": "codex-1"}))
         r = self.run_cli("bogus")
         self.assertEqual(r.returncode, 2)
 
