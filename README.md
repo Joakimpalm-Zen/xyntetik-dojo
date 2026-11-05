@@ -91,7 +91,7 @@ make app     # build/XyntetikDojo.app, assembled by hand and ad-hoc signed
 make run     # open the app from build/
 make install # copy the app to /Applications (replacing the one there) and open it
 make cert    # once: a self-signed certificate so macOS privacy remembers its answers across rebuilds
-make smoke   # launch proof: two panes, swapped, a click, typed keys echoed back, the bus answering; exit 0
+make smoke   # launch proof, off screen: two panes, swapped, a click, typed keys echoed back, the bus answering; exit 0
 make smoke HOST=user@box   # the same, with the pane on that host over ssh
 make smoke SHOT=window.png PICKER=picker.png   # the same, plus pictures of the window and the picker to check the look
 ```

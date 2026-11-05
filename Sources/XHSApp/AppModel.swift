@@ -62,7 +62,7 @@ final class AppModel: NSObject, ObservableObject {
         // DOJO_PORT must be a port; anything else is said and the default used.
         let wanted = env["DOJO_PORT"].flatMap { Int($0) }
         port = wanted.flatMap { (1...65535).contains($0) ? $0 : nil } ?? Launcher.defaultPort
-        smoke = env["DOJO_SMOKE"] == "1"
+        smoke = Headless.isRequested
         loginShell = AppModel.userShell()
         super.init()
         if let wanted, wanted != port { problem = "DOJO_PORT is \(wanted); a port is 1 to 65535. Using \(port)." }
@@ -120,7 +120,7 @@ final class AppModel: NSObject, ObservableObject {
         }
     }
 
-    static let runnerHome = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".dojo/runner")
+    static let runnerHome = Headless.state().appendingPathComponent("runner")
 
     /// Asks Runner what it serves and reads what the start script found to fit, for the picker.
     func refreshRunner() {
@@ -354,6 +354,7 @@ final class AppModel: NSObject, ObservableObject {
         Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] timer in
             MainActor.assumeIsolated {
                 guard let self else { return }
+                self.failIfSeen()
                 let screen = self.items.first(where: { $0.name == name })?.view.screenText() ?? ""
                 if self.bus.info(name)?.state == .exited, screen.contains(expected), self.problem.isEmpty {
                     timer.invalidate()
@@ -365,6 +366,15 @@ final class AppModel: NSObject, ObservableObject {
                 }
             }
         }
+    }
+
+    /// A smoke that reached the owner's screen or keyboard ends there, saying what did.
+    private func failIfSeen() {
+        let problems = Headless.problems
+        guard !problems.isEmpty else { return }
+        for problem in problems { print("DOJO_SMOKE failed: \(problem)") }
+        closeAll()
+        exit(1)
     }
 
     private func finishSmoke(_ name: String) async {
@@ -383,24 +393,29 @@ final class AppModel: NSObject, ObservableObject {
         let location = host.isEmpty ? "locally" : "on \(host) (\(remoteShells[name] == .windows ? "Windows" : "POSIX") shell)"
         let dims = items.first(where: { $0.name == name })?.view.terminalDimensions
         let font = items.first(where: { $0.name == name })?.view.font
+        failIfSeen()
         let tab = selectedTab == nil ? "the overview" : "its own tab"
         print("DOJO_SMOKE ok: pane \(name) echoed the typed line \(location) in \(tab), the bus answered on 127.0.0.1:\(port), terminal \(dims?.cols ?? 0)x\(dims?.rows ?? 0), font \(font?.fontName ?? "none") \(font?.pointSize ?? 0)")
         // DOJO_SMOKE_SHOT=<file.png>: a picture of the overview with both panes, for a look at the chrome.
         if let shot = ProcessInfo.processInfo.environment["DOJO_SMOKE_SHOT"], !shot.isEmpty {
+            let window = items.first(where: { $0.name == name })?.view.window
             show(tab: nil)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                 guard let self else { return }
-                AppModel.write(shot: shot, of: self.items.first(where: { $0.name == name })?.view.window)
-                // DOJO_SMOKE_SHOT_PICKER=<file.png>: the picker sheet as well.
+                self.failIfSeen()
+                self.write(shot: shot, of: window)
+                // DOJO_SMOKE_SHOT_PICKER=<file.png>: the picker as well, drawn in the window.
                 guard let picker = ProcessInfo.processInfo.environment["DOJO_SMOKE_SHOT_PICKER"], !picker.isEmpty else {
-                    self.closeAll()
-                    exit(0)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { self.closeAll(); exit(0) }
+                    return
                 }
-                self.picking = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
-                    AppModel.write(shot: picker, of: NSApp.windows.first { $0.isSheet })
-                    self?.closeAll()
-                    exit(0)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    self.picking = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                        self.failIfSeen()
+                        self.write(shot: picker, of: window)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { self.closeAll(); exit(0) }
+                    }
                 }
             }
             return
@@ -409,26 +424,30 @@ final class AppModel: NSObject, ObservableObject {
         exit(0)
     }
 
-    /// Renders a window's content to a PNG, for the smoke's pictures.
-    private static func write(shot: String, of window: NSWindow?) {
-        // At twice the points, as a Retina screen shows it, whatever screen the window is on.
-        guard let view = window?.contentView,
-              let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(view.bounds.width * 2), pixelsHigh: Int(view.bounds.height * 2),
-                                         bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-                                         colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else {
+    /// Writes a window to a PNG, for the smoke's pictures: the window server's own image of it, title bar
+    /// included, because the panes draw on the GPU and a view's cached drawing leaves them blank. An app
+    /// needs no permission for its own windows. The window stays parked, and is only made opaque for this.
+    private func write(shot: String, of window: NSWindow?) {
+        guard let window else {
             print("DOJO_SMOKE shot failed: no window for \(shot)")
-            return
+            exit(1)
         }
-        rep.size = view.bounds.size
-        view.cacheDisplay(in: view.bounds, to: rep)
-        if let png = rep.representation(using: .png, properties: [:]) {
-            try? png.write(to: URL(fileURLWithPath: shot))
-            print("DOJO_SMOKE shot: \(shot)")
+        window.alphaValue = 1
+        for item in items { item.view.drawMetalFrameNow() }
+        CATransaction.flush()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            guard let image = CGWindowListCreateImage(.null, .optionIncludingWindow, CGWindowID(window.windowNumber), [.boundsIgnoreFraming, .bestResolution]),
+                  let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]),
+                  (try? png.write(to: URL(fileURLWithPath: shot))) != nil else {
+                print("DOJO_SMOKE shot failed: the window server gave no picture for \(shot)")
+                exit(1)
+            }
+            print("DOJO_SMOKE shot: \(shot) \(image.width)x\(image.height)")
         }
     }
 
-    static let hostsFile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".dojo/hosts")
-    static let foldersFile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".dojo/folders")
+    static let hostsFile = Headless.state().appendingPathComponent("hosts")
+    static let foldersFile = Headless.state().appendingPathComponent("folders")
 
     /// A folder picker for the New terminal sheet; nil when cancelled.
     static func chooseFolder() -> String? {
