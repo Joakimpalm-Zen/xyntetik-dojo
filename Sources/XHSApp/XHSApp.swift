@@ -63,9 +63,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if model.smoke {
                 model.runSmoke()
             } else {
+                model.startNotifying()
                 NSApp.activate(ignoringOtherApps: true)
             }
         }
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        MainActor.assumeIsolated { AppModel.shared.markSeen() }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }

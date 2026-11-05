@@ -54,6 +54,9 @@ public final class Bus {
         /// The screen as last seen by `tick`, and since when it has looked like that.
         var screenHash = 0
         var quietSince: Date?
+        /// A hook reported this turn running, and none has reported its end. The still-screen rule may have
+        /// called the pane idle in the meantime; that leaves the turn open, so a late Stop still counts.
+        var turnOpen = false
         weak var io: PaneIO?
 
         init(name: String, kind: HarnessKind, host: String, token: String, model: String, state: PaneState, io: PaneIO?) {
@@ -73,6 +76,8 @@ public final class Bus {
     private var panes: [Pane] = []
     /// Called after any change a pane header shows.
     public var onChange: (() -> Void)?
+    /// A pane reported, through a hook, something the owner may want to know. See `Attention`.
+    public var onAttention: ((String, Attention) -> Void)?
     /// Delay between typing a message and pressing Enter, so the harness sees the paste end first.
     public var submitDelay: TimeInterval = 0.15
     /// The bus does not type into a pane the owner typed into this recently.
@@ -301,7 +306,13 @@ public final class Bus {
               let name = event["hook_event_name"] as? String,
               let next = HookMapping.next(event: name, notificationType: event["notification_type"] as? String, current: pane.state)
         else { return }
+        // Before the state changes: a prompt reported twice is one prompt.
+        let attention: Attention? = next == .prompt && pane.state != .prompt ? .prompt
+            : next == .idle && pane.turnOpen ? .finished : nil
+        if next == .running { pane.turnOpen = true }
+        if next == .idle { pane.turnOpen = false }
         setState(pane.name, next)
+        if let attention { onAttention?(pane.name, attention) }
     }
 
     /// Types the whole queue as one input if the pane is idle or running and the owner is not typing

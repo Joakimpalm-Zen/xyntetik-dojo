@@ -48,6 +48,17 @@ final class AppModel: NSObject, ObservableObject {
     /// The model the owner chose for Runner panes (~/.dojo/runner/model), empty for the largest that fits.
     @Published private(set) var runnerChoice = ""
 
+    /// Panes with a prompt or a finished turn the owner has not viewed. The Dock badge counts them.
+    @Published private(set) var unseen: Set<ObjectIdentifier> = [] {
+        didSet { NSApp.dockTile.badgeLabel = unseen.isEmpty ? nil : String(unseen.count) }
+    }
+    /// What a smoke would have notified, in place of notifying.
+    private var smokeNotified: [String] = []
+    private lazy var notifier: Notifier = {
+        let notifier = Notifier()
+        notifier.onOpen = { [weak self] pane in self?.open(pane) }
+        return notifier
+    }()
     /// The pane that has the keys, nil when none has.
     @Published private(set) var focusedPane: ObjectIdentifier?
     private var focusWatch: NSKeyValueObservation?
@@ -80,6 +91,7 @@ final class AppModel: NSObject, ObservableObject {
         recentHosts = RecentHosts.load(AppModel.hostsFile)
         recentFolders = RecentHosts.load(AppModel.foldersFile, valid: RecentHosts.isFolder)
         bus.onChange = { [weak self] in self?.revision &+= 1 }
+        bus.onAttention = { [weak self] name, attention in self?.attend(name, attention) }
         startServer()
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -118,8 +130,46 @@ final class AppModel: NSObject, ObservableObject {
                 let pane = window.firstResponder as? TerminalPane
                 self?.focusedPane = pane.map(ObjectIdentifier.init)
                 if let pane { self?.keyPane = pane }
+                self?.markSeen()
             }
         }
+    }
+
+    // MARK: what needs the owner
+
+    /// A smoke is never in front, and stands in for an owner who is.
+    private var ownerInFront: Bool { smoke || NSApp.isActive }
+
+    /// The pane finished a turn the owner has not viewed. A pane at a prompt has the ring instead.
+    func finishedUnseen(_ item: Item) -> Bool {
+        unseen.contains(item.id) && bus.info(item.name)?.state == .idle
+    }
+
+    /// Panes at a prompt, for the count on the All tab.
+    var waiting: Int { agents.filter { bus.info($0.name)?.state == .prompt }.count }
+
+    private func attend(_ name: String, _ attention: Attention) {
+        guard let item = items.first(where: { $0.name == name }) else { return }
+        if !Seen.viewed(active: ownerInFront, keys: focusedPane, pane: item.id) { unseen.insert(item.id) }
+        guard Seen.notifies(active: ownerInFront, shown: selectedTab, pane: item.id) else { return }
+        if smoke { smokeNotified.append("\(name) \(attention.rawValue)") } else { notifier.post(pane: name, attention) }
+    }
+
+    /// The pane with the keys is viewed, once the owner is in front.
+    func markSeen() {
+        guard ownerInFront, let focusedPane, unseen.contains(focusedPane) else { return }
+        unseen.remove(focusedPane)
+    }
+
+    /// Starts listening for clicks on notifications, also those from before a relaunch.
+    func startNotifying() {
+        _ = notifier
+    }
+
+    /// A click on a notification: the app in front, on that pane's tab.
+    private func open(_ name: String) {
+        NSApp.activate(ignoringOtherApps: true)
+        if let item = agents.first(where: { $0.name == name }) { show(tab: item.id) }
     }
 
     /// The next tab (Cmd-Shift-]) or the previous (Cmd-Shift-[), through the overview.
@@ -296,6 +346,7 @@ final class AppModel: NSObject, ObservableObject {
         item.view.onExit = nil
         item.view.terminate()
         bus.remove(name)
+        unseen.remove(item.id)
         tokens[name] = nil
         remoteShells[name] = nil
         items.removeAll { $0.name == name }
@@ -432,8 +483,53 @@ final class AppModel: NSObject, ObservableObject {
         await expect(name, after: "closing the pane with the keys")
     }
 
+    /// Sends a pane the hook events a harness would.
+    private func smokeHooks(_ pane: String, _ events: [[String: Any]]) {
+        for event in events {
+            _ = bus.handle(path: "/hook", token: tokens[pane], body: (try? JSONSerialization.data(withJSONObject: event)) ?? Data())
+        }
+    }
+
+    /// The whole path from a hook to what the owner sees, on the second pane: a prompt behind another tab,
+    /// reported twice as Claude Code does, then answered, then a finished turn.
+    private func proveAttention(_ name: String) async {
+        guard let first = items.first(where: { $0.name == name }), let second = items.first(where: { $0.name != name }) else { return }
+        func expect(_ step: String, waiting wanted: Int, unseen seen: Bool, notified: [String]) async {
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            let badge = NSApp.dockTile.badgeLabel
+            guard waiting == wanted, unseen.contains(second.id) == seen, smokeNotified == notified, (badge != nil) == !unseen.isEmpty else {
+                print("DOJO_SMOKE failed: after \(step): waiting \(waiting), unseen \(unseen.count), badge \(badge ?? "none"), notified \(smokeNotified)")
+                exit(1)
+            }
+        }
+        let prompt = "\(second.name) prompt", finished = "\(second.name) finished"
+        show(tab: first.id)
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        smokeHooks(second.name, [["hook_event_name": "UserPromptSubmit"], ["hook_event_name": "PermissionRequest"],
+                                 ["hook_event_name": "Notification", "notification_type": "permission_prompt"]])
+        await expect("a prompt behind a tab", waiting: 1, unseen: true, notified: [prompt])
+        show(tab: second.id)
+        await expect("viewing it", waiting: 1, unseen: false, notified: [prompt])
+        smokeHooks(second.name, [["hook_event_name": "PostToolUse"]])
+        await expect("answering it", waiting: 0, unseen: false, notified: [prompt])
+        show(tab: first.id)
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        smokeHooks(second.name, [["hook_event_name": "Stop"], ["hook_event_name": "Stop"]])
+        await expect("a finish behind a tab", waiting: 0, unseen: true, notified: [prompt, finished])
+        show(tab: nil)
+        await expect("the overview, which is not viewing it", waiting: 0, unseen: true, notified: [prompt, finished])
+        show(tab: second.id)
+        await expect("opening its tab", waiting: 0, unseen: false, notified: [prompt, finished])
+        show(tab: first.id)
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        show(tab: nil)
+    }
+
     private func finishSmoke(_ name: String) async {
-        if bus.info(name)?.host.isEmpty == true { await proveFocus(name) }
+        if bus.info(name)?.host.isEmpty == true {
+            await proveFocus(name)
+            await proveAttention(name)
+        }
         var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/panes")!)
         request.httpMethod = "POST"
         request.setValue(tokens[name], forHTTPHeaderField: "X-Dojo-Token")
@@ -456,13 +552,15 @@ final class AppModel: NSObject, ObservableObject {
         if let shot = ProcessInfo.processInfo.environment["DOJO_SMOKE_SHOT"], !shot.isEmpty {
             let window = items.first(where: { $0.name == name })?.view.window
             items.first { $0.name != name }?.view.show(Array(AppModel.sample.utf8))
-            // One pane in each of the states a smoke does not reach by itself.
-            let states: [(String, PaneState)] = [("shell-3", .running), ("shell-4", .prompt), ("shell-5", .starting)]
-            for (pane, _) in states { addPane(kind: .shell, host: "", name: pane) }
+            // One pane in each state a smoke does not reach by itself. No hook reports starting.
+            for pane in ["shell-3", "shell-4", "shell-5"] { addPane(kind: .shell, host: "", name: pane) }
             show(tab: nil)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                 guard let self else { return }
-                for (pane, state) in states { self.bus.setState(pane, state) }
+                self.bus.setState("shell-5", .starting)
+                self.smokeHooks("shell-3", [["hook_event_name": "UserPromptSubmit"]])
+                self.smokeHooks("shell-4", [["hook_event_name": "UserPromptSubmit"], ["hook_event_name": "PermissionRequest"]])
+                self.smokeHooks("shell-2", [["hook_event_name": "UserPromptSubmit"], ["hook_event_name": "Stop"]])
                 self.failIfSeen()
                 self.write(shot: shot, of: window)
                 // DOJO_SMOKE_SHOT_PICKER=<file.png>: the picker as well, drawn in the window.

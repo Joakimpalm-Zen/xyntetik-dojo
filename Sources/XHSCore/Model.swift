@@ -25,6 +25,25 @@ public enum PaneState: String, Codable, Sendable {
     case starting, running, idle, prompt, exited
 }
 
+/// What a pane has to tell the owner: it stopped at a prompt, or its turn finished.
+public enum Attention: String, Sendable {
+    case prompt, finished
+}
+
+/// What the owner can be taken to have seen.
+public enum Seen {
+    /// A pane counts as viewed when it has the keys with the app in front. Being on screen is not enough:
+    /// in the overview every pane is, and a turn that finished there can still go unnoticed.
+    public static func viewed<T: Equatable>(active: Bool, keys: T?, pane: T) -> Bool {
+        active && keys == pane
+    }
+
+    /// A notification is for a pane the owner cannot see: another app is in front, or another pane's tab is.
+    public static func notifies<T: Equatable>(active: Bool, shown: T?, pane: T) -> Bool {
+        !active || (shown != nil && shown != pane)
+    }
+}
+
 public enum PaneNames {
     /// First free name of the form kind-N.
     public static func next(for kind: HarnessKind, taken: Set<String>) -> String {
