@@ -51,6 +51,9 @@ final class AppModel: NSObject, ObservableObject {
     /// The pane that has the keys, nil when none has.
     @Published private(set) var focusedPane: ObjectIdentifier?
     private var focusWatch: NSKeyValueObservation?
+    /// The pane that should hold the keys. A move between the grid and a tab drops them, at a moment SwiftUI
+    /// picks, so this pane takes them back when it lands.
+    private weak var keyPane: TerminalPane?
 
     let bus = Bus()
     let port: Int
@@ -98,7 +101,13 @@ final class AppModel: NSObject, ObservableObject {
         selectedTab = id.flatMap { id in agents.contains { $0.id == id } ? id : nil }
         let focus = selectedTab.flatMap { id in agents.first { $0.id == id }?.view }
             ?? agents.first { $0.view.window?.firstResponder === $0.view }?.view
-        if let focus { DispatchQueue.main.async { focus.window?.makeFirstResponder(focus) } }
+        if let focus { give(keys: focus) }
+    }
+
+    /// Gives a pane the keys: now if it is in the window, else when it lands there.
+    private func give(keys view: TerminalPane) {
+        keyPane = view
+        view.window?.makeFirstResponder(view)
     }
 
     /// Keeps `focusedPane` true to the window. SwiftTerm closes its responder methods to subclasses, so the
@@ -106,7 +115,9 @@ final class AppModel: NSObject, ObservableObject {
     func watchFocus(of window: NSWindow) {
         focusWatch = window.observe(\.firstResponder, options: [.initial]) { [weak self] window, _ in
             MainActor.assumeIsolated {
-                self?.focusedPane = (window.firstResponder as? TerminalPane).map(ObjectIdentifier.init)
+                let pane = window.firstResponder as? TerminalPane
+                self?.focusedPane = pane.map(ObjectIdentifier.init)
+                if let pane { self?.keyPane = pane }
             }
         }
     }
@@ -199,6 +210,11 @@ final class AppModel: NSObject, ObservableObject {
         let view = TerminalPane(name: name)
         if fontSize != TerminalPane.defaultFont.pointSize { view.setTextSize(fontSize) }
         view.onExit = { [weak self, weak view] _ in if let view { self?.bus.setState(view.paneName, .exited) } }
+        view.onLanded = { [weak self, weak view] in
+            // It may land before the pane it replaces has left. A rename field that has the keys keeps them.
+            guard let view, self?.keyPane === view, let window = view.window, !(window.firstResponder is NSText) else { return }
+            window.makeFirstResponder(view)
+        }
         // The bus holds relayed messages while the owner types in the pane and while unsent text sits there.
         view.onOwnerInput = { [weak self, weak view] key in if let view { self?.bus.noteOwnerInput(view.paneName, key) } }
         let token = bus.add(name: name, kind: kind, host: host, io: view)
@@ -207,7 +223,7 @@ final class AppModel: NSObject, ObservableObject {
         if !directory.isEmpty { recentFolders = RecentHosts.remember(directory, in: AppModel.foldersFile, valid: RecentHosts.isFolder) }
         items.append(Item(name: name, kind: kind, askFirst: askFirst, view: view, directory: directory))
         Task { await launch(view, kind: kind, host: host, token: token, directory: directory, askFirst: askFirst) }
-        DispatchQueue.main.async { view.window?.makeFirstResponder(view) }
+        give(keys: view)
         return nil
     }
 
@@ -268,7 +284,7 @@ final class AppModel: NSObject, ObservableObject {
         // Re-parenting drops the first responder; give it back to the pane that had it.
         let focused = items.first { $0.view.window?.firstResponder === $0.view }?.view
         items.swapAt(i, j)
-        if let focused { DispatchQueue.main.async { focused.window?.makeFirstResponder(focused) } }
+        if let focused { give(keys: focused) }
     }
 
     func close(_ name: String) {
@@ -287,7 +303,7 @@ final class AppModel: NSObject, ObservableObject {
         if selectedTab == item.id { selectedTab = nil }
         // The keys go to the pane in its place, or the next key would reach no pane at all.
         if hadKeys, let place, let heir = TabOrder.heir(of: place, among: agents.count) { focused = agents[heir].view }
-        if let focused { DispatchQueue.main.async { focused.window?.makeFirstResponder(focused) } }
+        if let focused { give(keys: focused) }
     }
 
     /// Panes whose harness is still running, for the quit confirmation.

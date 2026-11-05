@@ -293,8 +293,8 @@ struct PaneCell: View {
             .font(.callout)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(Paper(tone: Theme.surface, density: 0.6))
-            // The pane with the keys has the tabs' teal line along its foot.
+            // The pane with the keys looks like the selected tab: the lightest paper, a teal line along its foot.
+            .background(Paper(tone: model.focusedPane == item.id ? Theme.paper : Theme.surface, density: 0.6))
             .overlay(alignment: .bottom) {
                 let focused = model.focusedPane == item.id
                 Rectangle().fill(Color(focused ? Theme.teal : Theme.line)).frame(height: focused ? Theme.ruleWidth : 1)
