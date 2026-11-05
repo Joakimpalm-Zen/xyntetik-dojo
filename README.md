@@ -53,6 +53,7 @@ watch, you type, you stay in charge.
 - It looks like a Xyntetik product: the site's colours on a recycled-paper ground (the same by day and night; the system's dark mode does not darken it), the Ensō as the app icon and in the window. The terminals use the text colour and the sixteen colours of Terminal.app's Novel profile on a paper that is greyer than Novel's. A harness paints with those. The pane changes two things: a white background (the band behind a user message in a light theme) becomes the paper shade, and text under a contrast of 4.5 against its background is darkened just enough to reach it, because half of Novel's colours are made for a darker ground. Claude Code starts with the light theme locally and over SSH, only for that session; the host's saved theme stays as it was. Codex picks its own theme. The icon is drawn by `packaging/make-icon.swift` at build time; no image file is checked in.
 - Each pane is a real terminal (SwiftTerm and a pty the pane runs itself, so every byte from the harness passes the pane on its way to the screen). The harness sees an ordinary terminal.
 - Panes draw on the GPU (SwiftTerm's Metal renderer), so a harness repainting its whole screen keeps up with a plain terminal.
+- After a restart the empty window offers one button that reopens the last panes: kind, host, folder, name and ask-first, each resuming its conversation when the harness reported a session. A pane with no session reopens fresh and says so. Nothing reopens by itself. Panes you closed by hand are not in the list, and opening a new pane first drops the offer. The list is `~/.dojo/panes.json`, readable only by you; it holds no tokens.
 - The terminals use the font and row height of Terminal.app's default profile (Courier 10.5 with 16 points between rows for the Novel profile), read from its preferences at launch. Text is antialiased without the extra stroke weight of font smoothing. The fallback is SF Mono at 11 points with normal spacing. Rows keep Terminal.app's height at every text size. Cmd-plus, Cmd-minus and Cmd-0 change every pane's text size while the app runs (8 to 24 points); the size is not kept between launches.
 - Each pane header shows the name, kind, host, model, queued messages and the state as a mark, also on the tabs: a grey dashed ring starting, a blue triangle running, a green dot idle, an exclamation mark on an orange disc at a prompt, a red ring exited. The pointer on a mark names the state. The pane with the keys has a lighter header with a teal line along its foot, like the selected tab; closing it hands the keys to the pane in its place. A pane at a prompt has a coral ring, and the All tab counts the panes waiting. A turn that finished stays marked on its tab and header until you view the pane: with the app in front, the pane has the keys, so in the grid that takes a click. A prompt or a finish in a pane you cannot see also sends a Mac notification, which opens that pane, and the Dock badge counts what you have not viewed. These come from harness hooks only, once per event, and macOS asks your permission for the notifications the first time.
 - The app runs a bus on `127.0.0.1:7788`. Every harness in the window can call four operations: `panes`, `send`, `read` and `state`.
@@ -93,7 +94,7 @@ make install # copy the app to /Applications (replacing the one there) and open 
 make cert    # once: a self-signed certificate so macOS privacy remembers its answers across rebuilds
 make smoke   # launch proof, off screen: two panes, swapped, a click, typed keys echoed back, the bus answering; exit 0
 make smoke HOST=user@box   # the same, with the pane on that host over ssh
-make smoke SHOT=window.png PICKER=picker.png   # the same, plus pictures of the window and the picker to check the look
+make smoke SHOT=window.png PICKER=picker.png EMPTY=empty.png   # the same, plus pictures of the window, the picker and the empty window to check the look
 ```
 
 The pi extension tests need Node.js 22.18 or later. They check actual editor submissions, including local commands and autocomplete.
@@ -161,7 +162,7 @@ tar -C tools -cf - dojo-mcp.py dojo-pi.ts | ssh user@box 'mkdir -p ~/.dojo && ta
 Then press plus and enter `user@box` as the host (or pick it from the clock at the field's edge once you have used it). The app first asks the host which shell it runs commands in (`ssh host 'echo %OS%'`), then runs:
 
 ```
-ssh -t -R <the pane's port>:127.0.0.1:7788 user@box '<harness in the remote login shell>'
+ssh -t -R <the pane's port>:127.0.0.1:7788 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 user@box '<harness in the remote login shell>'
 ```
 
 The harness runs in the remote login shell (`$SHELL -l -i`), so it needs to be on the PATH that shell sets. The reverse tunnel lets the shim on the remote host reach the bus at that port of `127.0.0.1` there. The remote host's own keys, logins and tokens are used; the app stores none. Use key-based SSH; a password prompt shows up in the pane. A remote pi uses the Runner on that host.
@@ -174,7 +175,7 @@ A Windows host with OpenSSH Server and MSYS2 at `C:\msys64` works the same way. 
 
 Claude Code and Codex both run on a Windows host and reach the bus through the tunnel. Codex's config hooks call `python3 "$HOME/.dojo/dojo-mcp.py" hook`, which finds the working `python3` in `~/.dojo/bin`.
 
-Each remote pane has its own forward to the bus, on a free port of its host, so closing one leaves the others connected.
+Each remote pane has its own forward to the bus, on a free port of its host, so closing one leaves the others connected. A keepalive shows a dropped connection within 90 seconds: the pane exits, and if its harness had a session its header has a Reopen button.
 
 <a id="how-harnesses-talk"></a>
 ## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> How harnesses talk
@@ -237,7 +238,7 @@ To install the peer rule permanently as well (for sessions started outside the a
 <a id="not-built"></a>
 ## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> Not built
 
-- Remembering the layout: panes are not restored on restart, because restarting harnesses unasked is worse than an empty window.
+- Restarting panes by itself: restarting harnesses unasked is worse than an empty window, so reopening takes a press of the button.
 - Resizing panes (dragging a header onto another pane swaps the two; a pane's own tab fills the window).
 - Attaching to a session that was started outside the app (in a web terminal or on another screen). A pane is a session the app starts.
 - A full activity heuristic for state: hooks carry the state, and the only heuristic is the 15 second still-screen rule that recovers a `running` pane from a lost Stop.

@@ -57,6 +57,8 @@ public final class Bus {
         /// A hook reported this turn running, and none has reported its end. The still-screen rule may have
         /// called the pane idle in the meantime; that leaves the turn open, so a late Stop still counts.
         var turnOpen = false
+        /// The harness's session, to resume it. Never in what the bus tells other panes.
+        var sessionId: String?
         /// Panes that asked to hear when this one next stops, and since when.
         var watchers: [(asker: Pane, since: Date)] = []
         weak var io: PaneIO?
@@ -80,6 +82,8 @@ public final class Bus {
     private var panes: [Pane] = []
     /// Called after any change a pane header shows.
     public var onChange: (() -> Void)?
+    /// A pane's session id changed.
+    public var onSession: (() -> Void)?
     /// A pane reported, through a hook, something the owner may want to know. See `Attention`.
     public var onAttention: ((String, Attention) -> Void)?
     /// Delay between typing a message and pressing Enter, so the harness sees the paste end first.
@@ -172,6 +176,12 @@ public final class Bus {
         asker.queue.append((sender: target, text: "Bus notice: " + news))
         flush(asker)
     }
+
+    /// The session this pane can resume, nil before its first turn.
+    public func sessionId(_ name: String) -> String? { pane(named: name)?.sessionId }
+
+    /// For a pane whose session the app chose or already knows.
+    public func setSession(_ name: String, _ id: String) { pane(named: name)?.sessionId = id }
 
     public func setModel(_ name: String, _ model: String) {
         guard let p = pane(named: name), p.model != model else { return }
@@ -346,6 +356,12 @@ public final class Bus {
             onChange?()
         }
         pane.quietSince = nil
+        // Not SessionStart: a session with no turn yet has nothing to resume, and resuming it fails.
+        if event["hook_event_name"] as? String != "SessionStart", let id = event["session_id"] as? String,
+           SessionId.isValid(id), id != pane.sessionId {
+            pane.sessionId = id
+            onSession?()
+        }
         // The harness took the composer (as a prompt, or as a local command or shell line that pi reports
         // as UserInputSubmitted): it is empty now, unless keys came after the Enter that sent it, in which
         // case the hook is for an earlier prompt and a newer draft is in the composer.

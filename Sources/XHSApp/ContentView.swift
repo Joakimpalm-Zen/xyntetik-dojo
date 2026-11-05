@@ -32,6 +32,9 @@ struct ContentView: View {
                         .font(.callout)
                         .foregroundStyle(Color(Theme.muted))
                         .padding(.top, 10)
+                    if !model.lastPanes.isEmpty {
+                        Button("Reopen the last panes (\(model.lastPanes.count))") { model.reopenLast() }
+                    }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -119,6 +122,9 @@ struct RunnerStrip: View {
                 Image(systemName: model.runnerLogOpen ? "chevron.down" : "chevron.up")
                     .foregroundStyle(Color(Theme.muted))
                     .help(model.runnerLogOpen ? "Hide Runner's log" : "Show Runner's log")
+                if model.canReopen(item) {
+                    Button("Reopen") { model.reopen(item) }.controlSize(.small).help("Connect again and resume this session")
+                }
                 Button { model.close(item.name) } label: { Image(systemName: "xmark") }
                     .buttonStyle(.borderless)
                     .foregroundStyle(Color(Theme.muted))
