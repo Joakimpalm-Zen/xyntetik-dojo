@@ -133,11 +133,13 @@ public enum Launcher {
     /// The harness command line, the same locally and remotely.
     /// `askFirst` keeps the harness's own approvals: Claude asks for each permission, Codex keeps its
     /// approvals and sandbox. Off by default: a supervised pane runs without prompts.
-    public static func harnessWords(kind: HarnessKind, paneName: String, port: Int, runnerModel: String?, askFirst: Bool = false) -> [ShellWord] {
+    public static func harnessWords(kind: HarnessKind, paneName: String, port: Int, runnerModel: String?, askFirst: Bool = false,
+                                    session: String? = nil) -> [ShellWord] {
         let prompt = PeerRule.launchPrompt(paneName: paneName)
         switch kind {
         case .claude:
-            return [.literal("claude")] + (askFirst ? [] : [.literal("--dangerously-skip-permissions")]) +
+            return [.literal("claude")] + (session.map { [.literal("--resume"), .literal($0)] } ?? []) +
+                   (askFirst ? [] : [.literal("--dangerously-skip-permissions")]) +
                    [.literal("--settings"), .literal(json(claudeSettings(port: port))),
                     .literal("--append-system-prompt"), .literal(prompt),
                     .literal("--mcp-config"), .literal(json(claudeMCP()))]
@@ -145,7 +147,10 @@ public enum Launcher {
             // MCP server and hooks live in ~/.codex/config.toml (written by "dojo install").
             // Owner default: --yolo (no approvals, no sandbox); the hook-trust bypass
             // means the pane's state hooks run without a /hooks confirmation.
-            return [.literal("codex")] + (askFirst ? [] : [.literal("--yolo")]) + [.literal("--dangerously-bypass-hook-trust"),
+            // `codex resume` does not list --yolo, so a resumed pane uses the long form.
+            let start: [ShellWord] = session.map { [.literal("codex"), .literal("resume"), .literal($0)] } ?? [.literal("codex")]
+            let bypass = session == nil ? "--yolo" : "--dangerously-bypass-approvals-and-sandbox"
+            return start + (askFirst ? [] : [.literal(bypass)]) + [.literal("--dangerously-bypass-hook-trust"),
                     .literal("-c"), .literal("developer_instructions=" + Shell.toml(prompt))]
         case .pi:
             // The pane's pi gets its four coding tools whatever the owner's pi settings say
@@ -153,6 +158,8 @@ public enum Launcher {
             var words: [ShellWord] = [.literal("pi"), .literal("-e"), .raw(#""$HOME/.dojo/dojo-pi.ts""#),
                                       .literal("--provider"), .literal("runner")]
             if let runnerModel { words += [.literal("--model"), .literal(runnerModel)] }
+            // The app names pi's session from the start: the same flag creates it and finds it again.
+            if let session { words += [.literal("--session-id"), .literal(session)] }
             // Full-screen layout with the composer at the bottom, whatever the owner's tuiMode setting says;
             // in regular mode pi draws from the top of the pane down and leaves the rest empty.
             return words + [.literal("--tui-mode"), .literal("fullscreen"), .literal("--tools"), .literal(piTools),
@@ -171,7 +178,8 @@ public enum Launcher {
     /// A Windows host (cmd.exe over OpenSSH) runs the same inner command in MSYS2 bash; see `windowsRemoteCommand`.
     public static func plan(kind: HarnessKind, paneName: String, host: String?, port: Int, token: String,
                             runnerModel: String?, loginShell: String, remoteShell: RemoteShell = .posix,
-                            directory: String? = nil, askFirst: Bool = false, remotePort: Int? = nil) -> LaunchPlan {
+                            directory: String? = nil, askFirst: Bool = false, remotePort: Int? = nil,
+                            session: String? = nil) -> LaunchPlan {
         let local = host == nil || host!.isEmpty
         // The port the harness calls: on a host, its end of this pane's forward.
         let busPort = local ? port : remotePort ?? port
@@ -181,7 +189,7 @@ public enum Launcher {
             // The smoke types a line into this pane and expects it back.
             return LaunchPlan(executable: "/bin/sh", args: ["-c", "read line; echo \"ok $line\""], environment: env, directory: directory)
         }
-        let harness = harnessWords(kind: kind, paneName: paneName, port: busPort, runnerModel: runnerModel, askFirst: askFirst)
+        let harness = harnessWords(kind: kind, paneName: paneName, port: busPort, runnerModel: runnerModel, askFirst: askFirst, session: session)
         let path: ShellWord = .raw(#"PATH="$HOME/.dojo/bin:$PATH""#)
         guard let host, !local else {
             let line = "exec " + Shell.line([.literal("env"), path] + harness)
@@ -248,6 +256,52 @@ public enum Launcher {
         return (RemoteShell.detect(probeOutput: output), nil)
     }
 
+    /// The session a pi pane starts with. Only a local pi that lists the flag gets one: any other starts as it
+    /// always has, because a pi that does not know the flag would not start at all.
+    public static func piSession(saved: String?, host: String, listed: Bool, newId: @autoclosure () -> String) -> String? {
+        host.isEmpty && listed ? saved ?? newId() : nil
+    }
+
+    /// Whether a command's output lists `flag`, run in the login shell as a pane is. No answer in `timeout`
+    /// seconds is a no, so a slow or hanging profile cannot hold a pane back.
+    public static func helpLists(_ flag: String, command: String, loginShell: String, timeout: TimeInterval = 5) async -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: loginShell)
+        process.arguments = ["-l", "-i", "-c", command]
+        process.standardInput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        let out = Pipe()
+        process.standardOutput = out
+        guard (try? process.run()) != nil else { return false }
+        return await withCheckedContinuation { continuation in
+            let answer = Once(continuation)
+            DispatchQueue.global().async {
+                let data = out.fileHandleForReading.readDataToEndOfFile()
+                answer.give(String(decoding: data, as: UTF8.self).contains(flag))
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
+                process.terminate()
+                answer.give(false)
+            }
+        }
+    }
+
+    /// Resumes a continuation with the first answer of two that race.
+    private final class Once: @unchecked Sendable {
+        private let lock = NSLock()
+        private var continuation: CheckedContinuation<Bool, Never>?
+
+        init(_ continuation: CheckedContinuation<Bool, Never>) { self.continuation = continuation }
+
+        func give(_ answer: Bool) {
+            lock.lock()
+            let waiting = continuation
+            continuation = nil
+            lock.unlock()
+            waiting?.resume(returning: answer)
+        }
+    }
+
     /// The line a pane shows when its host did not answer the shell probe.
     public static func probeNote(error: String) -> String {
         let first = error.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty } ?? "no answer"
@@ -257,7 +311,9 @@ public enum Launcher {
 
     /// ssh with a reverse tunnel so the shim on the remote host reaches the bus at 127.0.0.1:remotePort there.
     public static func sshWords(host: String, port: Int, remotePort: Int, remoteCommand: String) -> [ShellWord] {
+        // The keepalive: a dropped connection ends the pane within 90 seconds instead of hanging it.
         [.literal("ssh"), .literal("-t"), .literal("-R"), .literal("\(remotePort):127.0.0.1:\(port)"),
+         .literal("-o"), .literal("ServerAliveInterval=30"), .literal("-o"), .literal("ServerAliveCountMax=3"),
          .literal(host), .literal(remoteCommand)]
     }
 

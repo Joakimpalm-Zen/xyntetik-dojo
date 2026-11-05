@@ -43,10 +43,10 @@ import Testing
         let plan = Launcher.plan(kind: .codex, paneName: "codex-2", host: "user@box", port: 7788, token: "tok",
                                  runnerModel: nil, loginShell: "/bin/zsh")
         let ssh = shellArgs(plan.args[3], home: home)
-        #expect(Array(ssh.prefix(5)) == ["ssh", "-t", "-R", "7788:127.0.0.1:7788", "user@box"])
-        #expect(ssh.count == 6)
+        #expect(Array(ssh.prefix(9)) == ["ssh", "-t", "-R", "7788:127.0.0.1:7788", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=3", "user@box"])
+        #expect(ssh.count == 10)
         // On the remote host: the login shell, then env with the pane's variables, then the harness.
-        let remote = shellArgs(ssh[5], home: "/remote/home")
+        let remote = shellArgs(ssh[9], home: "/remote/home")
         #expect(Array(remote.prefix(4)) == ["/bin/remote-shell", "-l", "-i", "-c"])
         let harness = shellArgs(remote[4], home: "/remote/home")
         #expect(Array(harness.prefix(6)) == ["env", "DOJO_PANE=codex-2", "DOJO_PORT=7788", "DOJO_TOKEN=tok",
@@ -84,9 +84,9 @@ import Testing
         let windows = Launcher.plan(kind: .claude, paneName: "claude-3", host: "me@box", port: 7788, token: "tok",
                                     runnerModel: nil, loginShell: "/bin/zsh", remoteShell: .windows)
         let ssh = shellArgs(windows.args[3], home: home)
-        #expect(Array(ssh.prefix(5)) == ["ssh", "-t", "-R", "7788:127.0.0.1:7788", "me@box"])
-        #expect(ssh.count == 6)
-        let remote = ssh[5]
+        #expect(Array(ssh.prefix(9)) == ["ssh", "-t", "-R", "7788:127.0.0.1:7788", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=3", "me@box"])
+        #expect(ssh.count == 10)
+        let remote = ssh[9]
         let head = #"set MSYS2_PATH_TYPE=inherit&& C:\msys64\usr\bin\bash.exe -lc "eval \"$^(echo "#
         let tail = #" ^| base64 -d^)\"""#
         #expect(remote.hasPrefix(head))
@@ -96,7 +96,7 @@ import Testing
         #expect(!payload.isEmpty)
         #expect(payload.allSatisfy { $0.isLetter || $0.isNumber || "+/=".contains($0) })
         // bash.exe then runs exactly the line a POSIX host's login shell gets.
-        let posixInner = shellArgs(shellArgs(posix.args[3], home: home)[5], home: "/remote/home")[4]
+        let posixInner = shellArgs(shellArgs(posix.args[3], home: home)[9], home: "/remote/home")[4]
         #expect(Launcher.windowsInnerCommand(remote) == posixInner)
         let harness = shellArgs(try #require(Launcher.windowsInnerCommand(remote)), home: "/c/Users/me")
         #expect(Array(harness.prefix(6)) == ["env", "DOJO_PANE=claude-3", "DOJO_PORT=7788", "DOJO_TOKEN=tok",
@@ -120,7 +120,7 @@ import Testing
         #expect(plan.executable == "/bin/zsh")
         let ssh = shellArgs(plan.args[3], home: home)
         #expect(Array(ssh.prefix(2)) == ["ssh", "-t"])
-        #expect(shellArgs(shellArgs(ssh[5], home: "/remote/home")[4], home: "/remote/home").suffix(3) == ["/bin/sh", "-c", "echo ok"])
+        #expect(shellArgs(shellArgs(ssh[9], home: "/remote/home")[4], home: "/remote/home").suffix(3) == ["/bin/sh", "-c", "echo ok"])
     }
 
     @Test func panesStartInTheChosenFolder() {
@@ -132,11 +132,11 @@ import Testing
         let remote = Launcher.plan(kind: .codex, paneName: "codex-1", host: "box", port: 7788, token: "t",
                                    runnerModel: nil, loginShell: "/bin/zsh", directory: "/srv/it's here")
         #expect(remote.directory == nil)
-        let inner = shellArgs(shellArgs(remote.args[3], home: home)[5], home: "/remote/home")[4]
+        let inner = shellArgs(shellArgs(remote.args[3], home: home)[9], home: "/remote/home")[4]
         #expect(inner.hasPrefix("cd '/srv/it'\\''s here' && exec env "))
         let windows = Launcher.plan(kind: .codex, paneName: "codex-1", host: "me@box", port: 7788, token: "t",
                                     runnerModel: nil, loginShell: "/bin/zsh", remoteShell: .windows, directory: #"C:\Users\me\repo"#)
-        #expect(Launcher.windowsInnerCommand(shellArgs(windows.args[3], home: home)[5])?.hasPrefix(#"cd 'C:\Users\me\repo' && exec env "#) == true)
+        #expect(Launcher.windowsInnerCommand(shellArgs(windows.args[3], home: home)[9])?.hasPrefix(#"cd 'C:\Users\me\repo' && exec env "#) == true)
     }
 
     @Test func recentHostsRememberTheLatestFirst() throws {

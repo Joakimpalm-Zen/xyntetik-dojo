@@ -30,6 +30,64 @@ public enum Attention: String, Sendable {
     case prompt, finished
 }
 
+/// A harness's session id, as it may go on a command line: it comes from a hook or a file, so it must not be
+/// able to read as a flag.
+public enum SessionId {
+    public static func isValid(_ id: String) -> Bool {
+        guard let first = id.unicodeScalars.first, id.count <= 128 else { return false }
+        let word = CharacterSet.alphanumerics.intersection(CharacterSet(charactersIn: "\u{0}"..."\u{7F}"))
+        return word.contains(first) && id.unicodeScalars.allSatisfy { word.contains($0) || $0 == "-" || $0 == "_" }
+    }
+}
+
+/// A pane as it can be opened again. No token: a reopened pane gets a new one.
+public struct SavedPane: Codable, Equatable, Sendable {
+    public let kind: HarnessKind
+    public let host: String
+    public let directory: String
+    public let name: String
+    public let askFirst: Bool
+    public let session: String?
+
+    public init(kind: HarnessKind, host: String, directory: String, name: String, askFirst: Bool, session: String?) {
+        self.kind = kind
+        self.host = host
+        self.directory = directory
+        self.name = name
+        self.askFirst = askFirst
+        self.session = session
+    }
+}
+
+/// The open panes, kept in a file only the owner can read.
+public enum SavedPanes {
+    public static func save(_ panes: [SavedPane], to file: URL) {
+        guard let data = try? JSONEncoder().encode(panes) else { return }
+        let folder = file.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let temporary = folder.appendingPathComponent(".panes-\(UUID().uuidString)")
+        guard let handle = openPrivate(temporary) else { return }
+        let written = (try? handle.write(contentsOf: data)) != nil
+        try? handle.close()
+        if !written || rename(temporary.path, file.path) != 0 { try? FileManager.default.removeItem(at: temporary) }
+    }
+
+    /// A new file only the owner can read, from the moment it exists: the mode is set as it is created.
+    static func openPrivate(_ file: URL) -> FileHandle? {
+        let descriptor = open(file.path, O_CREAT | O_EXCL | O_WRONLY, 0o600)
+        return descriptor < 0 ? nil : FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+    }
+
+    /// What can be trusted of the file: a pane with a bad name or host goes, a bad session id reopens fresh.
+    public static func load(_ file: URL) -> [SavedPane] {
+        guard let data = try? Data(contentsOf: file), let panes = try? JSONDecoder().decode([SavedPane].self, from: data) else { return [] }
+        return panes.filter { PaneNames.isValid($0.name) && ($0.host.isEmpty || Hosts.isValid($0.host)) }.map { pane in
+            let session = pane.session.flatMap { SessionId.isValid($0) ? $0 : nil }
+            return SavedPane(kind: pane.kind, host: pane.host, directory: pane.directory, name: pane.name, askFirst: pane.askFirst, session: session)
+        }
+    }
+}
+
 /// What the owner can be taken to have seen.
 public enum Seen {
     /// A pane counts as viewed when it has the keys with the app in front. Being on screen is not enough:

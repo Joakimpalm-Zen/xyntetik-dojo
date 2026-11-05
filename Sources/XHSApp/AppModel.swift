@@ -59,6 +59,11 @@ final class AppModel: NSObject, ObservableObject {
         notifier.onOpen = { [weak self] pane in self?.open(pane) }
         return notifier
     }()
+    /// The panes of the last run, for the button in the empty window, until a pane opens in this one.
+    @Published private(set) var lastPanes: [SavedPane] = []
+    /// Set while quitting: the panes close, and the list of them must outlive that.
+    private var keepingList = false
+    private var piFlagCheck: Task<Bool, Never>?
     /// The pane that has the keys, nil when none has.
     @Published private(set) var focusedPane: ObjectIdentifier?
     private var focusWatch: NSKeyValueObservation?
@@ -92,7 +97,9 @@ final class AppModel: NSObject, ObservableObject {
         }
         recentHosts = RecentHosts.load(AppModel.hostsFile)
         recentFolders = RecentHosts.load(AppModel.foldersFile, valid: RecentHosts.isFolder)
+        lastPanes = SavedPanes.load(AppModel.panesFile)
         bus.onChange = { [weak self] in self?.revision &+= 1 }
+        bus.onSession = { [weak self] in self?.savePanes() }
         bus.onAttention = { [weak self] name, attention in self?.attend(name, attention) }
         startServer()
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
@@ -225,7 +232,8 @@ final class AppModel: NSObject, ObservableObject {
     /// Adds a pane and starts its harness. Returns a message for the picker when the input is not usable.
     /// `directory` is the start folder: on this Mac it must exist (~ is expanded); on a host it is passed as typed.
     @discardableResult
-    func addPane(kind: HarnessKind, host rawHost: String, name rawName: String, directory rawDirectory: String = "", askFirst: Bool = false) -> String? {
+    func addPane(kind: HarnessKind, host rawHost: String, name rawName: String, directory rawDirectory: String = "", askFirst: Bool = false,
+                 session: String? = nil, reopened: Bool = false) -> String? {
         let host = rawHost.trimmingCharacters(in: .whitespaces)
         if !host.isEmpty, !Hosts.isValid(host) {
             return "Host is an ssh destination such as box or user@box."
@@ -274,12 +282,28 @@ final class AppModel: NSObject, ObservableObject {
         if !host.isEmpty { recentHosts = RecentHosts.remember(host, in: AppModel.hostsFile) }
         if !directory.isEmpty { recentFolders = RecentHosts.remember(directory, in: AppModel.foldersFile, valid: RecentHosts.isFolder) }
         items.append(Item(name: name, kind: kind, askFirst: askFirst, view: view, directory: directory))
-        Task { await launch(view, kind: kind, host: host, token: token, directory: directory, askFirst: askFirst) }
+        if let session { bus.setSession(name, session) }
+        lastPanes = []
+        savePanes()
+        Task { await launch(view, kind: kind, host: host, token: token, directory: directory, askFirst: askFirst, saved: session, reopened: reopened) }
         give(keys: view)
         return nil
     }
 
-    private func launch(_ view: TerminalPane, kind: HarnessKind, host: String, token: String, directory: String, askFirst: Bool) async {
+    private func launch(_ view: TerminalPane, kind: HarnessKind, host: String, token: String, directory: String, askFirst: Bool,
+                        saved: String?, reopened: Bool) async {
+        var session = saved
+        if kind == .pi {
+            // Claude Code and Codex report their session through hooks; a pi that can take one is given it.
+            let listed = host.isEmpty ? await piListsSession() : false
+            guard items.contains(where: { $0.view === view }) else { return }
+            session = Launcher.piSession(saved: saved, host: host, listed: listed, newId: UUID().uuidString.lowercased())
+            bus.setSession(view.paneName, session)
+            savePanes()
+        }
+        if reopened, HarnessKind.pickable.contains(kind), saved == nil || session != saved {
+            view.feed(text: "No session to resume: this pane starts fresh.\r\n\r\n")
+        }
         var model: String?
         if kind == .pi, host.isEmpty {
             model = await Launcher.fetchRunnerModel()
@@ -307,7 +331,7 @@ final class AppModel: NSObject, ObservableObject {
         if let note { view.feed(text: note + "\r\n\r\n") }
         start(view, Launcher.plan(kind: kind, paneName: view.paneName, host: host.isEmpty ? nil : host, port: port,
                                   token: token, runnerModel: model, loginShell: loginShell, remoteShell: remoteShell,
-                                  directory: directory, askFirst: askFirst, remotePort: remotePort))
+                                  directory: directory, askFirst: askFirst, remotePort: remotePort, session: session))
     }
 
     private func start(_ view: TerminalPane, _ plan: LaunchPlan) {
@@ -326,6 +350,7 @@ final class AppModel: NSObject, ObservableObject {
         remoteShells[new] = remoteShells.removeValue(forKey: name)
         items[index].name = new
         items[index].view.paneName = new
+        savePanes()
         return nil
     }
 
@@ -363,6 +388,7 @@ final class AppModel: NSObject, ObservableObject {
         // The keys go to the pane in its place, or the next key would reach no pane at all.
         if hadKeys, let place, let heir = TabOrder.heir(of: place, among: agents.count) { focused = agents[heir].view }
         if let focused { give(keys: focused) }
+        savePanes()
     }
 
     /// Panes whose harness is still running, for the quit confirmation.
@@ -370,8 +396,55 @@ final class AppModel: NSObject, ObservableObject {
         items.filter { bus.info($0.name)?.state != .exited }.count
     }
 
+    /// Quitting, and the end of a smoke. The list stays: this is what the next launch offers to reopen.
     func closeAll() {
+        keepingList = true
         for item in items { close(item.name) }
+        keepingList = false
+    }
+
+    // MARK: reopening
+
+    /// Whether the local pi knows --session-id, asked once per run.
+    private func piListsSession() async -> Bool {
+        let shell = loginShell
+        let check = piFlagCheck ?? Task { await Launcher.helpLists("--session-id", command: "pi --help", loginShell: shell) }
+        piFlagCheck = check
+        return await check.value
+    }
+
+    private func savePanes() {
+        guard !keepingList else { return }
+        SavedPanes.save(items.map { item in
+            SavedPane(kind: item.kind, host: bus.info(item.name)?.host ?? "", directory: item.directory, name: item.name,
+                      askFirst: item.askFirst, session: bus.sessionId(item.name))
+        }, to: AppModel.panesFile)
+    }
+
+    /// The button in the empty window. Nothing reopens by itself.
+    func reopenLast() {
+        for pane in lastPanes {
+            if let trouble = addPane(kind: pane.kind, host: pane.host, name: pane.name, directory: pane.directory, askFirst: pane.askFirst,
+                                     session: pane.session, reopened: true) {
+                problem = "\(pane.name): \(trouble)"
+            }
+        }
+    }
+
+    /// A remote pane whose connection dropped can come back, if it has a session to come back to.
+    func canReopen(_ item: Item) -> Bool {
+        guard let info = bus.info(item.name) else { return false }
+        return info.state == .exited && !info.host.isEmpty && bus.sessionId(item.name) != nil
+    }
+
+    func reopen(_ item: Item) {
+        guard canReopen(item), let session = bus.sessionId(item.name) else { return }
+        let host = bus.info(item.name)?.host ?? ""
+        close(item.name)
+        if let trouble = addPane(kind: item.kind, host: host, name: item.name, directory: item.directory, askFirst: item.askFirst,
+                                 session: session, reopened: true) {
+            problem = "\(item.name): \(trouble)"
+        }
     }
 
     // MARK: bus server
@@ -573,7 +646,7 @@ final class AppModel: NSObject, ObservableObject {
                 self.write(shot: shot, of: window)
                 // DOJO_SMOKE_SHOT_PICKER=<file.png>: the picker as well, drawn in the window.
                 guard let picker = ProcessInfo.processInfo.environment["DOJO_SMOKE_SHOT_PICKER"], !picker.isEmpty else {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { self.closeAll(); exit(0) }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { Task { await self.endSmoke() } }
                     return
                 }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
@@ -581,13 +654,47 @@ final class AppModel: NSObject, ObservableObject {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
                         self.failIfSeen()
                         self.write(shot: picker, of: window)
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { self.closeAll(); exit(0) }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { Task { await self.endSmoke() } }
                     }
                 }
             }
             return
         }
+        await endSmoke()
+    }
+
+    /// Quits as the app quits, then proves the next launch's offer: the panes outlive the quit, with their
+    /// session, and the button brings them back. DOJO_SMOKE_SHOT_EMPTY=<file.png>: the empty window with it.
+    private func endSmoke() async {
+        let window = items.first?.view.window
+        let names = items.map(\.name)
+        let local = items.allSatisfy { bus.info($0.name)?.host.isEmpty == true }
+        picking = false
+        // A made-up id, on a pane that has had a turn.
+        if local, let pane = names.first {
+            smokeHooks(pane, [["hook_event_name": "UserPromptSubmit", "session_id": "11111111-2222-3333-4444-555555555555"]])
+        }
         closeAll()
+        if local {
+            lastPanes = SavedPanes.load(AppModel.panesFile)
+            guard lastPanes.map(\.name) == names, lastPanes.contains(where: { $0.session != nil }) else {
+                print("DOJO_SMOKE failed: after quitting, the list holds \(lastPanes.map(\.name)), not \(names), or no session")
+                exit(1)
+            }
+            if let shot = ProcessInfo.processInfo.environment["DOJO_SMOKE_SHOT_EMPTY"], !shot.isEmpty {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                failIfSeen()
+                write(shot: shot, of: window)
+                try? await Task.sleep(nanoseconds: 600_000_000)
+            }
+            reopenLast()
+            guard items.map(\.name) == names, lastPanes.isEmpty, problem.isEmpty else {
+                print("DOJO_SMOKE failed: reopening gave \(items.map(\.name)), not \(names); \(problem)")
+                exit(1)
+            }
+            closeAll()
+        }
+        try? FileManager.default.removeItem(at: Headless.state())
         exit(0)
     }
 
@@ -620,6 +727,7 @@ final class AppModel: NSObject, ObservableObject {
 
     static let hostsFile = Headless.state().appendingPathComponent("hosts")
     static let foldersFile = Headless.state().appendingPathComponent("folders")
+    static let panesFile = Headless.state().appendingPathComponent("panes.json")
 
     /// A folder picker for the New terminal sheet; nil when cancelled.
     static func chooseFolder() -> String? {
