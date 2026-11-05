@@ -95,7 +95,8 @@ public enum Launcher {
     /// The shim as the harness runs it; $HOME is expanded on the host the harness runs on.
     public static let shimCommand = #"exec python3 "$HOME/.dojo/dojo-mcp.py""#
 
-    /// Claude Code settings passed with --settings: hooks that report state to the bus.
+    /// Claude Code settings passed with --settings: the light theme for the paper panes and bus hooks.
+    /// The theme applies locally and over SSH without changing the host's saved preference.
     /// SessionStart is a command hook through the shim: Claude Code does not run http hooks for that event.
     /// PostModelSwitch (after /model) goes the same way and carries the new model name for the header.
     public static func claudeSettings(port: Int) -> [String: Any] {
@@ -108,7 +109,7 @@ public enum Launcher {
         ]
         let group: [[String: Any]] = [["hooks": [hook]]]
         let command: [String: Any] = ["type": "command", "command": shimCommand.replacingOccurrences(of: "exec ", with: "") + " hook", "timeout": 5]
-        return ["hooks": [
+        return ["theme": "light", "hooks": [
             "SessionStart": [["hooks": [command]]],
             "PostModelSwitch": [["hooks": [command]]],
             "UserPromptSubmit": group,

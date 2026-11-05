@@ -29,6 +29,7 @@ import Testing
                                    "--dangerously-skip-permissions"])
         let settings = try #require(argv.firstIndex(of: "--settings"))
         let parsed = try JSONSerialization.jsonObject(with: Data(argv[settings + 1].utf8)) as! NSDictionary
+        #expect(parsed["theme"] as? String == "light")
         #expect(parsed == Launcher.claudeSettings(port: 7788) as NSDictionary)
         let mcp = try #require(argv.firstIndex(of: "--mcp-config"))
         #expect(mcp == argv.count - 2)
@@ -100,6 +101,9 @@ import Testing
         let harness = shellArgs(try #require(Launcher.windowsInnerCommand(remote)), home: "/c/Users/me")
         #expect(Array(harness.prefix(6)) == ["env", "DOJO_PANE=claude-3", "DOJO_PORT=7788", "DOJO_TOKEN=tok",
                                              "PATH=/c/Users/me/.dojo/bin:/usr/bin:/bin", "claude"])
+        let settings = try #require(harness.firstIndex(of: "--settings"))
+        let parsed = try JSONSerialization.jsonObject(with: Data(harness[settings + 1].utf8)) as! NSDictionary
+        #expect(parsed["theme"] as? String == "light")
     }
 
     @Test func remoteShellProbe() {
