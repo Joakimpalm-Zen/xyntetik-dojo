@@ -26,6 +26,13 @@ import XHSCore
         }
     }
 
+    /// Large text, 26 points, so its bar is 3.
+    @Test func theWordmarkXReadsOnEveryGround() {
+        for ground in [Theme.bg, Theme.surface, Theme.paper] {
+            #expect(ratio(Theme.wordmarkX, ground) >= 3, "\(ground)")
+        }
+    }
+
     @Test func everyStateWordReadsOnTheHeader() {
         for state in [PaneState.idle, .running, .prompt, .exited, .starting] {
             #expect(ratio(PaneCell.tone(state), Theme.surface) >= 4.5, "\(state)")
