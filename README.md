@@ -54,7 +54,7 @@ watch, you type, you stay in charge.
 - Each pane is a real terminal (SwiftTerm and a pty the pane runs itself, so every byte from the harness passes the pane on its way to the screen). The harness sees an ordinary terminal.
 - Panes draw on the GPU (SwiftTerm's Metal renderer), so a harness repainting its whole screen keeps up with a plain terminal.
 - The terminals use the font and row height of Terminal.app's default profile (Courier 10.5 with 16 points between rows for the Novel profile), read from its preferences at launch. Text is antialiased without the extra stroke weight of font smoothing. The fallback is SF Mono at 11 points with normal spacing. Rows keep Terminal.app's height at every text size. Cmd-plus, Cmd-minus and Cmd-0 change every pane's text size while the app runs (8 to 24 points); the size is not kept between launches.
-- Each pane header shows the name, kind, host, model, queued messages and a state colour: grey starting, blue running, green idle, orange prompt, red exited.
+- Each pane header shows the name, kind, host, model, queued messages and the state as a mark, also on the tabs: a grey dashed ring starting, a blue triangle running, a green dot idle, an exclamation mark on an orange disc at a prompt, a red ring exited. The pointer on a mark names the state. The pane with the keys has a lighter header with a teal line along its foot, like the selected tab; closing it hands the keys to the pane in its place.
 - The app runs a bus on `127.0.0.1:7788`. Every harness in the window can call four operations: `panes`, `send`, `read` and `state`.
 
 <a id="install"></a>

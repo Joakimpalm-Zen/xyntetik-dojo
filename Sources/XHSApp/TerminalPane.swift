@@ -26,6 +26,8 @@ final class TerminalPane: TerminalView, PaneIO {
     var onExit: ((Int32?) -> Void)?
     /// Called with what each batch of the owner's keystrokes did to the composer.
     var onOwnerInput: ((Bus.OwnerKey) -> Void)?
+    /// Called each time the pane arrives in a window, as a move between the grid and a tab does.
+    var onLanded: (() -> Void)?
     private var process: LocalProcess!
 
     init(name: String) {
@@ -128,6 +130,7 @@ final class TerminalPane: TerminalView, PaneIO {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window != nil, !isUsingMetalRenderer { try? setUseMetal(true) }
+        if window != nil { onLanded?() }
     }
 
     // MARK: bytes from the harness
