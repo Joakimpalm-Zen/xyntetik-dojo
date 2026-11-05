@@ -53,6 +53,8 @@ struct ContentView: View {
         .toolbar {
             if #available(macOS 26.0, *) {
                 titleItem.sharedBackgroundVisibility(.hidden)
+                // Without it the toolbar sets the plus right after the centred title.
+                ToolbarSpacer(.flexible)
             } else {
                 titleItem
             }
