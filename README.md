@@ -198,7 +198,7 @@ dojo watch codex-1                 # one line comes here when codex-1 next goes 
   <img src="packaging/readme/window.png" alt="Claude Code asks Codex and pi to reply over the bus; both replies land in its pane as green [from: name] lines" width="900">
 </p>
 
-`watch` replaces waiting and polling. A pane asks once and gets one `[from: codex-1] Bus notice: codex-1 is idle.` line, delivered like any message. The notice says it comes from the bus, since the target did not write it. A target that closes ends the request with a line, and so do 12 hours with no news. Idle means what `dojo state` means, so a still screen for 15 seconds counts. Remote hosts need `make remote-setup` once for the new command.
+`watch` replaces waiting and polling. A pane asks once and gets one `[from: codex-1] Bus notice: codex-1 finished its turn.` line, delivered like any message. The notice says it comes from the bus, since the target did not write it, and it says what it rests on: `finished its turn` when a hook reported that, `looks idle` when the screen has been still for 15 seconds but no hook has reported the end of the turn, which may still be going, and `is idle` for a pane with no hook-reported turn. Any of them ends the request; read the pane or watch again, and a real finish after `looks idle` still reaches you. A target that closes ends the request with a line, and so do 12 hours with no news. Remote hosts need `make remote-setup` once for the new command.
 
 `send` types `[from: <your pane>] <text>` into the target terminal and presses Enter, so the target harness gets it as typed input. Ask any harness to do it in plain words: "send codex-1 a summary of what you changed".
 

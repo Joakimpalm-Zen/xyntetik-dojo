@@ -148,7 +148,11 @@ public final class Bus {
         onChange?()
         flush(p)
         switch state {
-        case .idle: tellWatchers(of: p, "\(p.name) is idle.")
+        // A hook's end of a turn has told them already. What is left is the still-screen rule, and the line
+        // says so while a hook-reported turn is open: the bus does not know that turn ended.
+        case .idle:
+            tellWatchers(of: p, p.turnOpen ? "\(p.name) looks idle: its screen has been still for \(Int(idleAfterQuiet)) seconds, "
+                + "but no hook has reported the end of its turn." : "\(p.name) is idle.")
         case .prompt: tellWatchers(of: p, "\(p.name) is at a prompt.")
         case .exited: tellWatchers(of: p, "\(p.name) has exited.")
         case .starting, .running: break
@@ -362,6 +366,9 @@ public final class Bus {
             : next == .idle && pane.turnOpen ? .finished : nil
         if next == .running { pane.turnOpen = true }
         if next == .idle { pane.turnOpen = false }
+        // Here, not in setState: after the still-screen rule the state does not change, and an asker who
+        // watched again is waiting for exactly this.
+        if attention == .finished { tellWatchers(of: pane, "\(pane.name) finished its turn.") }
         setState(pane.name, next)
         if let attention { onAttention?(pane.name, attention) }
     }

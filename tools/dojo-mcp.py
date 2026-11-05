@@ -77,7 +77,9 @@ TOOLS = [
         "name": "watch",
         "description": "Ask to hear when a terminal stops. One line is typed in here when it next "
         "goes idle, reaches a prompt or exits, instead of waiting or polling. The reply gives its "
-        "state now. If it closes, or nothing happens in 12 hours, a line says so and the request ends.",
+        "state now. If it closes, or nothing happens in 12 hours, a line says so and the request ends. "
+        "'finished its turn' means a hook reported it. 'looks idle' means only that its screen has been "
+        "still for 15 seconds with no such report: the turn may still be going, so read the pane or watch again.",
         "inputSchema": {
             "type": "object",
             "properties": {"pane": {"type": "string", "description": "Terminal name"}},

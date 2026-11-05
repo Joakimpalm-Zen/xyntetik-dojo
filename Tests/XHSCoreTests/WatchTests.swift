@@ -32,11 +32,52 @@ import Testing
         #expect(watch().0 == 200)
         #expect(askerIO.typed.isEmpty)
         hook(target, "Stop")
-        #expect(askerIO.typed.contains("[from: target] Bus notice: target is idle."))
+        #expect(askerIO.typed.contains("[from: target] Bus notice: target finished its turn."))
         let heard = askerIO.typed
         hook(target, "UserPromptSubmit")
         hook(target, "Stop")
         #expect(askerIO.typed == heard)
+    }
+
+    /// Runs the still-screen rule to its end on a running target.
+    private func stillScreen(_ advance: () -> Void) {
+        bus.tick()
+        advance()
+        bus.tick()
+        advance()
+        bus.tick()
+    }
+
+    @Test func aStillScreenDuringAHookReportedTurnSaysOnlyThat() {
+        var clock = Date(timeIntervalSince1970: 1000)
+        bus.now = { clock }
+        hook(target, "UserPromptSubmit")
+        _ = watch()
+        stillScreen { clock += 60 }
+        #expect(bus.info("target")?.state == .idle)
+        #expect(askerIO.typed.contains("Bus notice: target looks idle: its screen has been still for 15 seconds, but no hook has reported the end of its turn."))
+        #expect(!askerIO.typed.contains("finished its turn"))
+    }
+
+    @Test func watchingAgainAfterThatHearsTheRealFinish() {
+        var clock = Date(timeIntervalSince1970: 1000)
+        bus.now = { clock }
+        hook(target, "UserPromptSubmit")
+        _ = watch()
+        stillScreen { clock += 60 }
+        _ = watch()
+        hook(target, "Stop")
+        #expect(askerIO.typed.contains("Bus notice: target finished its turn."))
+    }
+
+    @Test func aPaneWithNoHookReportedTurnIsPlainlyIdle() {
+        bus.setState("target", .running)
+        _ = watch()
+        var clock = Date(timeIntervalSince1970: 1000)
+        bus.now = { clock }
+        stillScreen { clock += 60 }
+        #expect(askerIO.typed.contains("Bus notice: target is idle."))
+        #expect(!askerIO.typed.contains("looks idle"))
     }
 
     @Test func aPromptCounts() {
@@ -105,7 +146,7 @@ import Testing
         #expect(askerIO.typed.isEmpty)
         #expect(bus.info("asker")?.queued == 1)
         hook(asker, "Stop")
-        #expect(askerIO.typed.contains("Bus notice: target is idle."))
+        #expect(askerIO.typed.contains("Bus notice: target finished its turn."))
     }
 
     @Test func thereIsNoWatchingYourselfOrAPaneThatHasExited() {
