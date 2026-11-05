@@ -143,7 +143,7 @@ final class TerminalPane: TerminalView, PaneIO {
 
     /// On the way from the harness to the screen, a white background becomes the paper shade and every
     /// `[from: <name>]` tag is wrapped in the Xyntetik green.
-    private func show(_ bytes: [UInt8]) {
+    func show(_ bytes: [UInt8]) {
         flush?.cancel()
         let repainted = Repaint.apply(bytes, carry: &sequenceCarry, shade: Theme.shade)
         let out = Highlight.tagged(repainted, carry: &carry, color: TerminalPane.tagColor)
