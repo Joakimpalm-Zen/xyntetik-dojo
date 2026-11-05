@@ -102,6 +102,8 @@ The Swift tests cover the bus and its delivery rules, the command lines (parsed 
 
 For a manual font check, compare regular, bold and italic text with Terminal.app's default profile at the same text size. Check the stroke weight and the distance between lines as well as the font name.
 
+For a manual title bar check, resize the window from its minimum width to a wide window. The mark and name stay together at the centre, with the native window controls on the left and Add on the right.
+
 `DOJO_PORT` overrides the bus port. There is no other setting. The only files the app keeps are `~/.dojo/hosts` and `~/.dojo/folders` (the hosts and start folders you used, latest first, one per line) and `~/.dojo/runner/` (Runner's binary, its roster copy, the 16 MiB model heads, the fits list and your model choice); edit or delete them by hand.
 
 <a id="first-run"></a>

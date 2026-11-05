@@ -51,6 +51,11 @@ struct ContentView: View {
         .background(Paper())
         .frame(minWidth: 640, minHeight: 400)
         .toolbar {
+            if #available(macOS 26.0, *) {
+                titleItem.sharedBackgroundVisibility(.hidden)
+            } else {
+                titleItem
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button { model.picking = true } label: { Image(systemName: "plus") }
                     .foregroundStyle(Color(Theme.teal))
@@ -60,6 +65,18 @@ struct ContentView: View {
         }
         .sheet(isPresented: $model.picking) {
             PickerSheet().environmentObject(model)
+        }
+    }
+
+    private var titleItem: some ToolbarContent {
+        ToolbarItem(placement: .principal) {
+            HStack(spacing: 8) {
+                EnsoMark().frame(width: 20, height: 20).accessibilityHidden(true)
+                Text("Xyntetik Dojo")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Color(Theme.brand))
+            }
+            .fixedSize()
         }
     }
 }
