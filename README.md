@@ -102,8 +102,6 @@ The Swift tests cover the bus and its delivery rules, the command lines (parsed 
 
 For a manual font check, compare regular, bold and italic text with Terminal.app's default profile at the same text size. Check the stroke weight and the distance between lines as well as the font name.
 
-For a manual title bar check, look at a build on macOS 26 or later: the mark and name sit in the centre and the plus at the right edge.
-
 For a manual title bar check, resize the window from its minimum width to a wide window. The mark and name stay together at the centre, with the native window controls on the left and Add on the right.
 
 For a manual close check, use a disposable app session with a running pane. Click the red window close button and choose Cancel, then repeat with Cmd-W and Cmd-Q. Each attempt shows one quit prompt; Cancel leaves the same window and pane usable. Repeat Cancel several times, then choose Quit and check that the app and its pane exit with no second prompt. Also check that closing an empty window quits without a prompt, and that resizing, minimizing and restoring the window still work. Do not run this check in a session doing useful work.
