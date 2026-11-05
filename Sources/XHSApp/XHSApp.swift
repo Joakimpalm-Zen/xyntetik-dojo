@@ -33,6 +33,9 @@ struct XHSApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    // NSWindow holds its delegate weakly.
+    private var mainWindowCloseDelegate: MainWindowCloseDelegate?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         MainActor.assumeIsolated {
             NSApp.setActivationPolicy(.regular)
@@ -43,6 +46,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 window.titlebarAppearsTransparent = true
                 // The centred toolbar item contains both the mark and name. Keep the native controls.
                 window.titleVisibility = .hidden
+            }
+            if let window = NSApp.windows.first(where: { $0.canBecomeMain }) {
+                let closeDelegate = MainWindowCloseDelegate(original: window.delegate) {
+                    NSApp.terminate(nil)
+                }
+                mainWindowCloseDelegate = closeDelegate
+                window.delegate = closeDelegate
             }
             let model = AppModel.shared
             if model.smoke {

@@ -32,6 +32,7 @@ let package = Package(
             dependencies: ["XHSCore", .product(name: "SwiftTerm", package: "SwiftTerm")]
         ),
         .testTarget(name: "XHSCoreTests", dependencies: ["XHSCore"], swiftSettings: testSettings),
+        .testTarget(name: "XHSAppTests", dependencies: ["XHSApp"], swiftSettings: testSettings),
     ],
     swiftLanguageModes: [.v5]
 )
