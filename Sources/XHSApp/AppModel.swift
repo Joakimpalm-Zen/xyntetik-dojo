@@ -72,6 +72,8 @@ final class AppModel: NSObject, ObservableObject {
     private let loginShell: String
     private var tokens: [String: String] = [:]
     private var remoteShells: [String: RemoteShell] = [:]
+    /// Each remote pane's end of its own forward to the bus.
+    private var remotePorts: [ObjectIdentifier: Int] = [:]
     private var server: BusServer?
     private var timer: Timer?
 
@@ -297,10 +299,15 @@ final class AppModel: NSObject, ObservableObject {
             remoteShells[view.paneName] = remoteShell
         }
         guard items.contains(where: { $0.view === view }) else { return }
+        var remotePort: Int?
+        if !host.isEmpty {
+            remotePort = Launcher.remotePort(taken: Set(remotePorts.values))
+            remotePorts[ObjectIdentifier(view)] = remotePort
+        }
         if let note { view.feed(text: note + "\r\n\r\n") }
         start(view, Launcher.plan(kind: kind, paneName: view.paneName, host: host.isEmpty ? nil : host, port: port,
                                   token: token, runnerModel: model, loginShell: loginShell, remoteShell: remoteShell,
-                                  directory: directory, askFirst: askFirst))
+                                  directory: directory, askFirst: askFirst, remotePort: remotePort))
     }
 
     private func start(_ view: TerminalPane, _ plan: LaunchPlan) {
@@ -347,6 +354,7 @@ final class AppModel: NSObject, ObservableObject {
         item.view.terminate()
         bus.remove(name)
         unseen.remove(item.id)
+        remotePorts[item.id] = nil
         tokens[name] = nil
         remoteShells[name] = nil
         items.removeAll { $0.name == name }
