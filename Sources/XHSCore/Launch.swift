@@ -166,19 +166,22 @@ public enum Launcher {
     }
 
     /// The plan for a pane. Local panes run in the owner's login shell so PATH matches their terminal.
-    /// Remote panes run `ssh -t -R port:127.0.0.1:port host` with the same harness command in the remote login shell.
+    /// Remote panes run `ssh -t -R remotePort:127.0.0.1:port host` with the same harness command in the remote
+    /// login shell. Each has its own `remotePort`, so closing one leaves the others on the bus.
     /// A Windows host (cmd.exe over OpenSSH) runs the same inner command in MSYS2 bash; see `windowsRemoteCommand`.
     public static func plan(kind: HarnessKind, paneName: String, host: String?, port: Int, token: String,
                             runnerModel: String?, loginShell: String, remoteShell: RemoteShell = .posix,
-                            directory: String? = nil, askFirst: Bool = false) -> LaunchPlan {
-        let env = ["DOJO_PANE": paneName, "DOJO_PORT": String(port), "DOJO_TOKEN": token]
+                            directory: String? = nil, askFirst: Bool = false, remotePort: Int? = nil) -> LaunchPlan {
         let local = host == nil || host!.isEmpty
+        // The port the harness calls: on a host, its end of this pane's forward.
+        let busPort = local ? port : remotePort ?? port
+        let env = ["DOJO_PANE": paneName, "DOJO_PORT": String(busPort), "DOJO_TOKEN": token]
         let directory = directory?.isEmpty == false ? directory : nil
         if kind == .shell, local {
             // The smoke types a line into this pane and expects it back.
             return LaunchPlan(executable: "/bin/sh", args: ["-c", "read line; echo \"ok $line\""], environment: env, directory: directory)
         }
-        let harness = harnessWords(kind: kind, paneName: paneName, port: port, runnerModel: runnerModel, askFirst: askFirst)
+        let harness = harnessWords(kind: kind, paneName: paneName, port: busPort, runnerModel: runnerModel, askFirst: askFirst)
         let path: ShellWord = .raw(#"PATH="$HOME/.dojo/bin:$PATH""#)
         guard let host, !local else {
             let line = "exec " + Shell.line([.literal("env"), path] + harness)
@@ -192,7 +195,7 @@ public enum Launcher {
         case .posix: remote = #"exec "$SHELL" -l -i -c "# + Shell.quote(inner)
         case .windows: remote = windowsRemoteCommand(inner: inner)
         }
-        let ssh = sshWords(host: host, port: port, remoteCommand: remote)
+        let ssh = sshWords(host: host, port: port, remotePort: busPort, remoteCommand: remote)
         return LaunchPlan(executable: loginShell, args: ["-l", "-i", "-c", "exec " + Shell.line(ssh)], environment: env)
     }
 
@@ -252,10 +255,18 @@ public enum Launcher {
             "For a Windows host, connect once from a terminal (ssh host) to accept its key, then add the pane again."
     }
 
-    /// ssh with a reverse tunnel so the shim on the remote host reaches the bus at 127.0.0.1:port there.
-    public static func sshWords(host: String, port: Int, remoteCommand: String) -> [ShellWord] {
-        [.literal("ssh"), .literal("-t"), .literal("-R"), .literal("\(port):127.0.0.1:\(port)"),
+    /// ssh with a reverse tunnel so the shim on the remote host reaches the bus at 127.0.0.1:remotePort there.
+    public static func sshWords(host: String, port: Int, remotePort: Int, remoteCommand: String) -> [ShellWord] {
+        [.literal("ssh"), .literal("-t"), .literal("-R"), .literal("\(remotePort):127.0.0.1:\(port)"),
          .literal(host), .literal(remoteCommand)]
+    }
+
+    /// Where a remote pane's forward can listen on its host: the dynamic ports, which nothing claims for good.
+    public static let remotePorts = 49152...65535
+
+    /// A port for a new remote pane, none of `taken`. Random, because another Mac's Dojo may use the same host.
+    public static func remotePort(taken: Set<Int>) -> Int {
+        Set(remotePorts).subtracting(taken).randomElement() ?? remotePorts.lowerBound
     }
 
     /// The environment a pane's process gets: the app's own, minus anything a Claude Code session that

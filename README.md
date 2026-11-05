@@ -161,10 +161,10 @@ tar -C tools -cf - dojo-mcp.py dojo-pi.ts | ssh user@box 'mkdir -p ~/.dojo && ta
 Then press plus and enter `user@box` as the host (or pick it from the clock at the field's edge once you have used it). The app first asks the host which shell it runs commands in (`ssh host 'echo %OS%'`), then runs:
 
 ```
-ssh -t -R 7788:127.0.0.1:7788 user@box '<harness in the remote login shell>'
+ssh -t -R <the pane's port>:127.0.0.1:7788 user@box '<harness in the remote login shell>'
 ```
 
-The harness runs in the remote login shell (`$SHELL -l -i`), so it needs to be on the PATH that shell sets. The reverse tunnel lets the shim on the remote host reach the bus at `127.0.0.1:7788` there. The remote host's own keys, logins and tokens are used; the app stores none. Use key-based SSH; a password prompt shows up in the pane. A remote pi uses the Runner on that host.
+The harness runs in the remote login shell (`$SHELL -l -i`), so it needs to be on the PATH that shell sets. The reverse tunnel lets the shim on the remote host reach the bus at that port of `127.0.0.1` there. The remote host's own keys, logins and tokens are used; the app stores none. Use key-based SSH; a password prompt shows up in the pane. A remote pi uses the Runner on that host.
 
 ### Windows hosts
 
@@ -174,7 +174,7 @@ A Windows host with OpenSSH Server and MSYS2 at `C:\msys64` works the same way. 
 
 Claude Code and Codex both run on a Windows host and reach the bus through the tunnel. Codex's config hooks call `python3 "$HOME/.dojo/dojo-mcp.py" hook`, which finds the working `python3` in `~/.dojo/bin`.
 
-Two remote panes on the same host share the forwarded port: the first pane's tunnel serves both (ssh warns about the second forward). If the first pane closes, the second loses the bus until you reopen it.
+Each remote pane has its own forward to the bus, on a free port of its host, so closing one leaves the others connected.
 
 <a id="how-harnesses-talk"></a>
 ## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> How harnesses talk
