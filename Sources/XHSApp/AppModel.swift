@@ -67,6 +67,8 @@ final class AppModel: NSObject, ObservableObject {
     /// The pane that has the keys, nil when none has.
     @Published private(set) var focusedPane: ObjectIdentifier?
     private var focusWatch: NSKeyValueObservation?
+    private weak var mainWindow: NSWindow?
+    private var restoreWatch: NSObjectProtocol?
     /// The pane that should hold the keys. A move between the grid and a tab drops them, at a moment SwiftUI
     /// picks, so this pane takes them back when it lands.
     private weak var keyPane: TerminalPane?
@@ -134,6 +136,11 @@ final class AppModel: NSObject, ObservableObject {
     /// Keeps `focusedPane` true to the window. SwiftTerm closes its responder methods to subclasses, so the
     /// window is the one to ask.
     func watchFocus(of window: NSWindow) {
+        mainWindow = window
+        // Restoring a minimized window does not activate the app, which was active all along.
+        restoreWatch = NotificationCenter.default.addObserver(forName: NSWindow.didDeminiaturizeNotification, object: window, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.markSeen() }
+        }
         focusWatch = window.observe(\.firstResponder, options: [.initial]) { [weak self] window, _ in
             MainActor.assumeIsolated {
                 let pane = window.firstResponder as? TerminalPane
@@ -147,7 +154,9 @@ final class AppModel: NSObject, ObservableObject {
     // MARK: what needs the owner
 
     /// A smoke is never in front, and stands in for an owner who is.
-    private var ownerInFront: Bool { smoke || NSApp.isActive }
+    private var ownerInFront: Bool {
+        smoke || Seen.inFront(active: NSApp.isActive, windowOnScreen: mainWindow.map { $0.isVisible && !$0.isMiniaturized } ?? false)
+    }
 
     /// The pane finished a turn the owner has not viewed. A pane at a prompt has the ring instead.
     func finishedUnseen(_ item: Item) -> Bool {

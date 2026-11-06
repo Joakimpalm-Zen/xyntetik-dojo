@@ -96,7 +96,13 @@ public enum Seen {
         active && keys == pane
     }
 
-    /// A notification is for a pane the owner cannot see: another app is in front, or another pane's tab is.
+    /// The owner is at the window only with the app active and the window on screen. A minimized window
+    /// leaves its app active, so being active alone says nothing.
+    public static func inFront(active: Bool, windowOnScreen: Bool) -> Bool {
+        active && windowOnScreen
+    }
+
+    /// A notification is for a pane the owner cannot see: the window is away, or another pane's tab is showing.
     public static func notifies<T: Equatable>(active: Bool, shown: T?, pane: T) -> Bool {
         !active || (shown != nil && shown != pane)
     }
