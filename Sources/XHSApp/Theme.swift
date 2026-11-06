@@ -13,14 +13,17 @@ enum Theme {
     static let bg = color(0xD8D2BA)
     static let surface = color(0xE1DBC5)
     static let paper = color(0xE8E3CD)
-    /// The band behind a user's message in a pane: `terminalPaper` one step darker.
+    /// The band behind a user's message in a pane: `terminalPaper` one step darker. It keeps that step out of
+    /// focus, where the ground is this same tone.
     static let shade = (red: 0xD6, green: 0xD1, blue: 0xB9)
+    static let shadeDimmed = (red: 0xCC, green: 0xC7, blue: 0xAF)
     static let ink = color(0x16232A)
     static let muted = color(0x514D45)
     static let line = color(0xC5BEA5)
     /// The rule between panes, and under the tabs and over the Runner strip: deeper and wider than a
-    /// hairline, so two terminals on the same paper read as two.
-    static let rule = color(0xB3AB92)
+    /// hairline, so two terminals on the same paper read as two, and a pane's foot does not blend into the
+    /// status lines above it.
+    static let rule = color(0x8F8770)
     static let ruleWidth: CGFloat = 2
     /// The corner of a tab and of the buttons in the picker.
     static let corner: CGFloat = 6
@@ -28,6 +31,8 @@ enum Theme {
     /// brighter than a Terminal window beside it (owner, 2026-11-06). The ground is a little darker than
     /// `surface`.
     static let terminalPaper = color(0xDFDBC3)
+    /// The ground of the panes without the keys, one step down (owner, 2026-11-06).
+    static let terminalPaperDimmed = color(0xD6D1B9)
     static let terminalInk = color(0x4D2F2D)
     static let ansi: [UInt32] = [0x000000, 0xCC0000, 0x00A600, 0x999900, 0x0000B2, 0xB200B2, 0x00A6B2, 0xBFBFBF,
                                  0x666666, 0xE50000, 0x00D900, 0xE5E500, 0x0000FF, 0xE500E5, 0x00E5E5, 0xE5E5E5]

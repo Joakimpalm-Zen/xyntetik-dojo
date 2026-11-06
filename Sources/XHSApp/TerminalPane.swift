@@ -84,6 +84,23 @@ final class TerminalPane: TerminalView, PaneIO {
         minimumContrastRatio = Theme.minimumContrast
         caretColor = Theme.teal
         selectedTextBackgroundColor = Theme.teal.withAlphaComponent(0.35)
+        paintBand()
+    }
+
+    /// Out of focus the ground goes one step down, and the bands already on the screen with it. Text stays at
+    /// `Theme.minimumContrast` against the new ground.
+    var dimmed = false {
+        didSet {
+            guard dimmed != oldValue else { return }
+            nativeBackgroundColor = dimmed ? Theme.terminalPaperDimmed : Theme.terminalPaper
+            paintBand()
+        }
+    }
+
+    /// The band is a palette entry, and SwiftTerm sets one only through the stream.
+    private func paintBand() {
+        let shade = dimmed ? Theme.shadeDimmed : Theme.shade
+        feed(byteArray: Repaint.band(red: shade.red, green: shade.green, blue: shade.blue)[...])
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
@@ -147,6 +164,16 @@ final class TerminalPane: TerminalView, PaneIO {
     /// A control sequence cut off at the end of a chunk, held for the next.
     private var sequenceCarry: [UInt8] = []
     private var flush: DispatchWorkItem?
+    /// The end of the last chunk, for a palette reset cut in two.
+    private var paletteTail: [UInt8] = []
+
+    /// To the screen, and the band's colour back if a reset took it away.
+    private func present(_ bytes: [UInt8]) {
+        feed(byteArray: bytes[...])
+        let seen = paletteTail + bytes
+        paletteTail = Array(seen.suffix(Repaint.paletteMarkLength - 1))
+        if Repaint.touchesPalette(seen) { paintBand() }
+    }
 
     /// `Theme.brand` as a terminal colour code.
     private static let tagColor = Highlight.foreground(red: 0x0B, green: 0x5E, blue: 0x54)
@@ -155,9 +182,9 @@ final class TerminalPane: TerminalView, PaneIO {
     /// `[from: <name>]` tag is wrapped in the Xyntetik green.
     func show(_ bytes: [UInt8]) {
         flush?.cancel()
-        let repainted = Repaint.apply(bytes, carry: &sequenceCarry, shade: Theme.shade)
+        let repainted = Repaint.apply(bytes, carry: &sequenceCarry)
         let out = Highlight.tagged(repainted, carry: &carry, color: TerminalPane.tagColor)
-        if !out.isEmpty { feed(byteArray: out[...]) }
+        if !out.isEmpty { present(out) }
         if !carry.isEmpty || !sequenceCarry.isEmpty {
             // A chunk ended inside a possible tag or sequence; if nothing follows at once, show the bytes as they are.
             let item = DispatchWorkItem { [weak self] in
@@ -167,7 +194,7 @@ final class TerminalPane: TerminalView, PaneIO {
                 let held = self.carry + self.sequenceCarry
                 self.sequenceCarry = []
                 self.carry = []
-                if !held.isEmpty { self.feed(byteArray: held[...]) }
+                if !held.isEmpty { self.present(held) }
             }
             flush = item
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: item)

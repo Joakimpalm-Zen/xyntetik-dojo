@@ -138,26 +138,53 @@ import Testing
 }
 
 @Suite struct RepaintTests {
-    let shade = (red: 0xEC, green: 0xE7, blue: 0xDB)
     func paint(_ text: String, carry: inout [UInt8]) -> String {
-        String(decoding: Repaint.apply(Array(text.utf8), carry: &carry, shade: shade), as: UTF8.self)
+        String(decoding: Repaint.apply(Array(text.utf8), carry: &carry), as: UTF8.self)
     }
     func paint(_ text: String) -> String { var c: [UInt8] = []; return paint(text, carry: &c) }
 
+    @Test func aProgramsOwnUseOfTheBandSlotKeepsXtermsColour() {
+        #expect(paint("\u{1b}[48;5;137m") == "\u{1b}[48;2;175;135;95m")
+        #expect(paint("\u{1b}[38;5;137m") == "\u{1b}[38;2;175;135;95m")
+        #expect(paint("\u{1b}[58;5;137m") == "\u{1b}[58;2;175;135;95m")
+        #expect(paint("\u{1b}[0;1;38;5;137;48;5;255m") == "\u{1b}[0;1;38;2;175;135;95;48;5;137m")
+    }
+
+    @Test func otherIndexesAndLookalikesStayAsTheyAre() {
+        #expect(paint("\u{1b}[38;5;136m") == "\u{1b}[38;5;136m")
+        #expect(paint("\u{1b}[48;5;13m") == "\u{1b}[48;5;13m")
+        #expect(paint("\u{1b}[1;37m") == "\u{1b}[1;37m")
+        #expect(paint("\u{1b}[137m") == "\u{1b}[137m")
+        #expect(paint("\u{1b}[38;5;2;137m") == "\u{1b}[38;5;2;137m")
+    }
+
+    @Test func theBandIsSetThroughThePalette() {
+        #expect(String(decoding: Repaint.band(red: 0xCC, green: 0xC7, blue: 0xAF), as: UTF8.self) == "\u{1b}]4;137;rgb:cc/c7/af\u{1b}\\")
+    }
+
+    @Test func whatTouchesThePaletteIsSeen() {
+        for text in ["\u{1b}c", "a\u{1b}cb", "\u{1b}[!p", "\u{1b}]104\u{7}", "\u{1b}]104;137\u{7}", "x\u{1b}]4;137;rgb:00/00/00\u{7}"] {
+            #expect(Repaint.touchesPalette(Array(text.utf8)), "\(text)")
+        }
+        for text in ["", "c", "plain ]104", "\u{1b}[c", "\u{1b}[2J", "\u{1b}]0;title\u{7}", "\u{1b}]1;x\u{7}", "\u{1b}[48;5;137m", "\u{1b}]41;x\u{7}"] {
+            #expect(!Repaint.touchesPalette(Array(text.utf8)), "\(text)")
+        }
+    }
+
     @Test func nearWhiteBackgroundsBecomeTheShadeAndOthersStay() {
-        #expect(paint("\u{1b}[48;2;240;240;240m x \u{1b}[49m") == "\u{1b}[48;2;236;231;219m x \u{1b}[49m")
+        #expect(paint("\u{1b}[48;2;240;240;240m x \u{1b}[49m") == "\u{1b}[48;5;137m x \u{1b}[49m")
         #expect(paint("\u{1b}[48;2;215;119;87m") == "\u{1b}[48;2;215;119;87m")
         #expect(paint("\u{1b}[48;2;255;221;221m") == "\u{1b}[48;2;255;221;221m")
-        #expect(paint("\u{1b}[48;5;255m") == "\u{1b}[48;2;236;231;219m")
-        #expect(paint("\u{1b}[48;5;231m") == "\u{1b}[48;2;236;231;219m")
+        #expect(paint("\u{1b}[48;5;255m") == "\u{1b}[48;5;137m")
+        #expect(paint("\u{1b}[48;5;231m") == "\u{1b}[48;5;137m")
         #expect(paint("\u{1b}[48;5;196m") == "\u{1b}[48;5;196m")
-        #expect(paint("\u{1b}[107m") == "\u{1b}[48;2;236;231;219m")
+        #expect(paint("\u{1b}[107m") == "\u{1b}[48;5;137m")
         #expect(paint("\u{1b}[47m") == "\u{1b}[47m")
     }
 
     @Test func textColoursAndOtherSequencesAreUntouched() {
         #expect(paint("\u{1b}[38;2;240;240;240m") == "\u{1b}[38;2;240;240;240m")
-        #expect(paint("\u{1b}[0;1;48;2;240;240;240;38;5;255m") == "\u{1b}[0;1;48;2;236;231;219;38;5;255m")
+        #expect(paint("\u{1b}[0;1;48;2;240;240;240;38;5;255m") == "\u{1b}[0;1;48;5;137;38;5;255m")
         #expect(paint("\u{1b}[2J\u{1b}[?25l\u{1b}]11;?\u{7}plain") == "\u{1b}[2J\u{1b}[?25l\u{1b}]11;?\u{7}plain")
         // Private and colon-form sequences pass through untouched; underline colours (58) are not backgrounds.
         for raw in ["\u{1b}[>4;0m", "\u{1b}[>4;2m", "\u{1b}[4:3m", "\u{1b}[48:2::255:255:255m", "\u{1b}[58;5;107m", "\u{1b}[58;2;240;240;240m"] {
@@ -171,7 +198,7 @@ import Testing
         #expect(first == "ab")
         #expect(!carry.isEmpty)
         let second = paint("0;240;240mcd", carry: &carry)
-        #expect(second == "\u{1b}[48;2;236;231;219mcd")
+        #expect(second == "\u{1b}[48;5;137mcd")
         #expect(carry.isEmpty)
         _ = paint("x\u{1b}", carry: &carry)
         #expect(carry == [0x1B])

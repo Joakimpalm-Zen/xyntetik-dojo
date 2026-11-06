@@ -1,14 +1,39 @@
 /// Repaints the near-white backgrounds a harness asks for (the band behind a user message in Claude Code's
 /// light theme, for one) to the pane's paper shade, so a white block never lands on the paper. Only
 /// background colours change; text colours and every other colour stay the harness's own.
+///
+/// The shade is a palette entry and not a colour in the cells, so that a pane can change it for what is
+/// already on the screen when it goes out of focus. A program's own use of that entry keeps xterm's colour.
 public enum Repaint {
+    /// The palette entry the shade lives in.
+    public static let bandSlot = 137
+
+    /// The sequence that sets the shade.
+    public static func band(red: Int, green: Int, blue: Int) -> [UInt8] {
+        Array(String(format: "\u{1b}]4;%d;rgb:%02x/%02x/%02x\u{1b}\\", bandSlot, red, green, blue).utf8)
+    }
+
+    /// Whether `bytes` could have changed the palette: a reset (RIS, DECSTR, OSC 104) takes the shade back to
+    /// xterm's brown, and OSC 4 may set it. SwiftTerm has no way to read the palette, so the stream is the
+    /// only sign. A false alarm only sets the shade again.
+    public static func touchesPalette(_ bytes: [UInt8]) -> Bool {
+        paletteMarks.contains { mark in
+            bytes.indices.contains { bytes[$0...].starts(with: mark) }
+        }
+    }
+
+    /// The longest of the marks, for a caller that keeps the end of one chunk for the next.
+    public static var paletteMarkLength: Int { paletteMarks.map(\.count).max() ?? 0 }
+
+    private static let paletteMarks: [[UInt8]] = ["\u{1b}c", "\u{1b}[!p", "\u{1b}]104", "\u{1b}]4;"].map { Array($0.utf8) }
+
     /// A background is near white when every channel is at least this bright and they differ by at most `spread`.
     static let floor = 216
     static let spread = 16
 
-    /// Returns `carry` + `input` with each near-white background in an SGR sequence replaced by `shade`.
+    /// Returns `carry` + `input` with each near-white background in an SGR sequence replaced by the shade.
     /// A control sequence cut off at the end of `input` waits in `carry` for the next call.
-    public static func apply(_ input: [UInt8], carry: inout [UInt8], shade: (red: Int, green: Int, blue: Int)) -> [UInt8] {
+    public static func apply(_ input: [UInt8], carry: inout [UInt8]) -> [UInt8] {
         let data = carry + input
         carry = []
         var out: [UInt8] = []
@@ -26,7 +51,7 @@ public enum Repaint {
                 out.append(data[i]); i += 1; continue
             }
             if data[j] == UInt8(ascii: "m") {
-                out += sgr(Array(data[(i + 2)..<j]), shade: shade)
+                out += sgr(Array(data[(i + 2)..<j]))
             } else {
                 out += data[i...j]
             }
@@ -36,16 +61,21 @@ public enum Repaint {
     }
 
     /// One SGR sequence, rebuilt with near-white backgrounds replaced.
-    static func sgr(_ params: [UInt8], shade: (red: Int, green: Int, blue: Int)) -> [UInt8] {
+    static func sgr(_ params: [UInt8]) -> [UInt8] {
         let text = String(decoding: params, as: UTF8.self)
         // Private sequences (ESC[>4;2m), colon-separated sub-parameters (4:3, 48:2::r:g:b) and anything
         // else that is not plain numbers pass through untouched.
         let plain = params.allSatisfy { ($0 >= UInt8(ascii: "0") && $0 <= UInt8(ascii: "9")) || $0 == UInt8(ascii: ";") }
-        guard plain, text.contains("4") || text.contains("107") else { return [0x1B, UInt8(ascii: "[")] + params + [UInt8(ascii: "m")] }
+        guard plain, text.contains("4") || text.contains("107") || text.contains(String(bandSlot)) else { return [0x1B, UInt8(ascii: "[")] + params + [UInt8(ascii: "m")] }
         let parts = text.split(separator: ";", omittingEmptySubsequences: false).map { Int($0) ?? 0 }
         var out: [String] = []
         var k = 0
-        let replacement = "48;2;\(shade.red);\(shade.green);\(shade.blue)"
+        let replacement = "48;5;\(bandSlot)"
+        func indexed(_ kind: Int, _ index: Int) -> String {
+            guard index == bandSlot else { return "\(kind);5;\(index)" }
+            let (r, g, b) = xterm(index)
+            return "\(kind);2;\(r);\(g);\(b)"
+        }
         while k < parts.count {
             let p = parts[k]
             if p == 48, k + 4 < parts.count, parts[k + 1] == 2 {
@@ -54,7 +84,7 @@ public enum Repaint {
                 k += 5
             } else if p == 48, k + 2 < parts.count, parts[k + 1] == 5 {
                 let (r, g, b) = xterm(parts[k + 2])
-                out.append(isNearWhite(r, g, b) ? replacement : "48;5;\(parts[k + 2])")
+                out.append(isNearWhite(r, g, b) ? replacement : indexed(48, parts[k + 2]))
                 k += 3
             } else if p == 107 {
                 out.append(replacement)
@@ -62,6 +92,9 @@ public enum Repaint {
             } else if p == 38 || p == 58, k + 1 < parts.count, parts[k + 1] == 2 {
                 out.append(parts[k..<min(k + 5, parts.count)].map(String.init).joined(separator: ";"))
                 k += 5
+            } else if p == 38 || p == 58, k + 2 < parts.count, parts[k + 1] == 5 {
+                out.append(indexed(p, parts[k + 2]))
+                k += 3
             } else if p == 38 || p == 58, k + 1 < parts.count, parts[k + 1] == 5 {
                 out.append(parts[k..<min(k + 3, parts.count)].map(String.init).joined(separator: ";"))
                 k += 3
