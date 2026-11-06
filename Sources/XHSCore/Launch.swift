@@ -262,6 +262,12 @@ public enum Launcher {
         host.isEmpty && listed ? saved ?? newId() : nil
     }
 
+    /// Whether a reopened pane lost its conversation: it had none to resume, or it has another now. Only
+    /// the coding agents keep one, so a shell or Runner pane never says so.
+    public static func startsFresh(kind: HarnessKind, reopened: Bool, saved: String?, session: String?) -> Bool {
+        reopened && HarnessKind.pickable.contains(kind) && (saved == nil || session != saved)
+    }
+
     /// Whether a command's output lists `flag`, run in the login shell as a pane is. No answer in `timeout`
     /// seconds is a no, so a slow or hanging profile cannot hold a pane back.
     public static func helpLists(_ flag: String, command: String, loginShell: String, timeout: TimeInterval = 5) async -> Bool {
