@@ -93,6 +93,13 @@ import Testing
         #expect(!Seen.viewed(active: true, keys: nil, pane: "a"))
     }
 
+    @Test func aMinimizedWindowIsNotInFrontThoughItsAppIsActive() {
+        #expect(Seen.inFront(active: true, windowOnScreen: true))
+        #expect(!Seen.inFront(active: true, windowOnScreen: false))
+        #expect(!Seen.inFront(active: false, windowOnScreen: true))
+        #expect(Seen.notifies(active: Seen.inFront(active: true, windowOnScreen: false), shown: "a", pane: "a"))
+    }
+
     @Test func nothingNotifiesForAPaneOnTheScreenInFront() {
         #expect(!Seen.notifies(active: true, shown: nil, pane: "a"))
         #expect(!Seen.notifies(active: true, shown: "a", pane: "a"))
