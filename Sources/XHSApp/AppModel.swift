@@ -73,7 +73,7 @@ final class AppModel: NSObject, ObservableObject {
     private var restoreWatch: NSObjectProtocol?
     /// The pane that should hold the keys. A move between the grid and a tab drops them, at a moment SwiftUI
     /// picks, so this pane takes them back when it lands.
-    private weak var keyPane: TerminalPane?
+    private weak var keyPane: TerminalPane? { didSet { dimPanes() } }
 
     let bus = Bus()
     let port: Int
@@ -133,6 +133,12 @@ final class AppModel: NSObject, ObservableObject {
     private func give(keys view: TerminalPane) {
         keyPane = view
         view.window?.makeFirstResponder(view)
+    }
+
+    /// Every pane but the one with the keys is dimmed. While the keys are in a field for a moment, a rename
+    /// say, the pane that had them stays lit, so the grid does not flash.
+    private func dimPanes() {
+        for item in items { item.view.dimmed = keyPane != nil && item.view !== keyPane }
     }
 
     /// Keeps `focusedPane` true to the window. SwiftTerm closes its responder methods to subclasses, so the
@@ -569,8 +575,29 @@ final class AppModel: NSObject, ObservableObject {
                 print("DOJO_SMOKE failed: after \(step) the cue is on \(actual), not \(pane)")
                 exit(1)
             }
+            expectLit(pane, after: step)
         }
         await expect(name, after: "a click")
+        // Dimming follows a click, a digit on the Tabs menu, and stays put while the keys are in no pane.
+        if let other = items.first(where: { $0.name != name }) {
+            show(tab: nil)
+            await expect(name, after: "the overview")
+            click(other.view)
+            await expect(other.name, after: "a click on the other pane")
+            other.view.window?.makeFirstResponder(nil)
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            expectLit(other.name, after: "the keys leaving every pane")
+            var last = other.name
+            for (i, agent) in agents.prefix(8).enumerated() {
+                press(digit: i + 2)
+                await expect(agent.name, after: "Cmd-\(i + 2)")
+                last = agent.name
+            }
+            press(digit: 1)
+            await expect(last, after: "Cmd-1")
+            click(items.first { $0.name == name }!.view)
+            await expect(name, after: "a click back")
+        }
         addPane(kind: .shell, host: "", name: "shell-3")
         show(tab: items.last?.id)
         await expect("shell-3", after: "showing a tab")
@@ -578,6 +605,39 @@ final class AppModel: NSObject, ObservableObject {
         await expect("shell-3", after: "showing the overview")
         close("shell-3")
         await expect(name, after: "closing the pane with the keys")
+    }
+
+    private func expectLit(_ pane: String, after step: String) {
+        let lit = items.filter { !$0.view.dimmed }.map(\.name)
+        guard lit == [pane] else {
+            print("DOJO_SMOKE failed: after \(step) the lit panes are \(lit), not \(pane)")
+            exit(1)
+        }
+    }
+
+    private func click(_ view: TerminalPane) {
+        let down = NSEvent.mouseEvent(with: .leftMouseDown, location: NSPoint(x: 20, y: 20), modifierFlags: [], timestamp: 0,
+                                      windowNumber: view.window?.windowNumber ?? 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
+        let up = NSEvent.mouseEvent(with: .leftMouseUp, location: NSPoint(x: 20, y: 20), modifierFlags: [], timestamp: 0,
+                                    windowNumber: view.window?.windowNumber ?? 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 0)
+        if let down, let up {
+            view.mouseDown(with: down)
+            view.mouseUp(with: up)
+        }
+    }
+
+    /// Cmd and a digit, through the menu bar as a key press goes.
+    private func press(digit: Int) {
+        let key = String(digit)
+        // SwiftUI fills a menu's ForEach when the menu is about to show, and an app that is never in front
+        // does not get that far by itself.
+        if let tabs = NSApp.mainMenu?.items.first(where: { $0.title == "Tabs" })?.submenu { tabs.delegate?.menuNeedsUpdate?(tabs) }
+        guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0, windowNumber: mainWindow?.windowNumber ?? 0,
+                                           context: nil, characters: key, charactersIgnoringModifiers: key, isARepeat: false, keyCode: 0),
+              NSApp.mainMenu?.performKeyEquivalent(with: event) == true else {
+            print("DOJO_SMOKE failed: Cmd-\(digit) did nothing")
+            exit(1)
+        }
     }
 
     /// Sends a pane the hook events a harness would.
