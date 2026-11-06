@@ -418,7 +418,7 @@ def install(home=None, out=sys.stdout, windows=None):
 
 # ---------------------------------------------------------------- CLI
 
-USAGE = """usage: dojo panes | send <pane> <text...> | send <pane> - (text on stdin) | read <pane> [lines] | state <pane> | watch <pane> | hook | install"""
+USAGE = """usage: dojo panes | send <pane> <text...> | send <pane> - (text on stdin) | read <pane> [lines] | state <pane> | watch <pane> | relay <words...> | hook | install"""
 
 
 def cli(argv, out=sys.stdout, err=sys.stderr, stdin=sys.stdin):
@@ -455,6 +455,15 @@ def cli(argv, out=sys.stdout, err=sys.stderr, stdin=sys.stdin):
             lines = int(rest[1]) if len(rest) == 2 else 40
             out.write(bus_call("read", {"pane": rest[0], "lines": lines}).get("text", "") + "\n")
             return 0
+        if cmd == "relay" and rest:
+            res = bus_call("relay", {"args": rest}, timeout=30)  # the bus allows the program 20 s
+            out.write(res.get("stdout", ""))
+            err.write(res.get("stderr", ""))
+            if res.get("timedOut"):
+                err.write("dojo: the relayed command ran out of time and was stopped\n")
+            if res.get("truncated"):
+                err.write("dojo: the relayed command's output was cut short\n")
+            return res.get("code", 1)
         if cmd == "state" and len(rest) == 1:
             res = bus_call("state", {"pane": rest[0]})
             out.write("%s %s queued=%s\n" % (rest[0], res.get("state"), res.get("queued", 0)))
