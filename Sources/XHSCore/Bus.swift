@@ -18,6 +18,10 @@ public protocol PaneIO: AnyObject {
 /// Every request carries a pane's token; the token tells the bus who is asking.
 @MainActor
 public final class Bus {
+    /// Where the relay's config is, nil for none: see `Relay`.
+    public var relayConfig: URL?
+    private var relayRunning = false
+
     public struct Info: Equatable, Sendable {
         public let name: String
         public let kind: HarnessKind
@@ -262,6 +266,45 @@ public final class Bus {
             }
         default:
             break
+        }
+    }
+
+    // MARK: the configured relay
+
+    /// Answers /relay when a relay is configured, later and off the main actor, since the program may take
+    /// seconds and everything here runs on it. False leaves the request to `handle`, so with no config the
+    /// route is what it always was: an unknown operation.
+    public func relay(path: String, token: String?, body: Data, reply: @escaping @MainActor (Int, Data) -> Void) -> Bool {
+        guard path.trimmingCharacters(in: CharacterSet(charactersIn: "/")) == "relay", let config = relayConfig,
+              let program = Relay.program(config: config) else { return false }
+        func refuse(_ result: (status: Int, body: Data)) -> Bool {
+            reply(result.status, result.body)
+            return true
+        }
+        guard let token, let sender = panes.first(where: { $0.token == token }) else {
+            return refuse(error(401, "unknown or missing X-Dojo-Token"))
+        }
+        guard case .success(let path) = program else {
+            guard case .failure(let why) = program else { return true }
+            return refuse(error(403, why))
+        }
+        let args = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
+        switch Relay.words(args?["args"]) {
+        case .failure(let why):
+            return refuse(error(400, why))
+        case .success(let words):
+            guard !relayRunning else { return refuse(error(429, "a relay is already running; try again")) }
+            relayRunning = true
+            Relay.run(program: path, words: words, pane: sender.name) { outcome in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.relayRunning = false
+                    let result = self.ok(["code": Int(outcome.code), "stdout": outcome.stdout, "stderr": outcome.stderr,
+                                          "timedOut": outcome.timedOut, "truncated": outcome.truncated])
+                    reply(result.status, result.body)
+                }
+            }
+            return true
         }
     }
 

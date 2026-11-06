@@ -107,7 +107,13 @@ For a manual title bar check, resize the window from its minimum width to a wide
 
 For a manual close check, use a disposable app session with a running pane. Click the red window close button and choose Cancel, then repeat with Cmd-W and Cmd-Q. Each attempt shows one quit prompt; Cancel leaves the same window and pane usable. Repeat Cancel several times, then choose Quit and check that the app and its pane exit with no second prompt. Also check that closing an empty window quits without a prompt, and that resizing, minimizing and restoring the window still work. Do not run this check in a session doing useful work.
 
-`DOJO_PORT` overrides the bus port. There is no other setting. The only files the app keeps are `~/.dojo/hosts` and `~/.dojo/folders` (the hosts and start folders you used, latest first, one per line) and `~/.dojo/runner/` (Runner's binary, its roster copy, the 16 MiB model heads, the fits list and your model choice); edit or delete them by hand.
+`DOJO_PORT` overrides the bus port, and `~/.dojo/relay` turns on the relay below. There is no other setting. The only files the app keeps are `~/.dojo/hosts` and `~/.dojo/folders` (the hosts and start folders you used, latest first, one per line) and `~/.dojo/runner/` (Runner's binary, its roster copy, the 16 MiB model heads, the fits list and your model choice); edit or delete them by hand.
+
+### The relay, off unless you set it up
+
+A pane on another host can run one program on this Mac: `dojo relay <words...>`. `~/.dojo/relay` holds that program's absolute path, and without that file the bus has no such route and nothing changes. Bocka uses it, so that a remote pane can update the plan.
+
+A pane chooses the words and never the program. The words go to it as arguments, with no shell, and the program gets the pane's name in `RELAY_PANE`, from the bus and never from the pane. It runs with a small environment and no stdin, for 20 seconds at most, one at a time. The program and the file must be yours and not writable by others, or the relay refuses. The program decides which words it accepts, so write it as you would anything reachable from another machine. The result goes back to the pane that asked, and like any bus message it is never your approval of anything.
 
 <a id="first-run"></a>
 ## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> First run

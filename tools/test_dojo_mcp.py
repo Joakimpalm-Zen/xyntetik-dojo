@@ -22,6 +22,7 @@ class FakeBus:
 
     def __init__(self):
         self.requests = []
+        self.relay_on = False
         bus = self
 
         class Handler(http.server.BaseHTTPRequestHandler):
@@ -43,6 +44,9 @@ class FakeBus:
                     out, code = {"pane": body["pane"], "state": "idle", "queued": 0}, 200
                 elif self.path == "/watch":
                     out, code = {"pane": body["pane"], "state": "running"}, 200
+                elif self.path == "/relay" and bus.relay_on:
+                    out, code = {"code": 3, "stdout": "said " + " ".join(body["args"]) + "\n", "stderr": "warned\n",
+                                 "timedOut": False, "truncated": False}, 200
                 elif self.path == "/hook":
                     out, code = None, 200
                 else:
@@ -80,6 +84,32 @@ class ShimTest(unittest.TestCase):
 
     def tearDown(self):
         self.bus.close()
+
+    def cli(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        saved = dict(os.environ)
+        os.environ.update(self.env)
+        try:
+            return load_shim().cli(list(argv), out=out, err=err), out.getvalue(), err.getvalue()
+        finally:
+            os.environ.clear()
+            os.environ.update(saved)
+
+    def test_relay_sends_the_words_and_gives_back_what_the_program_said(self):
+        self.bus.relay_on = True
+        code, out, err = self.cli("relay", "claim", "a b", "--flag")
+        self.assertEqual((code, out, err), (3, "said claim a b --flag\n", "warned\n"))
+        self.assertEqual(self.bus.requests[-1][2], {"args": ["claim", "a b", "--flag"]})
+
+    def test_relay_with_no_config_is_refused_like_any_unknown_operation(self):
+        code, out, err = self.cli("relay", "claim")
+        self.assertEqual((code, out), (1, ""))
+        self.assertIn("bus refused (404)", err)
+
+    def test_relay_needs_words(self):
+        code, _, err = self.cli("relay")
+        self.assertEqual(code, 2)
+        self.assertIn("usage:", err)
 
     def mcp(self, messages, env=None):
         proc = subprocess.Popen([sys.executable, SHIM], stdin=subprocess.PIPE, stdout=subprocess.PIPE,

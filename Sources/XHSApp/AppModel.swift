@@ -471,6 +471,8 @@ final class AppModel: NSObject, ObservableObject {
             let server = try BusServer(port: UInt16(port)) { path, token, body in
                 bus.handle(path: path, token: token, body: body)
             }
+            bus.relayConfig = AppModel.relayFile
+            server.deferred = { path, token, body, reply in bus.relay(path: path, token: token, body: body, reply: reply) }
             self.server = server
             let port = self.port
             server.start { [weak self] error in
@@ -762,6 +764,7 @@ final class AppModel: NSObject, ObservableObject {
     static let hostsFile = Headless.state().appendingPathComponent("hosts")
     static let foldersFile = Headless.state().appendingPathComponent("folders")
     static let panesFile = Headless.state().appendingPathComponent("panes.json")
+    static let relayFile = Headless.state().appendingPathComponent("relay")
 
     /// A folder picker for the New terminal sheet; nil when cancelled.
     static func chooseFolder() -> String? {

@@ -69,6 +69,9 @@ public final class BusServer {
 
     private let listener: NWListener
     private let handler: Handler
+    /// Takes a request it will answer later, by returning true; anything else goes to the handler.
+    public var deferred: (@MainActor (_ path: String, _ token: String?, _ body: Data,
+                                      _ reply: @escaping @MainActor (Int, Data) -> Void) -> Bool)?
 
     /// - Parameter port: 0 picks a free port (tests); read `port` after `start`.
     public init(port: UInt16, handler: @escaping Handler) throws {
@@ -128,7 +131,12 @@ public final class BusServer {
                 if let data { buffer.append(data) }
                 switch HTTPRequest.parse(buffer) {
                 case .complete(let request):
-                    let result = self.handler(request.path, request.headers["x-dojo-token"], request.body)
+                    let token = request.headers["x-dojo-token"]
+                    if self.deferred?(request.path, token, request.body, { [weak self] status, body in
+                        guard let self else { return connection.cancel() }
+                        self.reply(connection, status, body)
+                    }) == true { return }
+                    let result = self.handler(request.path, token, request.body)
                     self.reply(connection, result.status, result.body)
                 case .invalid:
                     self.reply(connection, 400, Data(#"{"error":"bad request"}"#.utf8))
