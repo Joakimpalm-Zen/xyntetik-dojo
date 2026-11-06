@@ -61,7 +61,8 @@ install: app
 # Launch proof without a human: one local pane runs `echo ok`, the bus answers, the app quits.
 # With HOST=user@box the pane runs `echo ok` on that host over ssh instead (POSIX or Windows).
 # With SHOT=file.png it also writes a picture of the window before quitting, to look at the chrome;
-# PICKER=file.png adds one of the picker sheet; EMPTY=file.png one of the empty window after a quit.
+# PICKER=file.png adds one of the picker sheet; EMPTY=file.png one of the empty window after a quit;
+# REOPENED=file.png one of two reopened panes, one with a session and one started fresh.
 # It runs off screen, as a copy with its own bundle identifier: a Dojo that is open stays untouched, and the
 # preferences and the ~/.dojo of the installed app are neither read nor written.
 SMOKE_APP := build/smoke/XyntetikDojo.app
@@ -71,7 +72,7 @@ smoke: app
 	cp -R $(APP) $(SMOKE_APP)
 	/usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier com.xyntetik.dojo.smoke' $(SMOKE_APP)/Contents/Info.plist
 	codesign --force --sign "$(SIGN)" $(SMOKE_APP)
-	DOJO_SMOKE=1 DOJO_SMOKE_HOST=$(HOST) DOJO_SMOKE_SHOT=$(SHOT) DOJO_SMOKE_SHOT_PICKER=$(PICKER) DOJO_SMOKE_SHOT_EMPTY=$(EMPTY) DOJO_PORT=7799 $(SMOKE_APP)/Contents/MacOS/XyntetikDojo
+	DOJO_SMOKE=1 DOJO_SMOKE_HOST=$(HOST) DOJO_SMOKE_SHOT=$(SHOT) DOJO_SMOKE_SHOT_PICKER=$(PICKER) DOJO_SMOKE_SHOT_EMPTY=$(EMPTY) DOJO_SMOKE_SHOT_REOPENED=$(REOPENED) DOJO_PORT=7799 $(SMOKE_APP)/Contents/MacOS/XyntetikDojo
 
 # Install the shim and the pi extension on a remote host (POSIX or Windows): make remote-setup HOST=user@box
 remote-setup:

@@ -17,6 +17,8 @@ final class AppModel: NSObject, ObservableObject {
         let view: TerminalPane
         /// The start folder as given, empty for the home folder.
         let directory: String
+        /// Reopened with no session to resume. The header says so: the harness clears the terminal when it draws.
+        var startedFresh = false
     }
 
     @Published private(set) var items: [Item] = []
@@ -310,9 +312,12 @@ final class AppModel: NSObject, ObservableObject {
             bus.setSession(view.paneName, session)
             savePanes()
         }
-        if reopened, HarnessKind.pickable.contains(kind), saved == nil || session != saved {
-            view.feed(text: "No session to resume: this pane starts fresh.\r\n\r\n")
+        if Launcher.startsFresh(kind: kind, reopened: reopened, saved: saved, session: session),
+           let index = items.firstIndex(where: { $0.view === view }) {
+            items[index].startedFresh = true
         }
+        // A smoke starts no coding agent: what it checks of these panes is their header.
+        if smoke, HarnessKind.pickable.contains(kind) { return }
         var model: String?
         if kind == .pi, host.isEmpty {
             model = await Launcher.fetchRunnerModel()
@@ -702,9 +707,29 @@ final class AppModel: NSObject, ObservableObject {
                 exit(1)
             }
             closeAll()
+            await smokeFreshHeader(in: window)
         }
         try? FileManager.default.removeItem(at: Headless.state())
         exit(0)
+    }
+
+    /// Two reopened agent panes, one with a session to resume: only the other says it started fresh.
+    /// DOJO_SMOKE_SHOT_REOPENED=<file.png>: a picture of the two headers.
+    private func smokeFreshHeader(in window: NSWindow?) async {
+        addPane(kind: .claude, host: "", name: "resumed", session: "11111111-2222-3333-4444-555555555555", reopened: true)
+        addPane(kind: .claude, host: "", name: "fresh", reopened: true)
+        try? await Task.sleep(nanoseconds: 500_000_000)
+        let marked = items.filter(\.startedFresh).map(\.name)
+        guard items.count == 2, marked == ["fresh"] else {
+            print("DOJO_SMOKE failed: of \(items.map(\.name)) the header says started fresh on \(marked), not on fresh alone")
+            exit(1)
+        }
+        if let shot = ProcessInfo.processInfo.environment["DOJO_SMOKE_SHOT_REOPENED"], !shot.isEmpty {
+            failIfSeen()
+            write(shot: shot, of: window)
+            try? await Task.sleep(nanoseconds: 600_000_000)
+        }
+        closeAll()
     }
 
     /// The sixteen terminal colours, one to a line, and a relayed message, for the smoke's picture.

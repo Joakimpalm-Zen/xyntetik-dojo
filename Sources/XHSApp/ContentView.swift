@@ -283,6 +283,10 @@ struct PaneCell: View {
                 }
                 Text(info?.kind.title ?? "").foregroundStyle(Color(Theme.muted))
                 if item.askFirst { Text("asks").foregroundStyle(Color(Theme.muted)).help("This pane keeps the harness's own approvals") }
+                if item.startedFresh {
+                    Text("started fresh").foregroundStyle(Color(Theme.coralInk)).fixedSize()
+                        .help("There was no session to resume, so this pane started a new conversation")
+                }
                 Text(info?.host.isEmpty == false ? info!.host : "local").foregroundStyle(Color(Theme.muted))
                 if !item.directory.isEmpty {
                     Text((item.directory as NSString).lastPathComponent).foregroundStyle(Color(Theme.muted))
