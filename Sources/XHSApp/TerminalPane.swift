@@ -97,8 +97,12 @@ final class TerminalPane: TerminalView, PaneIO {
         }
     }
 
-    /// The band is a palette entry, and SwiftTerm sets one only through the stream.
+    /// The band is a palette entry, and SwiftTerm sets one only through the stream, so it goes in between
+    /// sequences and never inside one: with the parser busy it waits for the end of a later chunk. Colour
+    /// must never cost output.
     private func paintBand() {
+        bandWaiting = !parser.isAtRest
+        guard !bandWaiting else { return }
         let shade = dimmed ? Theme.shadeDimmed : Theme.shade
         feed(byteArray: Repaint.band(red: shade.red, green: shade.green, blue: shade.blue)[...])
     }
@@ -167,12 +171,18 @@ final class TerminalPane: TerminalView, PaneIO {
     /// The end of the last chunk, for a palette reset cut in two.
     private var paletteTail: [UInt8] = []
 
+    /// Where the bytes fed so far leave the terminal's parser.
+    private var parser = ParserRest()
+    /// A band colour that could not go in yet.
+    private(set) var bandWaiting = false
+
     /// To the screen, and the band's colour back if a reset took it away.
     private func present(_ bytes: [UInt8]) {
         feed(byteArray: bytes[...])
+        parser.advance(bytes)
         let seen = paletteTail + bytes
         paletteTail = Array(seen.suffix(Repaint.paletteMarkLength - 1))
-        if Repaint.touchesPalette(seen) { paintBand() }
+        if bandWaiting || Repaint.touchesPalette(seen) { paintBand() }
     }
 
     /// `Theme.brand` as a terminal colour code.
