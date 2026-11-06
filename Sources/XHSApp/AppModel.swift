@@ -21,7 +21,7 @@ final class AppModel: NSObject, ObservableObject {
         var startedFresh = false
     }
 
-    @Published private(set) var items: [Item] = [] { didSet { dimPanes() } }
+    @Published private(set) var items: [Item] = []
     /// The tab shown: nil for the overview (every agent pane in the grid), else one pane filling the window.
     @Published private(set) var selectedTab: ObjectIdentifier?
     /// Problems the owner should see (bus port taken, tools not installed).
@@ -67,7 +67,7 @@ final class AppModel: NSObject, ObservableObject {
     private var keepingList = false
     private var piFlagCheck: Task<Bool, Never>?
     /// The pane that has the keys, nil when none has.
-    @Published private(set) var focusedPane: ObjectIdentifier? { didSet { dimPanes() } }
+    @Published private(set) var focusedPane: ObjectIdentifier?
     private var focusWatch: NSKeyValueObservation?
     private weak var mainWindow: NSWindow?
     private var restoreWatch: NSObjectProtocol?
@@ -138,8 +138,7 @@ final class AppModel: NSObject, ObservableObject {
     /// Every pane but the one with the keys is dimmed. While the keys are in a field for a moment, a rename
     /// say, the pane that had them stays lit, so the grid does not flash.
     private func dimPanes() {
-        let lit = focusedPane ?? keyPane.map(ObjectIdentifier.init)
-        for item in items { item.view.dimmed = lit != nil && item.id != lit }
+        for item in items { item.view.dimmed = keyPane != nil && item.view !== keyPane }
     }
 
     /// Keeps `focusedPane` true to the window. SwiftTerm closes its responder methods to subclasses, so the
