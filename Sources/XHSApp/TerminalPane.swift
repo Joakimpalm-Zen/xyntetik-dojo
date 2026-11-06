@@ -9,18 +9,26 @@ import XHSCore
 /// never calls that method on a subclass.
 @MainActor
 final class TerminalPane: TerminalView, PaneIO {
-    /// The font every pane starts with: SF Mono at 11 points, the fixed-width face of the system font that the
-    /// rest of the app and Bocka use. Medium, not Regular, because the panes draw on the GPU from glyph masks
-    /// rasterized white on clear: font smoothing there thickens the strokes to about 121% of ordinary text,
-    /// and Regular without it comes out at about 85%. Medium without it measures 97%. Cmd-plus, Cmd-minus and
-    /// Cmd-0 change every pane's size while the app runs; the size is not kept between launches.
-    static let defaultFont = font(ofSize: 11)
+    /// The font every pane starts with: SF Mono at 11.25 points, the fixed-width face of the system font that
+    /// the rest of the app and Bocka use.
+    ///
+    /// Light, with font smoothing on. The panes draw on the GPU from glyph masks rasterized white on clear,
+    /// where smoothing thickens the strokes by about half. Measured against ordinary smoothed text: Light
+    /// comes out at 102% of Regular and its bold (the font manager answers Semibold) at 146% against
+    /// ordinary Bold's 144%. Without smoothing nothing fits: Regular is 85%, Medium 97% with a bold of only
+    /// 111%, and Semibold or an in-between weight has no heavier bold at all.
+    ///
+    /// The quarter point is for the grid: SwiftTerm snaps a cell to whole pixels, and at 11 points a letter
+    /// is 13.6 pixels wide on a Retina screen in a 14 pixel cell, so every letter stood 2.9% apart. At 11.25
+    /// it is 13.9 in the same cell. Cmd-plus, Cmd-minus and Cmd-0 change every pane's size while the app
+    /// runs; the size is not kept between launches.
+    static let defaultFont = font(ofSize: 11.25)
     /// The distance between rows as a multiple of the font's line height: 16 points at the default size.
     static let rowSpacing: CGFloat = 1.2
 
     /// The pane font at `size`.
     static func font(ofSize size: CGFloat) -> NSFont {
-        NSFont.monospacedSystemFont(ofSize: size, weight: .medium)
+        NSFont.monospacedSystemFont(ofSize: size, weight: .light)
     }
 
     /// The pane's name on the bus; a rename changes it.
@@ -36,8 +44,8 @@ final class TerminalPane: TerminalView, PaneIO {
     init(name: String) {
         paneName = name
         super.init(frame: NSRect(x: 0, y: 0, width: 640, height: 400))
-        // Antialiased, without font smoothing: see `defaultFont` for why the weight depends on it.
-        fontSmoothing = false
+        // With font smoothing: see `defaultFont` for why the weight depends on it.
+        fontSmoothing = true
         setTextSize(TerminalPane.defaultFont.pointSize)
         applyTheme()
         terminalDelegate = self

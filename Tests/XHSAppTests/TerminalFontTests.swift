@@ -15,12 +15,32 @@ import Testing
     }
 
     /// The panes use SF Mono, the fixed-width face of the system font the rest of the app and Bocka use.
-    @MainActor @Test func panesUseTheSystemsFixedWidthFontAtMedium() {
+    /// Light, because the smoothing of the glyph masks thickens it to the weight of ordinary text.
+    @MainActor @Test func panesUseTheSystemsFixedWidthFontAtLight() {
         let font = TerminalPane.defaultFont
         #expect(font.isFixedPitch)
-        #expect(font.pointSize == 11)
-        #expect(font.fontName == NSFont.monospacedSystemFont(ofSize: 11, weight: .medium).fontName)
-        #expect(weight(font) > weight(NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)))
+        #expect(font.pointSize == 11.25)
+        #expect(font.fontName == NSFont.monospacedSystemFont(ofSize: 11, weight: .light).fontName)
+    }
+
+    /// Bold text must stand apart: SwiftTerm takes its bold from the font manager, which answers a heavier
+    /// face for Light and Medium, and the same face for Semibold or an in-between weight.
+    @MainActor @Test func boldIsHeavierThanTheBaseFont() {
+        let bold = NSFontManager.shared.convert(TerminalPane.defaultFont, toHaveTrait: .boldFontMask)
+        #expect(bold.isFixedPitch)
+        #expect(weight(bold) > weight(TerminalPane.defaultFont) + 0.5)
+    }
+
+    /// SwiftTerm snaps a cell to whole pixels. At the default size a letter must fill its cell on a Retina
+    /// screen to within 1%, or every letter stands apart: at 11 points the cell was 2.9% wider than the letter.
+    @MainActor @Test func aLetterFillsItsCellAtTheDefaultSize() {
+        let font = TerminalPane.defaultFont as CTFont
+        var character: [UniChar] = [0x57], glyph: [CGGlyph] = [0]
+        CTFontGetGlyphsForCharacters(font, &character, &glyph, 1)
+        var advance = CGSize.zero
+        CTFontGetAdvancesForGlyphs(font, .horizontal, &glyph, &advance, 1)
+        let pixels = advance.width * 2
+        #expect(abs(pixels.rounded() / pixels - 1) < 0.01, "a letter is \(pixels) pixels wide in a cell of \(pixels.rounded())")
     }
 
     /// Cmd-plus and Cmd-minus keep the face and its weight.
@@ -31,14 +51,14 @@ import Testing
         #expect(weight(font) == weight(TerminalPane.defaultFont))
     }
 
-    /// Medium is the right weight only without font smoothing: with it the glyph masks come out far heavier.
-    @MainActor @Test func aPaneDrawsWithoutFontSmoothing() {
+    /// Light is the right weight only with font smoothing: without it the glyph masks come out far too thin.
+    @MainActor @Test func aPaneDrawsWithFontSmoothing() {
         _ = NSApplication.shared
-        #expect(TerminalPane(name: "t").fontSmoothing == false)
+        #expect(TerminalPane(name: "t").fontSmoothing == true)
     }
 
     /// 16 points between rows at the default size, as the panes had before, and 22 at 16 points.
-    @MainActor @Test(arguments: [(CGFloat(11), CGFloat(16)), (CGFloat(16), CGFloat(22))])
+    @MainActor @Test(arguments: [(TerminalPane.defaultFont.pointSize, CGFloat(16)), (CGFloat(16), CGFloat(22))])
     func rowsKeepTheirHeight(size: CGFloat, row: CGFloat) {
         let font = TerminalPane.font(ofSize: size)
         #expect(TerminalFont.rowHeight(font: font, spacing: TerminalPane.rowSpacing) == row)

@@ -701,7 +701,7 @@ final class AppModel: NSObject, ObservableObject {
     /// The sixteen terminal colours, one to a line, and a relayed message, for the smoke's picture.
     private static let sample = "[from: shell-1] a relayed message\r\n" + ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"].enumerated().map { i, colour in
         "\u{1b}[\(30 + i)m\(colour) MMMM\u{1b}[0m  \u{1b}[\(90 + i)mbright \(colour) MMMM\u{1b}[0m\r\n"
-    }.joined()
+    }.joined() + "regular MMMM  \u{1b}[1mbold MMMM\u{1b}[0m  \u{1b}[3mitalic MMMM\u{1b}[0m  \u{1b}[2mdim MMMM\u{1b}[0m\r\n"
 
     /// Writes a window to a PNG, for the smoke's pictures: the window server's own image of it, title bar
     /// included, because the panes draw on the GPU and a view's cached drawing leaves them blank. An app
