@@ -9,26 +9,22 @@ import XHSCore
 /// never calls that method on a subclass.
 @MainActor
 final class TerminalPane: TerminalView, PaneIO {
-    /// The font every pane starts with: SF Mono at 11.25 points, the fixed-width face of the system font that
-    /// the rest of the app and Bocka use.
+    /// The font every pane starts with: SF Mono Regular at 10.5 points, drawn with font smoothing. The owner
+    /// picked it on 2026-11-06 from a sheet of seven standard fonts, each rendered by this app off screen with
+    /// and without smoothing (cell G2). Three earlier settings chosen from offline measurements each looked
+    /// wrong on the screen, so change this only from a new sheet of real renders, never from numbers alone.
     ///
-    /// Light, with font smoothing on. The panes draw on the GPU from glyph masks rasterized white on clear,
-    /// where smoothing thickens the strokes by about half. Measured against ordinary smoothed text: Light
-    /// comes out at 102% of Regular and its bold (the font manager answers Semibold) at 146% against
-    /// ordinary Bold's 144%. Without smoothing nothing fits: Regular is 85%, Medium 97% with a bold of only
-    /// 111%, and Semibold or an in-between weight has no heavier bold at all.
-    ///
-    /// The quarter point is for the grid: SwiftTerm snaps a cell to whole pixels, and at 11 points a letter
-    /// is 13.6 pixels wide on a Retina screen in a 14 pixel cell, so every letter stood 2.9% apart. At 11.25
-    /// it is 13.9 in the same cell. Cmd-plus, Cmd-minus and Cmd-0 change every pane's size while the app
-    /// runs; the size is not kept between launches.
-    static let defaultFont = font(ofSize: 11.25)
-    /// The distance between rows as a multiple of the font's line height: 16 points at the default size.
+    /// The half point is for the grid: SwiftTerm snaps a cell to whole pixels, and at 10.5 points a letter is
+    /// 12.98 pixels wide on a Retina screen in a 13 pixel cell. At 11 points it would stand 2.9% apart.
+    /// Cmd-plus, Cmd-minus and Cmd-0 change every pane's size while the app runs; the size is not kept
+    /// between launches.
+    static let defaultFont = font(ofSize: 10.5)
+    /// The distance between rows as a multiple of the font's line height: 15 points at the default size.
     static let rowSpacing: CGFloat = 1.2
 
     /// The pane font at `size`.
     static func font(ofSize size: CGFloat) -> NSFont {
-        NSFont.monospacedSystemFont(ofSize: size, weight: .light)
+        NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
     }
 
     /// The pane's name on the bus; a rename changes it.
@@ -44,7 +40,7 @@ final class TerminalPane: TerminalView, PaneIO {
     init(name: String) {
         paneName = name
         super.init(frame: NSRect(x: 0, y: 0, width: 640, height: 400))
-        // With font smoothing: see `defaultFont` for why the weight depends on it.
+        // With font smoothing, as in the cell the owner picked: see `defaultFont`.
         fontSmoothing = true
         setTextSize(TerminalPane.defaultFont.pointSize)
         applyTheme()
@@ -80,7 +76,7 @@ final class TerminalPane: TerminalView, PaneIO {
 
     /// Paper, Novel's ink and Novel's sixteen colours for the terminal.
     private func applyTheme() {
-        nativeBackgroundColor = Theme.paper
+        nativeBackgroundColor = Theme.terminalPaper
         nativeForegroundColor = Theme.terminalInk
         installColors(Theme.ansi.map { rgb in
             SwiftTerm.Color(red: UInt16((rgb >> 16) & 0xFF) * 257, green: UInt16((rgb >> 8) & 0xFF) * 257, blue: UInt16(rgb & 0xFF) * 257)

@@ -13,7 +13,8 @@ enum Theme {
     static let bg = color(0xD8D2BA)
     static let surface = color(0xE1DBC5)
     static let paper = color(0xE8E3CD)
-    static let shade = (red: 0xDF, green: 0xD9, blue: 0xC3)
+    /// The band behind a user's message in a pane: `terminalPaper` one step darker.
+    static let shade = (red: 0xD6, green: 0xD1, blue: 0xB9)
     static let ink = color(0x16232A)
     static let muted = color(0x514D45)
     static let line = color(0xC5BEA5)
@@ -23,9 +24,11 @@ enum Theme {
     static let ruleWidth: CGFloat = 2
     /// The corner of a tab and of the buttons in the picker.
     static let corner: CGFloat = 6
-    /// The terminal's text and its sixteen colours: Terminal.app's Novel profile, the warm brown ink and
-    /// its muted palette, on a paper that is greyer than Novel's yellow.
-    static let terminalInk = color(0x3B2322)
+    /// The pane's ground, its text and its sixteen colours: Terminal.app's Novel profile, so a pane is not
+    /// brighter than a Terminal window beside it (owner, 2026-11-06). The ground is a little darker than
+    /// `surface`.
+    static let terminalPaper = color(0xDFDBC3)
+    static let terminalInk = color(0x4D2F2D)
     static let ansi: [UInt32] = [0x000000, 0xCC0000, 0x00A600, 0x999900, 0x0000B2, 0xB200B2, 0x00A6B2, 0xBFBFBF,
                                  0x666666, 0xE50000, 0x00D900, 0xE5E500, 0x0000FF, 0xE500E5, 0x00E5E5, 0xE5E5E5]
     /// The least contrast terminal text keeps against its background, as a WCAG ratio. Novel's colours were

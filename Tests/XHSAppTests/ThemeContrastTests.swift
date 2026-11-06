@@ -51,4 +51,20 @@ import XHSCore
         #expect(PaneCell.fill(.exited) == Theme.stateExited)
         #expect(PaneCell.fill(.prompt) == Theme.coral)
     }
+
+    /// The panes use the colours of Terminal.app's Novel profile, as the owner picked on 2026-11-06: not
+    /// brighter than the Terminal windows beside them.
+    @Test func panesUseTerminalsColours() {
+        #expect(ratio(Theme.terminalPaper, Theme.color(0xDFDBC3)) == 1)
+        #expect(ratio(Theme.terminalInk, Theme.color(0x4D2F2D)) == 1)
+        #expect(ratio(Theme.terminalInk, Theme.terminalPaper) >= 7)
+    }
+
+    /// The band behind a user's message is the pane's ground one step darker: visible, and never lighter.
+    @Test func theMessageBandIsOneStepDarkerThanThePane() {
+        let shade = NSColor(srgbRed: CGFloat(Theme.shade.red) / 255, green: CGFloat(Theme.shade.green) / 255, blue: CGFloat(Theme.shade.blue) / 255, alpha: 1)
+        let step = ratio(shade, Theme.terminalPaper)
+        #expect(step > 1.06 && step < 1.14, "the band differs from the pane by \(step)")
+        #expect(ratio(shade, Theme.terminalInk) < ratio(Theme.terminalPaper, Theme.terminalInk), "the band is lighter than the pane")
+    }
 }
