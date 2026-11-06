@@ -344,6 +344,20 @@ public enum Launcher {
         return env
     }
 
+    /// The environment for a run that must not reach the owner's home: every way a process finds a home, or a
+    /// folder in one, points at `home` or is gone. `real` is the owner's, for what an inherited PATH holds of it.
+    public static func contained(_ base: [String: String], home: String, real: String) -> [String: String] {
+        var env = base.filter { key, _ in !key.hasPrefix("XDG_") && !["ZDOTDIR", "DOJO_RUNNER_HOME"].contains(key) }
+        env["HOME"] = home
+        // Foundation's own idea of the home, for NSHomeDirectory and FileManager.
+        env["CFFIXED_USER_HOME"] = home
+        let dojo = real + "/.dojo"
+        if let path = env["PATH"] {
+            env["PATH"] = path.split(separator: ":").filter { $0 != dojo && !$0.hasPrefix(dojo + "/") }.joined(separator: ":")
+        }
+        return env
+    }
+
     /// What a local pi pane shows when Runner does not answer.
     public static func runnerOfflinePlan() -> LaunchPlan {
         let message = "Runner is not answering at \(runnerURL).\\nAdd a Runner pane (the + button): it fetches Runner if needed, picks a model that fits this Mac and serves it.\\nThen close this pane and add pi again.\\n"

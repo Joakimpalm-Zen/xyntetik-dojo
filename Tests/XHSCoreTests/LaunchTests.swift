@@ -155,6 +155,20 @@ import Testing
         #expect(RecentHosts.load(file, valid: RecentHosts.isFolder) == ["/Users/me/repo", "-bad", "ok-host"])
     }
 
+    @Test func aContainedEnvironmentHasNoWayToTheOwnersHome() {
+        let base = ["HOME": "/Users/me", "ZDOTDIR": "/Users/me/zsh", "XDG_CONFIG_HOME": "/Users/me/.config", "XDG_DATA_HOME": "/Users/me/.data",
+                    "DOJO_RUNNER_HOME": "/Users/me/.dojo/runner", "TERM": "x", "PATH": "/Users/me/.dojo/bin:/usr/bin:/Users/me/.dojo:/Users/me/.dojo2/bin:/bin"]
+        let env = Launcher.contained(base, home: "/tmp/h", real: "/Users/me")
+        #expect(env["HOME"] == "/tmp/h")
+        #expect(env["CFFIXED_USER_HOME"] == "/tmp/h")
+        #expect(env["ZDOTDIR"] == nil)
+        #expect(env["XDG_CONFIG_HOME"] == nil)
+        #expect(env["XDG_DATA_HOME"] == nil)
+        #expect(env["DOJO_RUNNER_HOME"] == nil)
+        #expect(env["PATH"] == "/usr/bin:/Users/me/.dojo2/bin:/bin")
+        #expect(env["TERM"] == "x")
+    }
+
     @Test func paneEnvironmentDropsWhatAClaudeSessionHandsDown() {
         let base = ["PATH": "/usr/bin", "CLAUDECODE": "1", "CLAUDE_CODE_CHILD_SESSION": "1", "CLAUDE_CODE_SESSION_ID": "s",
                     "CLAUDE_PID": "7", "LANG": "sv_SE.UTF-8", "HOME": "/home/tester"]

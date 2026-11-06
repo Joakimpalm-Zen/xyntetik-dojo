@@ -565,6 +565,23 @@ final class AppModel: NSObject, ObservableObject {
         exit(1)
     }
 
+    /// What a pane is given, and what a login shell finds, as a pane runs it: the throwaway home, and no way to
+    /// the owner's. A login shell reads the owner's profile, so it is the one to ask, not this process.
+    private func proveContained() async {
+        let home = Headless.state().deletingLastPathComponent().path
+        let real = Headless.realHome
+        let pane = Launcher.paneEnvironment(from: ProcessInfo.processInfo.environment, adding: [:])
+        let shell = #"printf '<%s>' "$HOME""#
+        let script = #"test -e "$HOME/.dojo/runner-start.sh" && echo script-found"#
+        let contained = await Launcher.helpLists("<\(home)>", command: shell, loginShell: loginShell)
+        let owners = await Launcher.helpLists("<\(real)>", command: shell, loginShell: loginShell)
+        let script0 = await Launcher.helpLists("script-found", command: script, loginShell: loginShell)
+        guard pane["HOME"] == home, contained, !owners, !script0 else {
+            print("DOJO_SMOKE failed: a pane's home is \(pane["HOME"] ?? "unset"), in a login shell contained \(contained), the owner's \(owners), Runner's script found \(script0)")
+            exit(1)
+        }
+    }
+
     /// The cue on the pane header follows the keys: after a click, to a tab, to the overview, and to the pane
     /// that takes the place of one closed.
     private func proveFocus(_ name: String) async {
@@ -684,6 +701,7 @@ final class AppModel: NSObject, ObservableObject {
 
     private func finishSmoke(_ name: String) async {
         if bus.info(name)?.host.isEmpty == true {
+            await proveContained()
             await proveFocus(name)
             await proveAttention(name)
         }

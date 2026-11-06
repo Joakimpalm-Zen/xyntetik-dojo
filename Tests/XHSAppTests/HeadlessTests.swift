@@ -47,4 +47,31 @@ import Testing
         #expect(Headless.state(smoke: false, home: home) == home.appendingPathComponent(".dojo"))
         #expect(!Headless.state(smoke: true, home: home).path.hasPrefix(home.path))
     }
+
+    private func leak(_ environment: [String: String] = ["HOME": "/tmp/h"], foundation: String = "/tmp/h", fileManager: String = "/tmp/h",
+                      state: String = "/tmp/h/.dojo") -> String? {
+        Headless.leak(real: "/Users/me", environment: environment, foundationHome: foundation, fileManagerHome: fileManager, state: state)
+    }
+
+    @Test func aContainedRunHasNoLeak() {
+        #expect(leak() == nil)
+    }
+
+    @Test func everyWayBackToTheOwnersHomeIsALeak() {
+        #expect(leak(["HOME": "/Users/me"]) != nil)
+        #expect(leak([:]) != nil)
+        #expect(leak(foundation: "/Users/me") != nil)
+        #expect(leak(fileManager: "/Users/me/") != nil)
+        #expect(leak(state: "/Users/me/.dojo") != nil)
+        #expect(leak(state: "/Users/me/.dojo/runner") != nil)
+        #expect(leak(["HOME": "/tmp/h", "ZDOTDIR": "/Users/me"]) != nil)
+        #expect(leak(["HOME": "/tmp/h", "DOJO_RUNNER_HOME": "/Users/me/.dojo/runner"]) != nil)
+    }
+
+    @Test func theRealHomeComesFromTheUserDatabaseAndNotTheEnvironment() {
+        setenv("HOME", "/tmp/elsewhere", 1)
+        defer { setenv("HOME", NSHomeDirectory(), 1) }
+        #expect(Headless.realHome != "/tmp/elsewhere")
+        #expect(Headless.realHome.hasPrefix("/"))
+    }
 }
