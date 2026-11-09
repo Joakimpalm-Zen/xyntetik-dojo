@@ -18,6 +18,7 @@ case "$*" in
             echo "  verdict       PAGES — 2.36 GiB over even with the smallest cache. Every token would page from disk." ;;
     *granite*" -c 16384") echo "  weights       4.90 GiB"; echo "  verdict       PAGES — 0.9 GiB over even with the smallest cache" ;;
     *granite*" -c 8192") echo "  weights       4.90 GiB"; echo "  verdict       FITS WITH --kv q8 — 0.4 GiB to spare at ctx 8192" ;;
+    *merged-Q8_0*) echo "  weights       1.00 GiB"; echo "  verdict       FITS — 4.0 GiB to spare" ;;
     *) echo "  weights       2.40 GiB"; echo "  verdict       FITS — 3.0 GiB to spare" ;;
 esac
 echo "  available RAM ${STUB_AVAIL:-6.00} GiB right now"
@@ -47,11 +48,16 @@ case $url in
  {"id": "split-20b", "tier": "tier1", "envelope": {"features": ["text"]}, "files": [{"repo": "x/Split-GGUF", "name": "Split-00001-of-00002.gguf", "bytes": 6500000000}, {"repo": "x/Split-GGUF", "name": "Split-00002-of-00002.gguf", "bytes": 6500000000}]},
  {"id": "no-bytes", "tier": "tier2", "envelope": {"features": ["text"]}, "files": [{"repo": "x/nb", "name": "nb.gguf"}]},
  {"id": "bad-head", "tier": "tier2", "envelope": {"features": ["text"]}, "files": [{"repo": "x/BadRepo", "name": "Bad.gguf", "bytes": 1000}]},
+ {"id": "in-a-folder", "tier": "tier2", "envelope": {"features": ["text"]}, "files": [{"repo": "x/ToolUse", "name": "merged-Q8_0.gguf", "path": "merged/merged-Q8_0.gguf", "bytes": 1100000000}]},
+ {"id": "gone-folder", "tier": "tier2", "envelope": {"features": ["text"]}, "files": [{"repo": "x/Gone", "name": "gone.gguf", "path": "old/gone.gguf", "bytes": 1000}]},
  {"id": "coming", "tier": "upcoming", "envelope": {"features": ["text"]}, "files": [{"repo": "x/z", "name": "z.gguf", "bytes": 100}]}
 ]}
 JSON
         ;;
     *resolve/main/Bad*) printf '<html>captive portal</html>' > "$out" ;;
+    # A file in a folder of its repository is there by its path; the bare name is a 404, as on the Hub.
+    *ToolUse/resolve/main/merged/merged-Q8_0.gguf) printf 'GGUF' > "$out" ;;
+    *ToolUse/resolve/main/*|*Gone/resolve/main/*) exit 22 ;;
     # Granite's head is a real GGUF header: trained for a context of 8192, the tensor list cut off after.
     *resolve/main/granite*) python3 -I -c '
 import struct, sys
@@ -76,7 +82,13 @@ fail() { echo "$1"; cat "$tmp/log"; [ -f "$tmp/home/fits" ] && cat "$tmp/home/fi
 got=$(STUB_AVAIL=0.85 run)
 want="Serving nvidia/NVIDIA-Nemotron-3.5-Bolt-E4B-4GB:Nemotron-3.5-Bolt-E4B-Q4_K_M -c 16384 --kv q8 --mlock"
 [ "$got" = "$want" ] || fail "8 GiB pick: got '$got', want '$want'"
-[ "$(cut -f 1 "$tmp/home/fits" | tr '\n' ' ')" = "bolt-e4b qwen3-4b " ] || fail "fits should list bolt-e4b then qwen3-4b"
+[ "$(cut -f 1 "$tmp/home/fits" | tr '\n' ' ')" = "bolt-e4b qwen3-4b in-a-folder " ] || fail "fits should list bolt-e4b, qwen3-4b, then the file in a folder"
+# R10.28: the file in a folder is fetched by its path, its spelling stays REPO:STEM (Runner's -hf matches
+# the base name and keeps the folder), and its head is kept under a flat name
+grep -q "$(printf 'in-a-folder\tx/ToolUse:merged-Q8_0\t')" "$tmp/home/fits" || fail "the folder file's spelling is REPO:STEM"
+[ -s "$tmp/home/heads/x-ToolUse-merged-merged-Q8_0.gguf" ] || fail "the folder file's head is kept under a flat name"
+# a fetch that fails is an error line naming what was asked for, not a quiet skip
+grep -q "error: gone-folder: could not fetch the first 16 MiB of x/Gone/old/gone.gguf" "$tmp/log" || fail "a failed fetch must be an error line with its path"
 grep -q "granite-8b: 4.90 GiB stay resident, more than 0.5 of this machine's RAM" "$tmp/log" || fail "the 8B skip is missing from the log"
 grep -q "coder-30b" "$tmp/log" && fail "the 30B file should not be asked about on an 8 GiB machine"
 grep -q "latest release is v9.9.9" "$tmp/log" || fail "the latest release tag was not read"
@@ -117,7 +129,7 @@ grep -q "no-bytes" "$tmp/log" && fail "a row without sizes must be skipped silen
 # A split model that fits is served at the default context without a verdict; a head that is not GGUF is not kept.
 got=$(STUB_TOTAL_BYTES=34359738368 STUB_AVAIL=20.00 run)
 [ "$got" = "Serving x/Split-GGUF:Split-00001-of-00002 -c 16384 --kv q8 --mlock" ] || fail "32 GiB pick: got '$got'"
-grep -q "bad-head: could not fetch the file's first 16 MiB, skipped" "$tmp/log" || fail "a head that is not GGUF must be skipped"
+grep -q "error: bad-head: could not fetch the first 16 MiB of x/BadRepo/Bad.gguf" "$tmp/log" || fail "a head that is not GGUF must be an error line"
 [ ! -e "$tmp/home/heads/x-BadRepo-Bad.gguf" ] || fail "a head that is not GGUF must not be kept"
 
 # No runner on PATH: the release is downloaded, its checksum line found and matched, the binary used.
