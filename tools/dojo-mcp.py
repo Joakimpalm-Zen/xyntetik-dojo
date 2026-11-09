@@ -450,6 +450,9 @@ def cli(argv, out=sys.stdout, err=sys.stderr, stdin=sys.stdin):
             out.write("%s: %s (state %s, queued %s)\n" % (
                 rest[0], "delivered" if res.get("delivered") else "queued",
                 res.get("state"), res.get("queued", 0)))
+            # Why it waits, or what happens to it now: a bare "queued" left senders guessing (D18).
+            if res.get("note"):
+                out.write("  %s\n" % res["note"])
             return 0
         if cmd == "read" and 1 <= len(rest) <= 2:
             lines = int(rest[1]) if len(rest) == 2 else 40

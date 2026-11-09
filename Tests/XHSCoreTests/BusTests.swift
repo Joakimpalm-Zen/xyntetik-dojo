@@ -120,6 +120,47 @@ import Testing
         #expect(bus.info("codex-1")?.queued == 0)
     }
 
+    /// D18, 2026-11-09: the owner submitted a prompt, Codex refused the turn at its usage limit before any
+    /// submit hook, and the text left the composer. The hold stayed, and a message sat queued for good.
+    @Test func aTurnRefusedBeforeItsHookEndsTheHoldOnceTheComposerShowsEmpty() {
+        var clock = Date(timeIntervalSince1970: 1000)
+        bus.now = { clock }
+        hook(targetToken, "SessionStart")
+        targetIO.screen = ComposerTests.codex("› resume the review")
+        for _ in 0..<5 { bus.noteOwnerInput("codex-1", .text) }
+        bus.noteOwnerInput("codex-1", .submit)
+        // No hook: the turn was refused. The screen still shows the draft for a moment.
+        let (_, result) = call("send", ["pane": "codex-1", "text": "your turn"])
+        #expect(result["delivered"] as? Bool == false)
+        #expect((result["note"] as? String)?.contains("composer shows empty") == true)
+        clock += 60
+        bus.tick()
+        #expect(targetIO.written.isEmpty, "the draft is still on the screen")
+        #expect(bus.info("codex-1")?.draft == true)
+        // The harness took the text out of the composer and said it is at its limit.
+        targetIO.screen = ComposerTests.codex("› Ask Codex to do anything")
+            .replacingOccurrences(of: "• Working (3m 24s • esc to interrupt)", with: "■ You've hit your usage limit.")
+        clock += 1
+        bus.tick()
+        #expect(targetIO.typed == "[from: claude-1] your turn\r")
+        #expect(bus.info("codex-1")?.draft == false)
+        #expect(bus.info("codex-1")?.queued == 0)
+    }
+
+    @Test func anEmptyLookingComposerWaitsForTheOwnerToStopTyping() {
+        var clock = Date(timeIntervalSince1970: 1000)
+        bus.now = { clock }
+        hook(targetToken, "SessionStart")
+        // A key the harness has not drawn yet: the screen still shows the placeholder.
+        targetIO.screen = ComposerTests.codex("› Ask Codex to do anything")
+        bus.noteOwnerInput("codex-1", .text)
+        _ = call("send", ["pane": "codex-1", "text": "wait"])
+        clock += 1
+        bus.tick()
+        #expect(targetIO.written.isEmpty)
+        #expect(bus.info("codex-1")?.draft == true)
+    }
+
     @Test func unsentOwnerTextHoldsTheQueueUntilItIsSentOrCleared() {
         var clock = Date(timeIntervalSince1970: 1000)
         bus.now = { clock }
