@@ -139,6 +139,20 @@ got=$(STUB_RUNNER="$tmp/bin/runner" STUB_AVAIL=0.85 DOJO_RUNNER_HOME="$tmp/home"
 grep -q "Downloading Runner v9.9.9" "$tmp/log" || fail "the release was not downloaded"
 grep -q "could not be downloaded" "$tmp/log" && fail "the checksum must match a line of the form 'hash  name'"
 [ -x "$tmp/home/runner" ] || fail "the downloaded runner is not in place"
+# D12: a Windows host, where Dojo runs this script in MSYS2 bash: the .exe asset, its checksum line (listed
+# as binary, "hash *name"), kept as runner.exe and run from there.
+mkdir -p "$tmp/winbin" "$tmp/winhome"; cp "$tmp/bin/curl" "$tmp/bin/sysctl" "$tmp/winbin/"
+cat > "$tmp/winbin/uname" <<'STUB'
+#!/bin/sh
+case "$1" in -m) echo x86_64 ;; *) echo MSYS_NT-10.0-26100 ;; esac
+STUB
+chmod +x "$tmp/winbin/uname"
+got=$(STUB_RUNNER="$tmp/bin/runner" STUB_AVAIL=0.85 DOJO_RUNNER_HOME="$tmp/winhome" PATH="$tmp/winbin:/usr/bin:/bin" sh "$here/runner-start.sh" --pick 2>"$tmp/log")
+[ "$got" = "Serving nvidia/NVIDIA-Nemotron-3.5-Bolt-E4B-4GB:Nemotron-3.5-Bolt-E4B-Q4_K_M -c 16384 --kv q8 --mlock" ] || fail "Windows download path: got '$got'"
+grep -q "Downloading Runner v9.9.9 (runner-windows-x86_64.exe)" "$tmp/log" || fail "a Windows host must fetch the .exe"
+grep -q "could not be downloaded" "$tmp/log" && fail "the Windows checksum line ('hash *name') must match"
+[ -x "$tmp/winhome/runner.exe" ] || fail "the Windows runner must be kept as runner.exe"
+grep -q "at $tmp/winhome/runner.exe" "$tmp/log" || fail "the Windows runner must be run as runner.exe"
 # A stop-gap runner in the Dojo folder is removed, never used.
 
 # A server already on the port: the script steps aside and says who holds it; --pick still picks.

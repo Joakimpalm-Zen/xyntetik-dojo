@@ -46,8 +46,9 @@ struct ContentView: View {
                     PaneGrid(items: agents)
                 }
             }
-            if let runner = model.items.last(where: { $0.kind == .runner }) {
-                // Its own identity per pane, so a replacement Runner gets a fresh strip (and its log open).
+            // One strip per Runner pane: this Mac's, and one per host that runs one (D12). Each has its own
+            // identity, so a replacement Runner gets a fresh strip (and its log open).
+            ForEach(model.items.filter { $0.kind == .runner }, id: \.id) { runner in
                 RunnerStrip(item: runner).id(runner.id)
             }
         }
@@ -154,9 +155,12 @@ struct RunnerStrip: View {
     static func status(_ info: Bus.Info?) -> String {
         guard let info else { return "" }
         switch info.state {
-        case .running: return info.model.isEmpty ? "on 127.0.0.1:8080" : "\(info.model) on 127.0.0.1:8080"
+        case .running:
+            let place = info.host.isEmpty ? "127.0.0.1:8080" : info.host
+            return info.model.isEmpty ? "on \(place)" : "\(info.model) on \(place)"
         case .exited: return "open the log to see why"
-        default: return info.model.isEmpty ? "picking a model that fits this Mac" : info.model.replacingOccurrences(of: "fetching ", with: "fetching and loading ")
+        default: return info.model.isEmpty ? "picking a model that fits \(info.host.isEmpty ? "this Mac" : info.host)"
+                                           : info.model.replacingOccurrences(of: "fetching ", with: "fetching and loading ")
         }
     }
 }
@@ -548,8 +552,15 @@ struct PickerSheet: View {
                     .foregroundStyle(Color(model.foreignServer || runnerPane?.state == .exited ? Theme.coralInk : Theme.muted))
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 10) {
-                    Button(runnerPane == nil && model.runnerModel.isEmpty ? "Start Runner" : "Runner") { add(.runner) }
-                        .disabled(runnerPane != nil || model.foreignServer)
+                    // With a host in the form, the button starts Runner there (D12); the card is about this Mac.
+                    let host = form.host.trimmingCharacters(in: .whitespaces)
+                    if host.isEmpty {
+                        Button(runnerPane == nil && model.runnerModel.isEmpty ? "Start Runner" : "Runner") { add(.runner) }
+                            .disabled(runnerPane != nil || model.foreignServer)
+                    } else {
+                        Button("Start Runner on \(host)") { add(.runner) }
+                            .disabled(model.runnerPane(host: host) != nil)
+                    }
                     if !model.runnerFits.isEmpty {
                         Text("Serve").foregroundStyle(Color(Theme.muted))
                         // Picking another model replaces the Runner pane with one serving it.

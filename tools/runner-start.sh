@@ -25,6 +25,11 @@ share="${DOJO_RUNNER_RAM_SHARE:-0.5}"
 # The context served when Runner's verdict says every context pages right now.
 fallback_ctx=16384
 mkdir -p "$home/heads"
+# The binary's name here: a Windows host (MSYS2 bash, as Dojo runs a pane there) keeps the release's .exe.
+case "$(uname -s)" in
+    MSYS*|MINGW*|CYGWIN*) exe=runner.exe ;;
+    *) exe=runner ;;
+esac
 
 say() { printf '%s\n' "$*"; }
 note() { printf '%s\n' "$*" >&2; }
@@ -42,15 +47,18 @@ download_runner() {
     case "$(uname -s)-$(uname -m)" in
         Darwin-arm64) asset="runner-macos-arm64" ;;
         Linux-x86_64) asset="runner-linux-x86_64" ;;
+        MSYS*-x86_64|MINGW*-x86_64|CYGWIN*-x86_64) asset="runner-windows-x86_64.exe" ;;
         *) note "No Runner release for $(uname -s) $(uname -m): build it from source and put runner on PATH."; exit 2 ;;
     esac
     note "Downloading Runner $1 ($asset) to $home ..."
     # Into a part file, and into place only once the checksum line was found and matched.
     curl -fL -o "$home/$asset.part" "$release/download/$asset" &&
         curl -fsL -o "$home/SHA256SUMS" "$release/download/SHA256SUMS" &&
-        line=$(grep " $asset\$" "$home/SHA256SUMS" | tr -d '\r' | head -1) && [ -n "$line" ] &&
+        # the line names the asset, after a "*" where the file is listed as binary (the Windows .exe is)
+        line=$(tr -d '\r' < "$home/SHA256SUMS" | awk -v a="$asset" '{ n = $2; sub(/^\*/, "", n); if (n == a) { print; exit } }') &&
+        [ -n "$line" ] &&
         (cd "$home" && printf '%s  %s\n' "$(printf '%s' "$line" | awk '{ print $1 }')" "$asset.part" | checksum >&2) &&
-        mv "$home/$asset.part" "$home/runner" && chmod +x "$home/runner" && return 0
+        mv "$home/$asset.part" "$home/$exe" && chmod +x "$home/$exe" && return 0
     rm -f "$home/$asset.part"
     note "Runner $1 could not be downloaded and verified."
     return 1
@@ -70,8 +78,8 @@ find_runner() {
         say "$bin"
         return
     fi
-    if [ -x "$home/runner" ]; then
-        have=$("$home/runner" --version 2>/dev/null | awk '{ print $2 }' || true)
+    if [ -x "$home/$exe" ]; then
+        have=$("$home/$exe" --version 2>/dev/null | awk '{ print $2 }' || true)
         if [ -n "$latest" ] && [ "v$have" != "$latest" ] && [ "$have" != "$latest" ]; then
             note "Runner $have is here; $latest is the latest release."
             download_runner "$latest" || note "Keeping Runner $have."
@@ -79,8 +87,8 @@ find_runner() {
     else
         download_runner "${latest:-latest}"
     fi
-    note "Runner $("$home/runner" --version 2>/dev/null | head -1 || true) at $home/runner"
-    say "$home/runner"
+    note "Runner $("$home/$exe" --version 2>/dev/null | head -1 || true) at $home/$exe"
+    say "$home/$exe"
 }
 
 # This machine's RAM in bytes.

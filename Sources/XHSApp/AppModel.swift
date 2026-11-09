@@ -83,6 +83,8 @@ final class AppModel: NSObject, ObservableObject {
     private var remoteShells: [String: RemoteShell] = [:]
     /// Each remote pane's end of its own forward to the bus.
     private var remotePorts: [ObjectIdentifier: Int] = [:]
+    /// D12: the port on this Mac where a remote Runner pane's forward brings its host's Runner.
+    private var runnerForwards: [ObjectIdentifier: Int] = [:]
     private var server: BusServer?
     private var timer: Timer?
 
@@ -204,21 +206,47 @@ final class AppModel: NSObject, ObservableObject {
         show(tab: step > 0 ? TabOrder.next(after: selectedTab, in: ids) : TabOrder.previous(before: selectedTab, in: ids))
     }
 
-    /// The Runner pane that is starting or serving, if any: the newest, since a stopped one may still be open.
-    var runnerPane: Bus.Info? {
-        bus.all.last { $0.kind == .runner && $0.state != .exited }
+    /// This Mac's Runner pane that is starting or serving, if any: the newest, since a stopped one may still be open.
+    var runnerPane: Bus.Info? { runnerPane(host: "") }
+
+    /// The Runner pane starting or serving on `host` ("" for this Mac). One a machine (D12).
+    func runnerPane(host: String) -> Bus.Info? {
+        bus.all.last { $0.kind == .runner && $0.host == host && $0.state != .exited }
     }
 
-    /// A Runner pane shows the model it serves once the server answers.
+    /// Where this Mac reaches a Runner pane's server: its own 8080, or a remote pane's forward (D12).
+    func runnerURL(of pane: Bus.Info) -> String? {
+        guard !pane.host.isEmpty else { return Launcher.runnerURL }
+        guard let item = items.first(where: { $0.name == pane.name }), let port = runnerForwards[item.id] else { return nil }
+        return Launcher.runnerURL(forward: port)
+    }
+
+    /// A Runner pane shows the model it serves once its server answers, each at its own URL.
     private func fillRunnerHeader() {
-        let waiting = bus.all.filter { $0.kind == .runner && $0.state == .running && ($0.model.isEmpty || $0.model.hasPrefix("fetching ")) }.map(\.name)
+        let waiting = bus.all.filter { $0.kind == .runner && $0.state == .running && ($0.model.isEmpty || $0.model.hasPrefix("fetching ")) }
         guard !waiting.isEmpty else { return }
-        Task {
-            guard let served = await Launcher.fetchServed() else { return }
-            for name in waiting { bus.setModel(name, served.model) }
-            runnerModel = served.model
-            servedBy = served.serverName
+        for pane in waiting {
+            guard let url = runnerURL(of: pane) else { continue }
+            Task {
+                guard let served = await Launcher.fetchServed(at: url) else { return }
+                bus.setModel(pane.name, served.model)
+                if pane.host.isEmpty {
+                    runnerModel = served.model
+                    servedBy = served.serverName
+                }
+            }
         }
+    }
+
+    /// The Runner a pi pane on this Mac uses: this Mac's own when it answers, else a remote Runner pane that
+    /// serves, through its forward (D12). nil: no Runner answers.
+    private func runnerForLocalPi() async -> (url: String, model: String)? {
+        if let model = await Launcher.fetchRunnerModel() { return (Launcher.runnerURL, model) }
+        for pane in bus.all.reversed() where pane.kind == .runner && !pane.host.isEmpty && pane.state == .running {
+            guard let url = runnerURL(of: pane), let model = await Launcher.fetchRunnerModel(at: url) else { continue }
+            return (url, model)
+        }
+        return nil
     }
 
     static let runnerHome = Headless.state().appendingPathComponent("runner")
@@ -255,18 +283,17 @@ final class AppModel: NSObject, ObservableObject {
         if !host.isEmpty, !Hosts.isValid(host) {
             return "Host is an ssh destination such as box or user@box."
         }
-        if kind == .runner, !host.isEmpty {
-            return "A Runner pane serves on this Mac; leave the host empty."
+        if kind == .runner, let pane = runnerPane(host: host) {
+            return "Runner is already \(pane.state == .running ? "serving" : "starting") in \(pane.name)"
+                + (host.isEmpty ? "." : " on \(host).")
         }
-        if kind == .runner, let pane = runnerPane {
-            return "Runner is already \(pane.state == .running ? "serving" : "starting") in \(pane.name)."
-        }
-        if kind == .runner, foreignServer {
+        if kind == .runner, host.isEmpty, foreignServer {
             return "\(servedBy) is serving \(runnerModel) on 127.0.0.1:8080; the pi panes use it. Stop it to let Runner serve."
         }
         // A stopped Runner pane gives way to the new one.
         if kind == .runner {
-            for stopped in items where stopped.kind == .runner && bus.info(stopped.name)?.state == .exited { close(stopped.name) }
+            for stopped in items where stopped.kind == .runner && bus.info(stopped.name)?.state == .exited
+                && bus.info(stopped.name)?.host == host { close(stopped.name) }
         }
         var directory = rawDirectory.trimmingCharacters(in: .whitespaces)
         if host.isEmpty, !directory.isEmpty {
@@ -325,15 +352,19 @@ final class AppModel: NSObject, ObservableObject {
         // A smoke starts no coding agent: what it checks of these panes is their header.
         if smoke, HarnessKind.pickable.contains(kind) { return }
         var model: String?
+        var piRunnerURL: String?
         if kind == .pi, host.isEmpty {
-            model = await Launcher.fetchRunnerModel()
+            let runner = await runnerForLocalPi()
             guard items.contains(where: { $0.view === view }) else { return }
-            guard let model else {
+            guard let runner else {
                 bus.setModel(view.paneName, "Runner offline")
                 start(view, Launcher.runnerOfflinePlan())
                 return
             }
-            bus.setModel(view.paneName, model)
+            model = runner.model
+            // this Mac's own Runner needs no variable; a remote one is named by its forward
+            if runner.url != Launcher.runnerURL { piRunnerURL = runner.url }
+            bus.setModel(view.paneName, runner.model)
         }
         // A remote host is asked which shell it runs commands in: cmd.exe (Windows) or a POSIX shell.
         var remoteShell = RemoteShell.posix
@@ -348,10 +379,20 @@ final class AppModel: NSObject, ObservableObject {
             remotePort = Launcher.remotePort(taken: Set(remotePorts.values))
             remotePorts[ObjectIdentifier(view)] = remotePort
         }
+        var runnerForward: Int?
+        if kind == .runner, !host.isEmpty {
+            guard let free = Launcher.runnerForwardPort(taken: Set(runnerForwards.values)) else {
+                view.feed(text: "No port in \(Launcher.runnerForwardPorts) is free on this Mac for this host's Runner.\r\n")
+                return
+            }
+            runnerForward = free
+            runnerForwards[ObjectIdentifier(view)] = free
+        }
         if let note { view.feed(text: note + "\r\n\r\n") }
         start(view, Launcher.plan(kind: kind, paneName: view.paneName, host: host.isEmpty ? nil : host, port: port,
                                   token: token, runnerModel: model, loginShell: loginShell, remoteShell: remoteShell,
-                                  directory: directory, askFirst: askFirst, remotePort: remotePort, session: session))
+                                  directory: directory, askFirst: askFirst, remotePort: remotePort, session: session,
+                                  runnerForward: runnerForward, runnerURL: piRunnerURL))
     }
 
     private func start(_ view: TerminalPane, _ plan: LaunchPlan) {
@@ -400,6 +441,7 @@ final class AppModel: NSObject, ObservableObject {
         bus.remove(name)
         unseen.remove(item.id)
         remotePorts[item.id] = nil
+        runnerForwards[item.id] = nil
         tokens[name] = nil
         remoteShells[name] = nil
         items.removeAll { $0.name == name }
