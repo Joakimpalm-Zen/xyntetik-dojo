@@ -37,7 +37,8 @@ class FakeBus:
                         {"name": "claude-1", "kind": "claude", "host": "", "state": "idle", "queued": 0, "model": ""},
                         {"name": "codex-1", "kind": "codex", "host": "box", "state": "prompt", "queued": 1, "model": ""}]}, 200
                 elif self.path == "/send":
-                    out, code = {"pane": body["pane"], "delivered": False, "queued": 1, "state": "prompt"}, 200
+                    out, code = {"pane": body["pane"], "delivered": False, "queued": 1, "state": "prompt",
+                                 "note": "codex-1 is at a prompt; queued until it is idle."}, 200
                 elif self.path == "/read":
                     out, code = {"pane": body["pane"], "state": "idle", "text": "line a\nline b"}, 200
                 elif self.path == "/state":
@@ -94,6 +95,12 @@ class ShimTest(unittest.TestCase):
         finally:
             os.environ.clear()
             os.environ.update(saved)
+
+    def test_send_says_why_a_message_waits(self):
+        code, out, _ = self.cli("send", "codex-1", "hello")
+        self.assertEqual(code, 0)
+        self.assertEqual(out.splitlines(), ["codex-1: queued (state prompt, queued 1)",
+                                            "  codex-1 is at a prompt; queued until it is idle."])
 
     def test_relay_sends_the_words_and_gives_back_what_the_program_said(self):
         self.bus.relay_on = True
@@ -185,7 +192,8 @@ class ShimTest(unittest.TestCase):
     def test_cli(self):
         r = self.run_cli("send", "codex-1", "hello", "there")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(r.stdout, "codex-1: queued (state prompt, queued 1)\n")
+        self.assertEqual(r.stdout, "codex-1: queued (state prompt, queued 1)\n"
+                                   "  codex-1 is at a prompt; queued until it is idle.\n")
         self.assertEqual(self.bus.requests[-1][2], {"pane": "codex-1", "text": "hello there"})
         r = self.run_cli("send", "codex-1", "-", stdin="from stdin\n")
         self.assertEqual(self.bus.requests[-1][2]["text"], "from stdin\n")

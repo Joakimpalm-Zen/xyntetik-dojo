@@ -376,7 +376,7 @@ public final class Bus {
         } else if target.state == .prompt {
             result["note"] = "\(target.name) is at a prompt; the bus never types into a prompt. Queued until it is idle."
         } else if target.hasDraft {
-            result["note"] = "the owner has unsent text in \(target.name); queued until that is sent."
+            result["note"] = "the owner has unsent text in \(target.name); queued until it is sent, cleared, or the composer shows empty."
         } else {
             result["note"] = "\(target.name) is \(target.state.rawValue); queued until it is idle."
         }
@@ -436,8 +436,16 @@ public final class Bus {
     /// there and has nothing unsent. A running harness keeps the input in its own queue and reads it
     /// when its current step ends, which is sooner than the end of its turn.
     private func flush(_ p: Pane) {
-        guard p.state == .idle || p.state == .running, !p.queue.isEmpty, !p.hasDraft, !p.enterPending, let io = p.io else { return }
+        guard p.state == .idle || p.state == .running, !p.queue.isEmpty, !p.enterPending, let io = p.io else { return }
         if let last = p.lastOwnerInput, now().timeIntervalSince(last) < ownerQuietInterval { return }
+        // A hook ends a draft hold, but a turn the harness refuses fires none, and the owner's text is gone
+        // from the composer all the same. The screen showing it empty ends the hold too (D18). Only after the
+        // owner has been quiet, so a key not yet drawn cannot be missed.
+        if p.hasDraft {
+            guard Composer.shownEmpty(kind: p.kind, screen: io.screenText()) else { return }
+            p.hasDraft = false
+            p.typedSinceSubmit = false
+        }
         let message = p.queue.map { Delivery.line(from: $0.sender.name, text: $0.text) }.joined(separator: "\n")
         p.queue.removeAll()
         io.write(Delivery.bytes(message, bracketedPaste: io.bracketedPasteEnabled))
