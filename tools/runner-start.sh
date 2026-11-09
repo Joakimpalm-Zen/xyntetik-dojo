@@ -102,8 +102,10 @@ roster_file() {
     say "$home/model-tiers.json"
 }
 
-# One line per candidate: id, repo, first file, total bytes, number of files. Tier 1 and 2 text models,
-# each no larger than this machine's RAM, largest first. A row missing a field is skipped.
+# One line per candidate: id, repo, first file, its path in the repository, total bytes, number of files.
+# Tier 1 and 2 text models, each no larger than this machine's RAM, largest first. A row missing a field is
+# skipped. The path is the roster's `path` when the file sits in a folder of its repository, else its name:
+# the Hub serves such a file only by its path (R10.28).
 candidates() {
     python3 -I - "$1" "$2" <<'PY'
 import json, sys
@@ -119,13 +121,14 @@ for r in rows:
     try:
         total = sum(int(f["bytes"]) for f in files)
         repo, name = files[0]["repo"], files[0]["name"]
+        path = files[0].get("path") or name
     except (KeyError, TypeError, ValueError):
         continue
-    if total > ram or "/" in name or not name.endswith(".gguf"):
+    if total > ram or "/" in name or not name.endswith(".gguf") or not path.endswith("/" + name) and path != name:
         continue
-    out.append((total, r["id"], repo, name, len(files)))
-for total, rid, repo, name, parts in sorted(out, reverse=True):
-    print(rid, repo, name, total, parts)
+    out.append((total, r["id"], repo, name, path, len(files)))
+for total, rid, repo, name, path, parts in sorted(out, reverse=True):
+    print(rid, repo, name, path, total, parts)
 PY
 }
 
@@ -204,7 +207,8 @@ list_fits() {
     : > "$home/fits.new"
     roster=$(roster_file)
     candidates "$roster" "$ram" > "$home/candidates" || { note "Runner's model roster could not be read."; exit 4; }
-    while read -r id repo file bytes parts; do
+    while read -r id repo file path bytes parts; do
+        # Runner's -hf matches the base name and keeps the folder, so a file in a folder is still REPO:STEM
         spelling="$repo:${file%.gguf}"
         if [ "$parts" -gt 1 ]; then
             # A split model: the head is part 1 only, so the roster's total is the resident size and no
@@ -218,14 +222,18 @@ list_fits() {
             fi
             continue
         fi
-        head="$home/heads/$(say "$repo" | tr / -)-$file"
+        head="$home/heads/$(say "$repo/$path" | tr / -)"
         if [ ! -s "$head" ]; then
-            # The first 16 MiB into a part file; it is a head only if it starts with the GGUF magic.
-            if curl -fsL -r 0-16777215 -o "$head.part" "https://huggingface.co/$repo/resolve/main/$file" \
+            # The first 16 MiB into a part file, by the file's path in its repository; it is a head only if
+            # it starts with the GGUF magic. A failure is said as an error with what was asked for: the row
+            # is listed and this machine cannot see it, which is not the same as it not fitting.
+            if curl -fsL -r 0-16777215 -o "$head.part" "https://huggingface.co/$repo/resolve/main/$path" \
                 && [ "$(head -c 4 "$head.part" 2>/dev/null)" = "GGUF" ]; then
                 mv "$head.part" "$head"
             else
-                rm -f "$head.part"; note "  $id: could not fetch the file's first 16 MiB, skipped"; continue
+                rm -f "$head.part"
+                note "error: $id: could not fetch the first 16 MiB of $repo/$path (resolve/main/$path); skipped"
+                continue
             fi
         fi
         trained=$(trained_context "$head" || true)
