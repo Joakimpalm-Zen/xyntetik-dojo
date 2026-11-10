@@ -127,6 +127,12 @@ def bus_call(op, payload, timeout=10):
 
 # ---------------------------------------------------------------- MCP server
 
+def redaction_note(count):
+    """What `read` says when the bus took secrets out of the screen it returns (D21.2)."""
+    return "The bus took %d secret%s out of this text (tokens and keys show as [dojo token] or [redacted: ...])." % (
+        count, "" if count == 1 else "s")
+
+
 def tool_payload(name, args):
     if not isinstance(args, dict):
         raise ValueError("arguments must be an object, got %s" % type(args).__name__)
@@ -175,7 +181,10 @@ def handle(msg):
                 text = out.get("text", "")
             else:
                 text = json.dumps(out, indent=2)
-            result = {"content": [{"type": "text", "text": text}], "isError": False}
+            content = [{"type": "text", "text": text}]
+            if name == "read" and out.get("redacted"):
+                content.append({"type": "text", "text": redaction_note(out["redacted"])})
+            result = {"content": content, "isError": False}
         except (BusError, ValueError) as e:
             # The arguments as received, so a refusal says what the call carried.
             text = "%s (tool %s called with %s)" % (e, name, json.dumps(arguments, sort_keys=True)[:300])
@@ -571,7 +580,10 @@ def cli(argv, out=sys.stdout, err=sys.stderr, stdin=sys.stdin):
             return 0
         if cmd == "read" and 1 <= len(rest) <= 2:
             lines = int(rest[1]) if len(rest) == 2 else 40
-            out.write(bus_call("read", {"pane": rest[0], "lines": lines}).get("text", "") + "\n")
+            res = bus_call("read", {"pane": rest[0], "lines": lines})
+            out.write(res.get("text", "") + "\n")
+            if res.get("redacted"):
+                err.write("dojo: %s\n" % redaction_note(res["redacted"]))
             return 0
         if cmd == "relay" and rest:
             res = bus_call("relay", {"args": rest}, timeout=30)  # the bus allows the program 20 s

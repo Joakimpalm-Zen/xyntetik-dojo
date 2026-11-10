@@ -126,6 +126,23 @@ import Testing
         #expect(!rawLines().joined().contains("supersecret"))
     }
 
+    @Test func aReadTakesSecretsOutAndTheScreenStaysAsItIs() {
+        let (bus, a, _, ta, tb) = busWithRecord()
+        let github = "gh" + "p_" + String(repeating: "a1B2", count: 9)
+        let screen = "the other pane's token: \(tb)\nmine: \(ta)\nexport GITHUB_TOKEN=\(github)\nok"
+        a.screen = screen
+        let r = bus.handle(path: "/read", token: tb, body: body(["pane": "claude-1", "lines": 10]))
+        let reply = json(r.body)
+        #expect(reply["text"] as? String
+            == "the other pane's token: [dojo token]\nmine: [dojo token]\nexport GITHUB_TOKEN=[redacted: github token]\nok")
+        #expect(reply["redacted"] as? Int == 3)
+        #expect(a.screen == screen)
+        let read = op("read", lines())
+        #expect(read.first?["redacted"] as? Int == 3)
+        #expect(read.first?["lines"] as? Int == 4)
+        #expect(!rawLines().joined().contains(github))
+    }
+
     @Test func refusalsAreRecordedWithTheirReasonAndNoText() {
         let (bus, _, _, ta, _) = busWithRecord()
         _ = bus.handle(path: "/panes", token: "nope", body: Data())
