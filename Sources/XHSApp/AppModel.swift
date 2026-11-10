@@ -366,11 +366,15 @@ final class AppModel: NSObject, ObservableObject {
             if runner.url != Launcher.runnerURL { piRunnerURL = runner.url }
             bus.setModel(view.paneName, runner.model)
         }
+        // A pi pane on a host with a Dojo Runner pane uses that Runner, on Dojo's port there (D12); without
+        // one it uses the host's own 8080, as before.
+        if kind == .pi, !host.isEmpty, runnerPane(host: host) != nil { piRunnerURL = Launcher.hostRunnerURL }
         // A remote host is asked which shell it runs commands in: cmd.exe (Windows) or a POSIX shell.
         var remoteShell = RemoteShell.posix
+        var msysBash: String?
         var note: String?
         if !host.isEmpty {
-            (remoteShell, note) = await Launcher.probeRemoteShell(host: host)
+            (remoteShell, msysBash, note) = await Launcher.probeRemoteShell(host: host)
             remoteShells[view.paneName] = remoteShell
         }
         guard items.contains(where: { $0.view === view }) else { return }
@@ -392,7 +396,7 @@ final class AppModel: NSObject, ObservableObject {
         start(view, Launcher.plan(kind: kind, paneName: view.paneName, host: host.isEmpty ? nil : host, port: port,
                                   token: token, runnerModel: model, loginShell: loginShell, remoteShell: remoteShell,
                                   directory: directory, askFirst: askFirst, remotePort: remotePort, session: session,
-                                  runnerForward: runnerForward, runnerURL: piRunnerURL))
+                                  runnerForward: runnerForward, runnerURL: piRunnerURL, msysBash: msysBash))
     }
 
     private func start(_ view: TerminalPane, _ plan: LaunchPlan) {
