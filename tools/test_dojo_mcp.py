@@ -102,6 +102,38 @@ class ShimTest(unittest.TestCase):
             os.environ.clear()
             os.environ.update(saved)
 
+    def test_a_typed_send_carries_its_type_and_fields(self):
+        # D21.5: dojo send <pane> --type T key=value..., a value with spaces in quotes as the shell gives it
+        code, out, _ = self.cli("send", "codex-1", "--type", "report", "repo=xyntetik-dojo", "pr=92", "head=e07bd8a",
+                                "checks=ci=pass,hygiene=pass", "mergeable=yes", "note=two words")
+        self.assertEqual(code, 0)
+        path, _, body = self.bus.requests[-1]
+        self.assertEqual(path, "/send")
+        self.assertEqual(body, {"pane": "codex-1", "type": "report", "fields": {
+            "repo": "xyntetik-dojo", "pr": "92", "head": "e07bd8a", "checks": "ci=pass,hygiene=pass",
+            "mergeable": "yes", "note": "two words"}})
+        self.assertTrue(out.startswith("codex-1: queued"))
+
+    def test_a_typed_send_needs_key_value_words(self):
+        code, _, err = self.cli("send", "codex-1", "--type", "bug", "just words")
+        self.assertEqual(code, 2)
+        self.assertIn("key=value", err)
+        code, _, err = self.cli("send", "codex-1", "--type")
+        self.assertEqual(code, 2)
+        self.assertIn("usage: dojo send <pane> --type", err)
+        self.assertFalse(any(r[0] == "/send" for r in self.bus.requests))
+
+    def test_the_send_tool_takes_a_type_and_fields(self):
+        m = load_shim()
+        self.assertEqual(m.tool_payload("send", {"pane": "p", "type": "merged", "fields": {"repo": "r", "pr": 92, "sha": "abcdef1"}}),
+                         {"pane": "p", "type": "merged", "fields": {"repo": "r", "pr": "92", "sha": "abcdef1"}})
+        self.assertEqual(m.tool_payload("send", {"pane": "p", "text": "hi"}), {"pane": "p", "text": "hi"})
+        with self.assertRaises(ValueError):
+            m.tool_payload("send", {"pane": "p", "type": "bug", "fields": "not an object"})
+        send = next(t for t in m.TOOLS if t["name"] == "send")
+        self.assertEqual(send["inputSchema"]["properties"]["type"]["enum"], ["assign", "report", "merged", "bug"])
+        self.assertEqual(send["inputSchema"]["required"], ["pane"])
+
     def test_send_says_why_a_message_waits(self):
         code, out, _ = self.cli("send", "codex-1", "hello")
         self.assertEqual(code, 0)
@@ -689,6 +721,22 @@ class AuditTest(unittest.TestCase):
             "    the diff",
             "2026-11-10 14:35:13Z read         codex-1 -> claude-1 ok (lines 40)",
             "2026-11-10 14:36:00Z pane-state   codex-1 (owner_keys true, state running, was prompt)",
+        ])
+
+    def test_by_type(self):
+        # D21.5: the record keeps a typed send's type and fields beside its text; --type picks them out
+        self.write("2026-11-10", [
+            {"time": "2026-11-10T10:00:00.000Z", "op": "send", "from": "a", "pane": "b", "outcome": "delivered", "text": "free"},
+            {"time": "2026-11-10T11:00:00.000Z", "op": "send", "from": "a", "pane": "b", "outcome": "delivered",
+             "type": "report", "fields": {"repo": "r", "pr": "1"}, "text": "report r #1\n  repo: r\n  pr: 1"},
+        ])
+        code, out, err = self.run_audit("--type", "report")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out.splitlines(), [
+            "2026-11-10 11:00:00Z send         a -> b delivered (type report)",
+            "    report r #1",
+            "      repo: r",
+            "      pr: 1",
         ])
 
     def test_by_pane_and_by_time(self):

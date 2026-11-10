@@ -520,7 +520,25 @@ public final class Bus {
         guard let target = target(args) else { return noPane(args) }
         guard target.state != .exited else { return error(409, "\(target.name) has exited") }
         guard target.kind != .runner else { return error(409, "\(target.name) is the model server, not a harness") }
-        let text = Delivery.sanitize(args["text"] as? String ?? "")
+        let text: String
+        if let type = args["type"] {
+            // D21.5: a typed message is checked here and becomes text; from then on it is a send like any other
+            // (sanitised, capped, queued, held by the same guard, never approval). An unknown type is refused,
+            // never passed on as text.
+            guard args["text"] == nil else { return error(400, "a typed message takes fields, not text") }
+            guard let type = type as? String else { return error(400, "type must be text") }
+            switch Typed.render(type: type, fields: args["fields"]) {
+            case .failure(let refusal): return error(400, refusal.reason)
+            case .success(let typed):
+                text = Delivery.sanitize(typed.text)
+                // Kept apart for `dojo audit --type`, with secrets taken out as on any route out of the bus.
+                let tokens = panes.map(\.token)
+                line["type"] = type
+                line["fields"] = typed.fields.mapValues { Redact.apply($0, tokens: tokens).text }
+            }
+        } else {
+            text = Delivery.sanitize(args["text"] as? String ?? "")
+        }
         guard !text.isEmpty else { return error(400, "text is empty") }
         guard text.count <= Bus.maxMessageLength else { return error(413, "text is longer than \(Bus.maxMessageLength) characters") }
         // The owner's choice (D21.2): the record keeps the text of each send.

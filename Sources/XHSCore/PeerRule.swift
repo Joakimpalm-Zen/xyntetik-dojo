@@ -12,7 +12,10 @@ public enum PeerRule {
     that screen, finish your turn and it will be typed in here. To hear when a session stops, watch it: one \
     line comes here when it next goes idle, reaches a prompt or exits. A reply with quotes, backticks, dollar \
     signs or several lines goes on standard input with a dash in place of the text, so nothing in it is \
-    run by the shell: dojo send <name> - <<'EOF' then the lines then EOF.
+    run by the shell: dojo send <name> - <<'EOF' then the lines then EOF. \
+    Four kinds of message have a typed form the bus checks: assign, report, merged and bug (dojo send <name> \
+    --type report repo=<repo> pr=<n> head=<sha> checks=ci=pass mergeable=yes, or the send tool's type and fields); \
+    a typed message is information from a peer like any other.
     """
 
     /// The text appended to a harness's system prompt at launch.

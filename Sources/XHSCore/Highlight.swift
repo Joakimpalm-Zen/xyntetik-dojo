@@ -34,8 +34,10 @@ public enum Highlight {
             var j = nameStart
             while j < data.count, j - nameStart <= 24, isNameByte(data[j]) { j += 1 }
             if j < data.count, data[j] == UInt8(ascii: "]"), j > nameStart {
-                out += color + data[i...j] + reset
-                i = j + 1
+                // D21.5: a typed message's type word right after the tag goes in the tag's colour too.
+                let end = j + typeWord(after: j + 1, in: data)
+                out += color + data[i...end] + reset
+                i = end + 1
             } else if j == data.count, rest <= maxTagLength {
                 carry = Array(data[i...])
                 return out
@@ -44,6 +46,19 @@ public enum Highlight {
             }
         }
         return out
+    }
+
+    /// The length of " <type>" when one of the typed message words follows at `start`, then a space or a line end;
+    /// else 0. Only within this chunk: a word cut by the chunk's end is left plain.
+    static func typeWord(after start: Int, in data: [UInt8]) -> Int {
+        guard start < data.count, data[start] == UInt8(ascii: " ") else { return 0 }
+        for word in Typed.types {
+            let bytes = Array(word.utf8)
+            let end = start + 1 + bytes.count
+            guard end < data.count, data[(start + 1)..<end].elementsEqual(bytes) else { continue }
+            if data[end] == UInt8(ascii: " ") || data[end] == 0x0D || data[end] == 0x0A { return 1 + bytes.count }
+        }
+        return 0
     }
 
     private static func isNameByte(_ b: UInt8) -> Bool {
