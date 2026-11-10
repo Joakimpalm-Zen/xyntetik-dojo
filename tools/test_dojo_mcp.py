@@ -289,6 +289,29 @@ class ShimTest(unittest.TestCase):
         finally:
             shutil.rmtree(home)
 
+    def test_install_follows_the_shells_home(self):
+        """A Windows host whose bash HOME is not the Windows profile: install finds itself under HOME,
+        where remote-setup put it, not where a native Python's expanduser points."""
+        mod = load_shim()
+        home, profile = tempfile.mkdtemp(), tempfile.mkdtemp()
+        saved = {k: os.environ.get(k) for k in ("HOME", "USERPROFILE")}
+        try:
+            os.makedirs(os.path.join(home, ".dojo"))
+            shutil.copy(SHIM, os.path.join(home, ".dojo", "dojo-mcp.py"))
+            os.environ["HOME"], os.environ["USERPROFILE"] = home, profile
+            out = io.StringIO()
+            self.assertEqual(mod.install(out=out, windows=True), 0, out.getvalue())
+            self.assertTrue(os.path.exists(os.path.join(home, ".dojo", "bin", "dojo")))
+            self.assertFalse(os.path.exists(os.path.join(profile, ".dojo")))
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+            shutil.rmtree(home)
+            shutil.rmtree(profile)
+
     def test_codex_snippet_matches_install_block(self):
         mod = load_shim()
         with open(os.path.join(os.path.dirname(SHIM), "snippets", "codex-config.toml")) as f:

@@ -60,15 +60,30 @@ public enum Shell {    /// A folder as the remote shell should see it: a leading
 public enum RemoteShell: Equatable, Sendable {
     /// A POSIX login shell: the harness runs in `"$SHELL" -l -i -c`.
     case posix
-    /// Windows OpenSSH with cmd.exe as its shell: the harness runs in MSYS2 bash at C:\msys64.
+    /// Windows OpenSSH with cmd.exe as its shell: the harness runs in MSYS2 bash, at C:\msys64 unless the
+    /// host's ssh session names another (`msysBash(probeOutput:)`).
     case windows
 
     /// The command the app runs over ssh before a remote pane starts.
-    /// cmd.exe expands %OS% to Windows_NT; a POSIX shell echoes it as written.
-    public static let probe = "echo %OS%"
+    /// cmd.exe expands %OS% to Windows_NT; a POSIX shell echoes it as written. cmd.exe also expands
+    /// %DOJO_MSYS2_BASH% from the ssh session's environment (sshd's SetEnv, or the user's environment) when
+    /// it is set, and leaves it as written when it is not.
+    public static let probe = "echo %OS% %DOJO_MSYS2_BASH%"
 
     public static func detect(probeOutput: String) -> RemoteShell {
         probeOutput.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("Windows_NT") ? .windows : .posix
+    }
+
+    /// The MSYS2 bash a Windows host names in DOJO_MSYS2_BASH, from the probe's answer; nil when it names
+    /// none (cmd.exe left the variable as written) or names one with a character cmd.exe would act on.
+    public static func msysBash(probeOutput: String) -> String? {
+        let line = probeOutput.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+        guard line.hasPrefix("Windows_NT") else { return nil }
+        let path = line.dropFirst("Windows_NT".count).trimmingCharacters(in: .whitespaces)
+        guard !path.isEmpty, !path.contains("%") else { return nil }
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: #" :\/._-()"#))
+        guard path.unicodeScalars.allSatisfy(allowed.contains) else { return nil }
+        return path
     }
 }
 
@@ -176,14 +191,26 @@ public enum Launcher {
     /// Remote panes run `ssh -t -R remotePort:127.0.0.1:port host` with the same harness command in the remote
     /// login shell. Each has its own `remotePort`, so closing one leaves the others on the bus.
     /// A Windows host (cmd.exe over OpenSSH) runs the same inner command in MSYS2 bash; see `windowsRemoteCommand`.
+    ///
+    /// `runnerForward` (D12): a Runner pane on a host also forwards that host's Runner port to this port on
+    /// this Mac, on the same ssh connection, so the tunnel lives exactly as long as the pane.
+    /// `runnerURL`: the Runner a pi pane uses when it is not the one on its own machine's 8080.
     public static func plan(kind: HarnessKind, paneName: String, host: String?, port: Int, token: String,
                             runnerModel: String?, loginShell: String, remoteShell: RemoteShell = .posix,
                             directory: String? = nil, askFirst: Bool = false, remotePort: Int? = nil,
-                            session: String? = nil) -> LaunchPlan {
+                            session: String? = nil, runnerForward: Int? = nil, runnerURL: String? = nil,
+                            msysBash: String? = nil) -> LaunchPlan {
         let local = host == nil || host!.isEmpty
         // The port the harness calls: on a host, its end of this pane's forward.
         let busPort = local ? port : remotePort ?? port
-        let env = ["DOJO_PANE": paneName, "DOJO_PORT": String(busPort), "DOJO_TOKEN": token]
+        var env = ["DOJO_PANE": paneName, "DOJO_PORT": String(busPort), "DOJO_TOKEN": token]
+        if let runnerURL { env["DOJO_RUNNER_URL"] = runnerURL }
+        if kind == .runner, !local {
+            // A Runner pane on a host serves on Dojo's port there, not the host's own 8080, and raises no
+            // tray: the pane owns the server, and closing it leaves nothing behind (runner-start.sh).
+            env["DOJO_RUNNER_PORT"] = String(remoteRunnerPort)
+            env["DOJO_RUNNER_TRAY"] = "off"
+        }
         let directory = directory?.isEmpty == false ? directory : nil
         if kind == .shell, local {
             // The smoke types a line into this pane and expects it back.
@@ -195,15 +222,19 @@ public enum Launcher {
             let line = "exec " + Shell.line([.literal("env"), path] + harness)
             return LaunchPlan(executable: loginShell, args: ["-l", "-i", "-c", line], environment: env, directory: directory)
         }
-        let assignments: [ShellWord] = ["DOJO_PANE", "DOJO_PORT", "DOJO_TOKEN"].map { .literal("\($0)=\(env[$0]!)") }
+        let assignments: [ShellWord] = ["DOJO_PANE", "DOJO_PORT", "DOJO_TOKEN", "DOJO_RUNNER_URL",
+                                        "DOJO_RUNNER_PORT", "DOJO_RUNNER_TRAY"].compactMap { key in
+            env[key].map { .literal("\(key)=\($0)") }
+        }
         let cd = directory.map { "cd " + Shell.homeQuoted($0) + " && " } ?? ""
         let inner = cd + "exec " + Shell.line([.literal("env")] + assignments + [path] + harness)
         let remote: String
         switch remoteShell {
         case .posix: remote = #"exec "$SHELL" -l -i -c "# + Shell.quote(inner)
-        case .windows: remote = windowsRemoteCommand(inner: inner)
+        case .windows: remote = windowsRemoteCommand(inner: inner, bash: msysBash)
         }
-        let ssh = sshWords(host: host, port: port, remotePort: busPort, remoteCommand: remote)
+        let ssh = sshWords(host: host, port: port, remotePort: busPort, remoteCommand: remote,
+                           runnerForward: kind == .runner ? runnerForward : nil)
         return LaunchPlan(executable: loginShell, args: ["-l", "-i", "-c", "exec " + Shell.line(ssh)], environment: env)
     }
 
@@ -214,9 +245,12 @@ public enum Launcher {
     /// The inner POSIX line travels as base64 so that cmd.exe never sees a quote, a pipe or a percent sign
     /// from it. `^` escapes the characters cmd.exe would otherwise act on, and `\"` is a quote for bash.exe.
     /// MSYS2_PATH_TYPE=inherit keeps the user's Windows PATH (claude, codex, python) in the login shell.
-    public static func windowsRemoteCommand(inner: String) -> String {
+    /// `bash`: the MSYS2 bash the host named (DOJO_MSYS2_BASH), else the standard location; quoted for cmd.exe
+    /// when its path has a space.
+    public static func windowsRemoteCommand(inner: String, bash: String? = nil) -> String {
         let encoded = Data(inner.utf8).base64EncodedString()
-        return "set MSYS2_PATH_TYPE=inherit&& " + msysBash
+        let path = bash ?? msysBash
+        return "set MSYS2_PATH_TYPE=inherit&& " + (path.contains(" ") ? "\"" + path + "\"" : path)
             + #" -lc "eval \"$^(echo "# + encoded + #" ^| base64 -d^)\"""#
     }
 
@@ -227,7 +261,8 @@ public enum Launcher {
         return String(decoding: data, as: UTF8.self)
     }
 
-    /// `ssh host 'echo %OS%'` without a tty, to find out which shell the host runs commands in.
+    /// `ssh host 'echo %OS% %DOJO_MSYS2_BASH%'` without a tty, to find out which shell the host runs commands in,
+    /// and on Windows which MSYS2 bash its ssh session names.
     public static func probeWords(host: String) -> [ShellWord] {
         [.literal("ssh"), .literal("-o"), .literal("BatchMode=yes"), .literal("-o"), .literal("ConnectTimeout=5"),
          .literal(host), .literal(RemoteShell.probe)]
@@ -235,7 +270,7 @@ public enum Launcher {
 
     /// Runs the probe. When the host does not answer it (an unknown host key under BatchMode, a password
     /// prompt, no route), the shell is assumed POSIX and `note` says so, for the pane to show first.
-    public static func probeRemoteShell(host: String) async -> (shell: RemoteShell, note: String?) {
+    public static func probeRemoteShell(host: String) async -> (shell: RemoteShell, bash: String?, note: String?) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
         process.arguments = probeWords(host: host).dropFirst().compactMap { if case .literal(let s) = $0 { return s } else { return nil } }
@@ -243,7 +278,7 @@ public enum Launcher {
         let out = Pipe(), err = Pipe()
         process.standardOutput = out
         process.standardError = err
-        do { try process.run() } catch { return (.posix, probeNote(error: "\(error)")) }
+        do { try process.run() } catch { return (.posix, nil, probeNote(error: "\(error)")) }
         let (output, errors, status): (String, String, Int32) = await withCheckedContinuation { continuation in
             DispatchQueue.global().async {
                 let data = out.fileHandleForReading.readDataToEndOfFile()
@@ -252,8 +287,8 @@ public enum Launcher {
                 continuation.resume(returning: (String(decoding: data, as: UTF8.self), String(decoding: errData, as: UTF8.self), process.terminationStatus))
             }
         }
-        if status != 0 { return (.posix, probeNote(error: errors)) }
-        return (RemoteShell.detect(probeOutput: output), nil)
+        if status != 0 { return (.posix, nil, probeNote(error: errors)) }
+        return (RemoteShell.detect(probeOutput: output), RemoteShell.msysBash(probeOutput: output), nil)
     }
 
     /// The session a pi pane starts with. Only a local pi that lists the flag gets one: any other starts as it
@@ -316,11 +351,54 @@ public enum Launcher {
     }
 
     /// ssh with a reverse tunnel so the shim on the remote host reaches the bus at 127.0.0.1:remotePort there.
-    public static func sshWords(host: String, port: Int, remotePort: Int, remoteCommand: String) -> [ShellWord] {
+    public static func sshWords(host: String, port: Int, remotePort: Int, remoteCommand: String,
+                                runnerForward: Int? = nil) -> [ShellWord] {
         // The keepalive: a dropped connection ends the pane within 90 seconds instead of hanging it.
-        [.literal("ssh"), .literal("-t"), .literal("-R"), .literal("\(remotePort):127.0.0.1:\(port)"),
-         .literal("-o"), .literal("ServerAliveInterval=30"), .literal("-o"), .literal("ServerAliveCountMax=3"),
-         .literal(host), .literal(remoteCommand)]
+        var words: [ShellWord] = [.literal("ssh"), .literal("-t"), .literal("-R"), .literal("\(remotePort):127.0.0.1:\(port)")]
+        // D12: a Runner pane on a host brings that host's Runner to this Mac. ExitOnForwardFailure: a local port
+        // someone took since it was picked ends the pane with ssh's own message, not a pane with no tunnel.
+        if let runnerForward {
+            words += [.literal("-L"), .literal("\(runnerForward):127.0.0.1:\(remoteRunnerPort)"),
+                      .literal("-o"), .literal("ExitOnForwardFailure=yes")]
+        }
+        return words + [.literal("-o"), .literal("ServerAliveInterval=30"), .literal("-o"), .literal("ServerAliveCountMax=3"),
+                        .literal(host), .literal(remoteCommand)]
+    }
+
+    /// The port Runner serves on, on this Mac.
+    public static let runnerPort = 8080
+
+    /// The port a Runner pane on another host serves on there (DOJO_RUNNER_PORT): Dojo's own, so a host's
+    /// 8080, which may be another server's, is never taken. A pi pane on that host reaches it at `hostRunnerURL`.
+    public static let remoteRunnerPort = 18080
+    public static let hostRunnerURL = "http://127.0.0.1:\(remoteRunnerPort)/v1"
+
+    /// Where a remote Runner pane's forward listens on this Mac: a block of its own, clear of Runner's own port
+    /// and the bus.
+    public static let runnerForwardPorts = 18081...18180
+
+    /// A port for a remote Runner pane's forward: not one another pane holds, and free to bind now.
+    public static func runnerForwardPort(taken: Set<Int>, isFree: (Int) -> Bool = Launcher.portIsFree) -> Int? {
+        runnerForwardPorts.first { !taken.contains($0) && isFree($0) }
+    }
+
+    /// Whether 127.0.0.1:`port` can be bound right now.
+    public static func portIsFree(_ port: Int) -> Bool {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = in_port_t(UInt16(port).bigEndian)
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+        return withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) == 0 }
+        }
+    }
+
+    /// The URL a pi pane on this Mac reaches a Runner at: its own 8080, or a remote Runner pane's forward.
+    public static func runnerURL(forward: Int?) -> String {
+        forward.map { "http://127.0.0.1:\($0)/v1" } ?? runnerURL
     }
 
     /// Where a remote pane's forward can listen on its host: the dynamic ports, which nothing claims for good.
@@ -393,8 +471,8 @@ public enum Launcher {
     public static func firstModelID(_ data: Data) -> String? { served(data)?.model }
 
     /// Asks the server on Runner's port for its models; nil when nothing answers in two seconds.
-    public static func fetchServed() async -> Served? {
-        var request = URLRequest(url: URL(string: runnerURL + "/models")!)
+    public static func fetchServed(at url: String = runnerURL) async -> Served? {
+        var request = URLRequest(url: URL(string: url + "/models")!)
         request.timeoutInterval = 2
         guard let (data, response) = try? await URLSession.shared.data(for: request),
               (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
@@ -402,5 +480,5 @@ public enum Launcher {
     }
 
     /// The model served on Runner's port, by Runner or anything else there; nil when nothing answers.
-    public static func fetchRunnerModel() async -> String? { await fetchServed()?.model }
+    public static func fetchRunnerModel(at url: String = runnerURL) async -> String? { await fetchServed(at: url)?.model }
 }

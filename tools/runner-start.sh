@@ -13,6 +13,10 @@
 # DOJO_RUNNER_CONTEXTS (262144 down to 4096) that the model was trained for and Runner's free-RAM verdict
 # says FITS, with the cache that verdict names; when every context pages, at 16384 (or the trained
 # context, if smaller) with a q8 cache. `--pick` prints the choice and stops.
+# A Runner pane on another host (D12) sets three more: DOJO_RUNNER_PORT, the port to serve on (8080 when
+# unset; a host's own 8080 may be someone else's); DOJO_RUNNER_MODEL, one roster id to serve instead of the
+# largest that fits; and DOJO_RUNNER_TRAY=off. A Runner started over ssh never raises a tray: the pane owns
+# the server, and closing it must leave nothing behind.
 set -eu
 # Numbers are compared and sorted as numbers whatever the owner's locale writes decimals with.
 export LC_ALL=C
@@ -22,9 +26,22 @@ release="https://github.com/Joakimpalm-Zen/xyntetik-runner/releases/latest"
 roster_url="https://raw.githubusercontent.com/Joakimpalm-Zen/xyntetik-runner/main/docs/model-tiers.json"
 contexts="${DOJO_RUNNER_CONTEXTS:-262144 131072 65536 32768 16384 8192 4096}"
 share="${DOJO_RUNNER_RAM_SHARE:-0.5}"
+port="${DOJO_RUNNER_PORT:-8080}"
+pin="${DOJO_RUNNER_MODEL:-}"
+case $port in
+    ''|*[!0-9]*) echo "DOJO_RUNNER_PORT is '$port'; it must be a port number." >&2; exit 2 ;;
+esac
+if [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then echo "DOJO_RUNNER_PORT is '$port'; it must be a port number." >&2; exit 2; fi
+tray=""
+if [ "${DOJO_RUNNER_TRAY:-}" = off ] || [ -n "${SSH_CONNECTION:-}" ]; then tray="--tray off"; fi
 # The context served when Runner's verdict says every context pages right now.
 fallback_ctx=16384
 mkdir -p "$home/heads"
+# The binary's name here: a Windows host (MSYS2 bash, as Dojo runs a pane there) keeps the release's .exe.
+case "$(uname -s)" in
+    MSYS*|MINGW*|CYGWIN*) exe=runner.exe ;;
+    *) exe=runner ;;
+esac
 
 say() { printf '%s\n' "$*"; }
 note() { printf '%s\n' "$*" >&2; }
@@ -42,15 +59,18 @@ download_runner() {
     case "$(uname -s)-$(uname -m)" in
         Darwin-arm64) asset="runner-macos-arm64" ;;
         Linux-x86_64) asset="runner-linux-x86_64" ;;
+        MSYS*-x86_64|MINGW*-x86_64|CYGWIN*-x86_64) asset="runner-windows-x86_64.exe" ;;
         *) note "No Runner release for $(uname -s) $(uname -m): build it from source and put runner on PATH."; exit 2 ;;
     esac
     note "Downloading Runner $1 ($asset) to $home ..."
     # Into a part file, and into place only once the checksum line was found and matched.
     curl -fL -o "$home/$asset.part" "$release/download/$asset" &&
         curl -fsL -o "$home/SHA256SUMS" "$release/download/SHA256SUMS" &&
-        line=$(grep " $asset\$" "$home/SHA256SUMS" | tr -d '\r' | head -1) && [ -n "$line" ] &&
+        # the line names the asset, after a "*" where the file is listed as binary (the Windows .exe is)
+        line=$(tr -d '\r' < "$home/SHA256SUMS" | awk -v a="$asset" '{ n = $2; sub(/^\*/, "", n); if (n == a) { print; exit } }') &&
+        [ -n "$line" ] &&
         (cd "$home" && printf '%s  %s\n' "$(printf '%s' "$line" | awk '{ print $1 }')" "$asset.part" | checksum >&2) &&
-        mv "$home/$asset.part" "$home/runner" && chmod +x "$home/runner" && return 0
+        mv "$home/$asset.part" "$home/$exe" && chmod +x "$home/$exe" && return 0
     rm -f "$home/$asset.part"
     note "Runner $1 could not be downloaded and verified."
     return 1
@@ -70,8 +90,8 @@ find_runner() {
         say "$bin"
         return
     fi
-    if [ -x "$home/runner" ]; then
-        have=$("$home/runner" --version 2>/dev/null | awk '{ print $2 }' || true)
+    if [ -x "$home/$exe" ]; then
+        have=$("$home/$exe" --version 2>/dev/null | awk '{ print $2 }' || true)
         if [ -n "$latest" ] && [ "v$have" != "$latest" ] && [ "$have" != "$latest" ]; then
             note "Runner $have is here; $latest is the latest release."
             download_runner "$latest" || note "Keeping Runner $have."
@@ -79,8 +99,8 @@ find_runner() {
     else
         download_runner "${latest:-latest}"
     fi
-    note "Runner $("$home/runner" --version 2>/dev/null | head -1 || true) at $home/runner"
-    say "$home/runner"
+    note "Runner $("$home/$exe" --version 2>/dev/null | head -1 || true) at $home/$exe"
+    say "$home/$exe"
 }
 
 # This machine's RAM in bytes.
@@ -207,6 +227,16 @@ list_fits() {
     : > "$home/fits.new"
     roster=$(roster_file)
     candidates "$roster" "$ram" > "$home/candidates" || { note "Runner's model roster could not be read."; exit 4; }
+    if [ -n "$pin" ]; then
+        # DOJO_RUNNER_MODEL: that row only, so only its head is fetched
+        awk -v p="$pin" '$1 == p' "$home/candidates" > "$home/candidates.pin"
+        mv "$home/candidates.pin" "$home/candidates"
+        if [ ! -s "$home/candidates" ]; then
+            note "DOJO_RUNNER_MODEL is '$pin', which is not a roster text model no larger than this machine's RAM."
+            exit 3
+        fi
+        note "DOJO_RUNNER_MODEL names $pin; only it is asked about."
+    fi
     while read -r id repo file path bytes parts; do
         # Runner's -hf matches the base name and keeps the folder, so a file in a folder is still REPO:STEM
         spelling="$repo:${file%.gguf}"
@@ -276,13 +306,13 @@ list_fits() {
 # A server already on Runner's port (llama-server, Runner started by hand) is used by the pi panes as it is;
 # this one steps aside rather than failing to bind.
 taken() {
-    curl -s -m 2 http://127.0.0.1:8080/v1/models 2>/dev/null | python3 -I -c '
+    curl -s -m 2 "http://127.0.0.1:$port/v1/models" 2>/dev/null | python3 -I -c '
 import json, sys
 m = (json.load(sys.stdin).get("data") or [{}])[0]
 print(m.get("owned_by") or "a server", m.get("id") or "a model")' 2>/dev/null
 }
 if [ "$mode" != "--pick" ] && held=$(taken) && [ -n "$held" ]; then
-    note "A server already answers on 127.0.0.1:8080 (${held% *}, serving ${held#* }); the pi panes use it as it is."
+    note "A server already answers on 127.0.0.1:$port (${held% *}, serving ${held#* }); the pi panes use it as it is."
     note "Stop it to let Runner serve."
     exit 5
 fi
@@ -290,7 +320,7 @@ runner=$(find_runner)
 list_fits "$runner"
 [ -s "$home/fits" ] || { note "No roster model keeps its resident weights within $share of this machine's RAM."; exit 3; }
 chosen=""
-if [ -s "$home/model" ]; then
+if [ -z "$pin" ] && [ -s "$home/model" ]; then
     want=$(head -1 "$home/model")
     chosen=$(awk -F '\t' -v w="$want" '$2 == w { print; exit }' "$home/fits")
     [ -n "$chosen" ] || note "The chosen model ($want) does not fit this machine now; serving the largest that does."
@@ -299,6 +329,8 @@ fi
 spelling=$(printf '%s\n' "$chosen" | cut -f 2)
 flags=$(printf '%s\n' "$chosen" | cut -f 3)
 say "Serving $spelling $flags"
+serve="--serve --port $port${tray:+ $tray}"
+note "Runner's serve arguments: $serve $flags"
 if [ "$mode" = "--pick" ]; then exit 0; fi
 # shellcheck disable=SC2086
-exec "$runner" -hf "$spelling" --serve $flags
+exec "$runner" -hf "$spelling" $serve $flags

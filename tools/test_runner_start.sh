@@ -11,6 +11,8 @@ cat > "$tmp/bin/runner" <<'STUB'
 # model whose row-gathered table is never resident, Granite a dense 8B, Qwen3-4B small.
 case "$*" in
     --version) echo "runner 0.0 (stub)"; exit 0 ;;
+    # what runner-start.sh executes to serve, said back so a test can read it
+    *" --serve "*) echo "SERVE $*"; exit 0 ;;
     *30B*) echo "  weights       16.33 GiB"; echo "  hot set       2.02 GiB  (only the routed experts a token actually uses)"
            echo "  verdict       FITS WITH --kv fp4 — a q8 cache is 0.12 GiB over; fp4 halves it again" ;;
     *Bolt*) echo "  weights       5.76 GiB"; echo "  hot set       2.97 GiB  (weights streamed per token)"
@@ -32,7 +34,8 @@ cat > "$tmp/bin/curl" <<'STUB'
 out=""; url=""; head=0
 while [ $# -gt 0 ]; do case $1 in -o) out=$2; shift ;; -I|-sI) head=1 ;; http*) url=$1 ;; esac; shift; done
 case $url in
-    *127.0.0.1:8080/v1/models) [ -n "${STUB_PORT_TAKEN:-}" ] && printf '{"data":[{"id":"kolibri.gguf","owned_by":"llamacpp"}]}' || exit 7 ;;
+    *127.0.0.1:"${STUB_TAKEN_PORT:-8080}"/v1/models) [ -n "${STUB_PORT_TAKEN:-}" ] && printf '{"data":[{"id":"kolibri.gguf","owned_by":"llamacpp"}]}' || exit 7 ;;
+    *127.0.0.1:*/v1/models) exit 7 ;;
     *releases/latest) [ $head = 1 ] && printf 'HTTP/2 302\r\nlocation: https://github.com/Joakimpalm-Zen/xyntetik-runner/releases/tag/v9.9.9\r\n\r\n' ;;
     *releases/latest/download/runner-*) cp "$STUB_RUNNER" "$out" ;;
     *releases/latest/download/SHA256SUMS)
@@ -73,7 +76,9 @@ esac
 STUB
 chmod +x "$tmp/bin/runner" "$tmp/bin/curl" "$tmp/bin/sysctl"
 # A comma-decimal locale must not change the arithmetic.
-run() { LANG=sv_SE.UTF-8 LC_ALL=sv_SE.UTF-8 DOJO_RUNNER_HOME="$tmp/home" PATH="$tmp/bin:$PATH" sh "$here/runner-start.sh" --pick 2>"$tmp/log"; }
+run() { env -u SSH_CONNECTION -u DOJO_RUNNER_TRAY LANG=sv_SE.UTF-8 LC_ALL=sv_SE.UTF-8 DOJO_RUNNER_HOME="$tmp/home" PATH="$tmp/bin:$PATH" sh "$here/runner-start.sh" --pick 2>"$tmp/log"; }
+# The same, serving: the stub runner says back what it was started with.
+serve() { env -u SSH_CONNECTION -u DOJO_RUNNER_TRAY LC_ALL=C DOJO_RUNNER_HOME="${SERVE_HOME:-$tmp/home}" PATH="$tmp/bin:$PATH" "$@" sh "$here/runner-start.sh" 2>"$tmp/log" | grep '^SERVE '; }
 fail() { echo "$1"; cat "$tmp/log"; [ -f "$tmp/home/fits" ] && cat "$tmp/home/fits"; exit 1; }
 
 # An 8 GiB machine with little free: the 30B file is larger than RAM and never asked; the dense 8B is over
@@ -139,6 +144,20 @@ got=$(STUB_RUNNER="$tmp/bin/runner" STUB_AVAIL=0.85 DOJO_RUNNER_HOME="$tmp/home"
 grep -q "Downloading Runner v9.9.9" "$tmp/log" || fail "the release was not downloaded"
 grep -q "could not be downloaded" "$tmp/log" && fail "the checksum must match a line of the form 'hash  name'"
 [ -x "$tmp/home/runner" ] || fail "the downloaded runner is not in place"
+# D12: a Windows host, where Dojo runs this script in MSYS2 bash: the .exe asset, its checksum line (listed
+# as binary, "hash *name"), kept as runner.exe and run from there.
+mkdir -p "$tmp/winbin" "$tmp/winhome"; cp "$tmp/bin/curl" "$tmp/bin/sysctl" "$tmp/winbin/"
+cat > "$tmp/winbin/uname" <<'STUB'
+#!/bin/sh
+case "$1" in -m) echo x86_64 ;; *) echo MSYS_NT-10.0-26100 ;; esac
+STUB
+chmod +x "$tmp/winbin/uname"
+got=$(STUB_RUNNER="$tmp/bin/runner" STUB_AVAIL=0.85 DOJO_RUNNER_HOME="$tmp/winhome" PATH="$tmp/winbin:/usr/bin:/bin" sh "$here/runner-start.sh" --pick 2>"$tmp/log")
+[ "$got" = "Serving nvidia/NVIDIA-Nemotron-3.5-Bolt-E4B-4GB:Nemotron-3.5-Bolt-E4B-Q4_K_M -c 16384 --kv q8 --mlock" ] || fail "Windows download path: got '$got'"
+grep -q "Downloading Runner v9.9.9 (runner-windows-x86_64.exe)" "$tmp/log" || fail "a Windows host must fetch the .exe"
+grep -q "could not be downloaded" "$tmp/log" && fail "the Windows checksum line ('hash *name') must match"
+[ -x "$tmp/winhome/runner.exe" ] || fail "the Windows runner must be kept as runner.exe"
+grep -q "at $tmp/winhome/runner.exe" "$tmp/log" || fail "the Windows runner must be run as runner.exe"
 # A stop-gap runner in the Dojo folder is removed, never used.
 
 # A server already on the port: the script steps aside and says who holds it; --pick still picks.
@@ -152,4 +171,32 @@ mv "$tmp/bin/curl" "$tmp/bin/curl.off"; printf '#!/bin/sh\nexit 6\n' > "$tmp/bin
 got=$(STUB_AVAIL=0.85 run)
 [ "$got" = "Serving nvidia/NVIDIA-Nemotron-3.5-Bolt-E4B-4GB:Nemotron-3.5-Bolt-E4B-Q4_K_M -c 16384 --kv q8 --mlock" ] || fail "offline pick: got '$got'"
 grep -q "kept copy" "$tmp/log" || fail "the offline note is missing"
+
+# The network again (a test above left the offline curl in place).
+[ -f "$tmp/bin/curl.off" ] && mv "$tmp/bin/curl.off" "$tmp/bin/curl"
+# D12: a Runner pane on another host. It serves on DOJO_RUNNER_PORT and checks that port, not 8080, for a
+# server already there; started over ssh (SSH_CONNECTION) or with DOJO_RUNNER_TRAY=off it raises no tray.
+spell="nvidia/NVIDIA-Nemotron-3.5-Bolt-E4B-4GB:Nemotron-3.5-Bolt-E4B-Q4_K_M"
+got=$(STUB_AVAIL=0.85 serve env)
+[ "$got" = "SERVE -hf $spell --serve --port 8080 -c 16384 --kv q8 --mlock" ] || fail "default serve: got '$got'"
+got=$(STUB_AVAIL=0.85 serve env DOJO_RUNNER_PORT=18080 SSH_CONNECTION="203.0.113.2 50000 203.0.113.1 22")
+[ "$got" = "SERVE -hf $spell --serve --port 18080 --tray off -c 16384 --kv q8 --mlock" ] || fail "over ssh: got '$got'"
+grep -q "Runner's serve arguments: --serve --port 18080 --tray off" "$tmp/log" || fail "the serve arguments must be said"
+got=$(STUB_AVAIL=0.85 serve env DOJO_RUNNER_TRAY=off)
+[ "$got" = "SERVE -hf $spell --serve --port 8080 --tray off -c 16384 --kv q8 --mlock" ] || fail "DOJO_RUNNER_TRAY=off: got '$got'"
+# a server already on 8080 does not stop a Runner pane on 18080; one on 18080 does, and is named
+got=$(STUB_AVAIL=0.85 STUB_PORT_TAKEN=1 serve env DOJO_RUNNER_PORT=18080)
+[ "$got" = "SERVE -hf $spell --serve --port 18080 -c 16384 --kv q8 --mlock" ] || fail "8080 taken, serving on 18080: got '$got'"
+if STUB_AVAIL=0.85 STUB_PORT_TAKEN=1 STUB_TAKEN_PORT=18080 serve env DOJO_RUNNER_PORT=18080 >/dev/null; then fail "a server on 18080 must stop the start"; fi
+grep -q "A server already answers on 127.0.0.1:18080" "$tmp/log" || fail "the taken port must be named"
+if serve env DOJO_RUNNER_PORT=80a >/dev/null; then fail "a bad port must stop the start"; fi
+grep -q "DOJO_RUNNER_PORT is '80a'" "$tmp/log" || fail "a bad port must be named"
+
+# DOJO_RUNNER_MODEL pins one roster id: it is served though a larger one fits, and only its head is fetched.
+mkdir -p "$tmp/pinhome"
+got=$(SERVE_HOME="$tmp/pinhome" STUB_AVAIL=0.85 serve env DOJO_RUNNER_MODEL=qwen3-4b)
+[ "$got" = "SERVE -hf bartowski/Qwen_Qwen3-4B-GGUF:Qwen_Qwen3-4B-Q4_K_M --serve --port 8080 -c 16384 --mlock" ] || fail "pinned model: got '$got'"
+[ "$(ls "$tmp/pinhome/heads")" = "bartowski-Qwen_Qwen3-4B-GGUF-Qwen_Qwen3-4B-Q4_K_M.gguf" ] || fail "only the pinned head may be fetched: $(ls "$tmp/pinhome/heads")"
+if SERVE_HOME="$tmp/pinhome" STUB_AVAIL=0.85 serve env DOJO_RUNNER_MODEL=no-such-model >/dev/null; then fail "an unknown pin must stop the start"; fi
+grep -q "DOJO_RUNNER_MODEL is 'no-such-model', which is not a roster text model" "$tmp/log" || fail "an unknown pin must be named"
 echo "runner-start ok"

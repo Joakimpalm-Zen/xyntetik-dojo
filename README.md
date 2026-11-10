@@ -152,7 +152,9 @@ A local pi pane first asks Runner for its models (`GET /v1/models`), starts pi w
 - The pane serves the model you chose, or else the largest that fits, wired into RAM (`--mlock`). Runner's own verdict counts the RAM free right now: the contexts 262144, 131072, 65536, 32768, 16384, 8192 and 4096 (or the list `DOJO_RUNNER_CONTEXTS` names) are tried largest first, skipping those above the context the model was trained for (read from its head; Runner would otherwise stretch the model with YaRN), and the first the verdict says fits is served with the cache setting it names; when every one pages, the model is served anyway at context 16384 (or its trained context, if smaller) with a q8 cache and the rest of the machine makes room (what an 8 GB Mac with harnesses open does with Bolt E4B).
 - **Choosing.** Once a Runner pane has run on this Mac (the list comes from the last start, which is when the heads are read and `--info fit` asked), the picker's Serve popup lists the models that fit with their resident size, largest first, the one serving or chosen selected and its serve flags under the popup. Pick another and the Runner pane is replaced by one serving it, and that choice is kept in `~/.dojo/runner/model` for later Runner panes (delete the file to go back to the largest that fits).
 
-Runner does not take a place in the grid: it lives in a strip along the bottom of the window, one line with its state (what is being picked or fetched, then the model it serves). Its log opens above the strip while Runner starts, so you see the verdicts and the download, and closes once the server listens; click the strip to open or hide it. The picker follows the same pane and offers one Runner pane at a time. The strip's close button stops Runner. A Runner pane is local; on a host, start Runner yourself. Messages are never sent to a Runner pane.
+Runner does not take a place in the grid: it lives in a strip along the bottom of the window, one line with its state (what is being picked or fetched, then the model it serves). Its log opens above the strip while Runner starts, so you see the verdicts and the download, and closes once the server listens; click the strip to open or hide it. The picker follows the same pane and offers one Runner pane per machine: this Mac, and each host. The strip's close button stops Runner. Messages are never sent to a Runner pane.
+
+**Runner on a host.** A model too big for this Mac can run on a host where it fits. Type the host in the picker and press **Start Runner on** that host. The same `runner-start.sh` runs there and picks the model by the host's own RAM, so the host needs the setup below. There it serves on Dojo's own port, `127.0.0.1:18080`, so the host's 8080 stays free for whatever else uses it. That pane's ssh connection also carries the port back to this Mac (`-L <a free port from 18081>:127.0.0.1:18080`), so the tunnel opens and closes with the pane. Runner started over ssh raises no tray, so closing the pane leaves no Runner process behind. To serve one particular roster model instead of the largest that fits (a small one for a first try, say), set `DOJO_RUNNER_MODEL` to its roster id in the host's environment. Each Runner pane has its own strip, which says where it serves: `<model> on <host>`. A pi pane on that host uses it at `127.0.0.1:18080` there; without a Runner pane on that host, it uses the host's own `127.0.0.1:8080`. A pi pane on this Mac uses this Mac's Runner when it answers, and otherwise a host's Runner through its tunnel (`DOJO_RUNNER_URL`, which the pi extension reads). The model is picked by RAM on every machine; a GPU host's offload budget is not consulted.
 
 <a id="remote-panes"></a>
 ## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> Remote panes
@@ -160,10 +162,10 @@ Runner does not take a place in the grid: it lives in a strip along the bottom o
 Set up a host once, with one command from this repository:
 
 ```
-tar -C tools -cf - dojo-mcp.py dojo-pi.ts | ssh user@box 'mkdir -p ~/.dojo && tar -C ~/.dojo -xf - && python3 ~/.dojo/dojo-mcp.py install'
+tar -C tools -cf - dojo-mcp.py dojo-pi.ts runner-start.sh | ssh user@box 'mkdir -p ~/.dojo && tar -C ~/.dojo -xf - && python3 ~/.dojo/dojo-mcp.py install'
 ```
 
-(`make remote-setup HOST=user@box` runs the same.) It puts the shim and the pi extension in `~/.dojo` on that host, links `dojo`, and adds the Codex entries there if Codex is installed. Nothing else runs on the remote host.
+(`make remote-setup HOST=user@box` runs the same.) It puts the shim, the pi extension and Runner's start script in `~/.dojo` on that host, links `dojo`, and adds the Codex entries there if Codex is installed. Nothing else runs on the remote host.
 
 Then press plus and enter `user@box` as the host (or pick it from the clock at the field's edge once you have used it). The app first asks the host which shell it runs commands in (`ssh host 'echo %OS%'`), then runs:
 
@@ -171,15 +173,15 @@ Then press plus and enter `user@box` as the host (or pick it from the clock at t
 ssh -t -R <the pane's port>:127.0.0.1:7788 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 user@box '<harness in the remote login shell>'
 ```
 
-The harness runs in the remote login shell (`$SHELL -l -i`), so it needs to be on the PATH that shell sets. The reverse tunnel lets the shim on the remote host reach the bus at that port of `127.0.0.1` there. The remote host's own keys, logins and tokens are used; the app stores none. Use key-based SSH; a password prompt shows up in the pane. A remote pi uses the Runner on that host.
+The harness runs in the remote login shell (`$SHELL -l -i`), so it needs to be on the PATH that shell sets. The reverse tunnel lets the shim on the remote host reach the bus at that port of `127.0.0.1` there. The remote host's own keys, logins and tokens are used; the app stores none. Use key-based SSH; a password prompt shows up in the pane. A remote pi uses the Runner on that host, which a Runner pane there can start (see Runner on a host above).
 
 ### Windows hosts
 
-A Windows host with OpenSSH Server and MSYS2 at `C:\msys64` works the same way. The probe sees cmd.exe answer `Windows_NT`, and the pane then runs the same harness command in MSYS2's bash (`bash.exe -l`, with your Windows PATH inherited, so `claude` and `codex` are found where you installed them). The command travels to cmd.exe as base64, so none of its quotes, pipes or percent signs are seen by cmd.exe.
+A Windows host with OpenSSH Server and MSYS2 at `C:\msys64` works the same way. MSYS2 elsewhere (a portable install) is named by `DOJO_MSYS2_BASH`, the full path to its `usr\bin\bash.exe`, in the ssh session's environment: sshd's `SetEnv`, or the user's environment. The probe reads it there. Everything Dojo writes on the host goes under that bash's `$HOME`: Win32-OpenSSH passes the Windows profile (`C:\Users\<you>`) as `HOME` and MSYS2 keeps it, so `~/.dojo` and Runner's files are there unless the host sets `HOME` elsewhere (in an MSYS2 profile script, say). Setup runs `dojo install` with the first of `python` and `python3` that runs, passing over the Microsoft Store stub, which `MSYS2_PATH_TYPE=inherit` can put first on the PATH. The probe sees cmd.exe answer `Windows_NT`, and the pane then runs the same harness command in MSYS2's bash (`bash.exe -l`, with your Windows PATH inherited, so `claude` and `codex` are found where you installed them). The command travels to cmd.exe as base64, so none of its quotes, pipes or percent signs are seen by cmd.exe.
 
 `make remote-setup HOST=user@winbox` detects Windows too. There, `dojo install` writes two small sh scripts in `~/.dojo/bin` instead of a symlink: `dojo`, and a `python3` that runs the Python it was installed with (on Windows, `python3` on PATH is usually the Microsoft Store stub). The harness line puts `~/.dojo/bin` first on PATH, so the MCP shim and hooks find a working `python3`.
 
-Claude Code and Codex both run on a Windows host and reach the bus through the tunnel. Codex's config hooks call `python3 "$HOME/.dojo/dojo-mcp.py" hook`, which finds the working `python3` in `~/.dojo/bin`.
+Claude Code and Codex both run on a Windows host and reach the bus through the tunnel. A Runner pane there fetches `runner-windows-x86_64.exe` from Runner's release, keeps it as `~/.dojo/runner/runner.exe`, and reads the host's RAM from MSYS2's `/proc/meminfo`. Codex's config hooks call `python3 "$HOME/.dojo/dojo-mcp.py" hook`, which finds the working `python3` in `~/.dojo/bin`.
 
 Each remote pane has its own forward to the bus, on a free port of its host, so closing one leaves the others connected. A keepalive shows a dropped connection within 90 seconds: the pane exits, and if its harness had a session its header has a Reopen button.
 
@@ -268,7 +270,7 @@ To install the peer rule permanently as well (for sessions started outside the a
 - `/resume` in a pane lists other sessions than your terminal does: Claude Code lists sessions per folder, so give the pane the same start folder.
 - A pane turns red at once: the harness is not on your login shell's PATH (the pane shows the error), or the ssh connection failed.
 - A remote pane says `ssh: connect to host ... No route to host` while the host is up: macOS Local Network privacy. Allow the app under System Settings, Privacy & Security, Local Network (the app asks the first time it connects; a rebuilt app may ask again).
-- A Windows pane shows `bash.exe is not recognized`: MSYS2 is not at `C:\msys64`. The app looks only there.
+- A Windows pane shows `bash.exe is not recognized`: MSYS2 is not at `C:\msys64` and the ssh session does not name it in `DOJO_MSYS2_BASH`.
 - Claude Code on a Windows host draws its prompt near the top of the pane rather than at the bottom. That is how it renders on a Windows console; the pane passes the right size (`make smoke HOST=...` prints it) and resizes reach the host.
 - `dojo: not inside Xyntetik Dojo`: `DOJO_TOKEN` is set only in panes the app started.
 - A pi pane answers on its own screen instead of over the bus, and says it has no tools: the model is not calling tools. The pane launches pi with its four tools; a small model may still ignore them.

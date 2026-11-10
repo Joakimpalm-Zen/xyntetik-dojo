@@ -111,7 +111,7 @@ import Testing
         #expect(RemoteShell.detect(probeOutput: "%OS%\n") == .posix)
         #expect(RemoteShell.detect(probeOutput: "") == .posix)
         #expect(shellArgs(Shell.line(Launcher.probeWords(host: "me@box")))
-                == ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "me@box", "echo %OS%"])
+                == ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "me@box", "echo %OS% %DOJO_MSYS2_BASH%"])
     }
 
     @Test func remoteSmokeShellGoesOverSSH() {
