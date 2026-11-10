@@ -10,9 +10,11 @@
 # half, or DOJO_RUNNER_RAM_SHARE (0.75 for a machine that runs nothing else). All that fit are written to
 # ~/.dojo/runner/fits, largest resident weights first; the one named in ~/.dojo/runner/model (the picker
 # writes it) or else the first is served, wired into RAM (--mlock): at the largest context of
-# DOJO_RUNNER_CONTEXTS (262144 down to 4096) that the model was trained for and Runner's free-RAM verdict
-# says FITS, with the cache that verdict names; when every context pages, at 16384 (or the trained
-# context, if smaller) with a q8 cache. `--pick` prints the choice and stops.
+# DOJO_RUNNER_CONTEXTS (262144 down to 16384) that the model was trained for and Runner's free-RAM verdict
+# says FITS, with the cache that verdict names; when every context pages, at 16384 with a q8 cache. No
+# context below 16384 is served, and a model trained for less is skipped: pi keeps 4096 tokens of the
+# context for itself and its prompt takes about 2000, so a smaller context leaves a pi pane no room to
+# answer (at 4096 every request asks for one token). `--pick` prints the choice and stops.
 # A Runner pane on another host (D12) sets three more: DOJO_RUNNER_PORT, the port to serve on (8080 when
 # unset; a host's own 8080 may be someone else's); DOJO_RUNNER_MODEL, one roster id to serve instead of the
 # largest that fits; and DOJO_RUNNER_TRAY=off. A Runner started over ssh never raises a tray: the pane owns
@@ -24,7 +26,10 @@ mode=${1:-serve}
 home="${DOJO_RUNNER_HOME:-$HOME/.dojo/runner}"
 release="https://github.com/Joakimpalm-Zen/xyntetik-runner/releases/latest"
 roster_url="https://raw.githubusercontent.com/Joakimpalm-Zen/xyntetik-runner/main/docs/model-tiers.json"
-contexts="${DOJO_RUNNER_CONTEXTS:-262144 131072 65536 32768 16384 8192 4096}"
+contexts="${DOJO_RUNNER_CONTEXTS:-262144 131072 65536 32768 16384}"
+# The smallest context a pi pane can work in (D22): pi's own reserve of 4096 plus its prompt plus room
+# for an answer.
+floor=16384
 share="${DOJO_RUNNER_RAM_SHARE:-0.5}"
 port="${DOJO_RUNNER_PORT:-8080}"
 pin="${DOJO_RUNNER_MODEL:-}"
@@ -45,6 +50,13 @@ esac
 
 say() { printf '%s\n' "$*"; }
 note() { printf '%s\n' "$*" >&2; }
+kept=""
+for ctx in $contexts; do
+    case $ctx in ''|*[!0-9]*) continue ;; esac
+    if [ "$ctx" -ge "$floor" ]; then kept="$kept $ctx"; else note "DOJO_RUNNER_CONTEXTS: $ctx is below the $floor a pi pane needs; left out."; fi
+done
+contexts=${kept# }
+[ -n "$contexts" ] || contexts=$floor
 
 checksum() {
     if command -v sha256sum >/dev/null 2>&1; then sha256sum -c -; else shasum -a 256 -c -; fi
@@ -267,6 +279,10 @@ list_fits() {
             fi
         fi
         trained=$(trained_context "$head" || true)
+        if [ -n "$trained" ] && [ "$trained" -lt "$floor" ]; then
+            note "  $id: trained for a context of $trained, below the $floor a pi pane needs (pi keeps 4096 for itself); skipped"
+            continue
+        fi
         tried=$(contexts_for "$trained")
         first=${tried%% *}
         report=$("$runner" -m "$head" --info fit -c "$first" 2>/dev/null || true)
@@ -292,7 +308,6 @@ list_fits() {
             note "  $id: fits, $resident GiB resident; Runner says $verdict"
         else
             ctx=$fallback_ctx
-            [ -n "$trained" ] && [ "$trained" -lt "$ctx" ] && ctx=$trained
             flags="-c $ctx --kv q8"
             note "  $id: fits, $resident GiB resident, wired in; Runner's free-RAM verdict said it pages right now"
         fi
