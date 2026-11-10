@@ -91,6 +91,8 @@ final class AppModel: NSObject, ObservableObject {
     private var runnerForwards: [ObjectIdentifier: Int] = [:]
     private var server: BusServer?
     private var timer: Timer?
+    /// D15 (b): sending from outside Dojo, while the owner's ~/.dojo/outside is there (Outside).
+    private(set) lazy var outside = OutsideRoute(switchFile: AppModel.outsideSwitch, tokenFile: AppModel.outsideTokenFile, port: port)
 
     override init() {
         let env = ProcessInfo.processInfo.environment
@@ -115,12 +117,16 @@ final class AppModel: NSObject, ObservableObject {
         bus.onSession = { [weak self] in self?.savePanes() }
         bus.onAttention = { [weak self] name, attention in self?.attend(name, attention) }
         startServer()
+        refreshOutside()
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.bus.tick()
                 self.ticks += 1
-                if self.ticks % 5 == 0 { self.fillRunnerHeader() }
+                if self.ticks % 5 == 0 {
+                    self.fillRunnerHeader()
+                    self.refreshOutside()
+                }
             }
         }
     }
@@ -475,6 +481,16 @@ final class AppModel: NSObject, ObservableObject {
         keepingList = true
         for item in items { close(item.name) }
         keepingList = false
+        outside.off()
+        bus.outsideToken = nil
+    }
+
+    /// The owner switched the outside route on or off: the token file and the bus follow within seconds.
+    func refreshOutside() {
+        let before = outside.problem
+        outside.refresh()
+        bus.outsideToken = outside.token
+        if let why = outside.problem, why != before { problem = "Sending from outside Dojo stays off: \(why)." }
     }
 
     // MARK: reopening
@@ -807,6 +823,7 @@ final class AppModel: NSObject, ObservableObject {
             print("DOJO_SMOKE failed: the bus did not answer on 127.0.0.1:\(port)")
             exit(1)
         }
+        await proveOutside()
         let host = bus.info(name)?.host ?? ""
         let location = host.isEmpty ? "locally" : "on \(host) (\(remoteShells[name] == .windows ? "Windows" : "POSIX") shell)"
         let dims = items.first(where: { $0.name == name })?.view.terminalDimensions
@@ -846,6 +863,39 @@ final class AppModel: NSObject, ObservableObject {
             return
         }
         await endSmoke()
+    }
+
+    /// D15 (b): off with no switch; on with the owner's switch, over HTTP with the token file's token; off
+    /// again when it goes, token file and all. It sends only to a pane that does not exist: nothing is typed.
+    private func proveOutside() async {
+        func status(_ token: String?) async -> Int {
+            var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/outside/send")!)
+            request.httpMethod = "POST"
+            if let token { request.setValue(token, forHTTPHeaderField: "X-Dojo-Outside-Token") }
+            request.httpBody = try? JSONSerialization.data(withJSONObject: ["pane": "no-such-pane", "text": "smoke"])
+            request.timeoutInterval = 5
+            guard let (_, response) = try? await URLSession.shared.data(for: request) else { return 0 }
+            return (response as? HTTPURLResponse)?.statusCode ?? 0
+        }
+        func fail(_ why: String) -> Never {
+            print("DOJO_SMOKE failed: the outside route \(why)")
+            exit(1)
+        }
+        let fm = FileManager.default
+        if fm.fileExists(atPath: AppModel.outsideTokenFile.path) || bus.outsideToken != nil { fail("is on with no switch") }
+        if await status("anything") != 401 { fail("answers with no switch") }
+        fm.createFile(atPath: AppModel.outsideSwitch.path, contents: Data(), attributes: [.posixPermissions: 0o600])
+        refreshOutside()
+        guard let data = fm.contents(atPath: AppModel.outsideTokenFile.path),
+              let token = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["token"] as? String else {
+            fail("wrote no token file with the switch there")
+        }
+        if await status(token) != 404 { fail("did not reach the bus with the token file's token") }
+        if await status("wrong") != 401 { fail("took a wrong token") }
+        try? fm.removeItem(at: AppModel.outsideSwitch)
+        refreshOutside()
+        if fm.fileExists(atPath: AppModel.outsideTokenFile.path) { fail("left its token file after the switch went") }
+        if await status(token) != 401 { fail("still answers after the switch went") }
     }
 
     /// Quits as the app quits, then proves the next launch's offer: the panes outlive the quit, with their
@@ -942,6 +992,8 @@ final class AppModel: NSObject, ObservableObject {
     }
     static let relayFile = Headless.state().appendingPathComponent("relay")
     static let auditFolder = Headless.state().appendingPathComponent("audit")
+    static let outsideSwitch = Headless.state().appendingPathComponent("outside")
+    static let outsideTokenFile = Headless.state().appendingPathComponent("outside-token")
 
     /// A folder picker for the New terminal sheet; nil when cancelled.
     static func chooseFolder() -> String? {

@@ -159,14 +159,15 @@ To install the peer rule permanently as well (for sessions started outside the a
 <a id="files-it-keeps"></a>
 ## Files it keeps
 
-`DOJO_PORT` overrides the bus port, and `~/.dojo/relay` turns on the relay below. There is no other setting. Beside the tools the first run copies there, the only files the app keeps in `~/.dojo` are:
+`DOJO_PORT` overrides the bus port, `~/.dojo/relay` turns on the relay below, and `~/.dojo/outside` turns on sending from outside Dojo, also below. There is no other setting. Beside the tools the first run copies there, the only files the app keeps in `~/.dojo` are:
 
 - `hosts` and `folders`: the hosts and start folders you used, latest first, one per line;
 - `panes.json`: the panes the empty window offers to reopen, readable only by you, with no tokens;
 - `unrestricted`: the agents whose last pane skipped permission prompts, so the picker's box starts that way;
 - `notifications`: what macOS allows the app (alerts, the badge), written at launch and after each request;
 - `runner/`: Runner's binary, its roster copy, the 16 MiB model heads, the fits list and your model choice;
-- `audit/`: the record of bus traffic, below.
+- `audit/`: the record of bus traffic, below;
+- `outside-token`: only while you have sending from outside switched on, below: the port and a token, readable only by you, new at each launch and removed when the switch goes or the app quits.
 
 Edit or delete any of them by hand.
 
@@ -175,6 +176,18 @@ Edit or delete any of them by hand.
 A pane on another host can run one program on this Mac: `dojo relay <words...>`. `~/.dojo/relay` holds that program's absolute path, and without that file the bus has no such route and nothing changes. Bocka uses it, so that a remote pane can update the plan.
 
 A pane chooses the words and never the program. The words go to it as arguments, with no shell, and the program gets the pane's name in `RELAY_PANE`, from the bus and never from the pane. It runs with a small environment and no stdin, for 20 seconds at most, one at a time. The program and the file must be yours and not writable by others, or the relay refuses. The program decides which words it accepts, so write it as you would anything reachable from another machine. The result goes back to the pane that asked, and like any bus message it is never your approval of anything.
+
+### Sending from outside Dojo, off unless you set it up
+
+A program that is not in a pane, such as Bocka's window telling a pane that you changed its item, can send a line to a pane with `dojo send <pane> <text>`. That is off until you switch it on, because it lets any program running as you type into an agent's pane:
+
+```
+touch ~/.dojo/outside && chmod 600 ~/.dojo/outside
+```
+
+Within five seconds the app writes `~/.dojo/outside-token`, and `dojo send` run outside a pane uses it. To switch it off, delete `~/.dojo/outside`: the token file goes within five seconds, and `dojo send` outside a pane refuses again. The switch must be a regular file of yours that no one else can write, or it does not count and the window says why.
+
+It only sends. It cannot list the panes, read one, watch one or ask a state. Every line arrives as `[from: outside]`, whatever the program says about itself, so a program says who it is in its own text. A line from outside waits at a permission prompt and behind your unsent text exactly as a pane's message does, at most 30 lines a minute get through, and the record below keeps every use, refused ones too. Like any bus message, it is never your approval of anything.
 
 ### The record of bus traffic
 

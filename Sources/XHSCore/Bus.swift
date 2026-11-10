@@ -23,6 +23,13 @@ public final class Bus {
     /// The record of bus traffic, nil for none: see `BusRecord`.
     public var record: BusRecord?
     private var relayRunning = false
+    /// D15 (b): the outside route's token while the owner has it switched on (OutsideRoute); nil, no route.
+    public var outsideToken: String?
+    /// Who sends a line from outside Dojo: never in the list of panes, never a pane anyone can read.
+    private lazy var outsider = Pane(name: Outside.sender, kind: .shell, host: "", token: "", model: "", state: .idle,
+                                     unrestricted: false, io: nil)
+    /// When the outside lines of the last minute were sent.
+    private var outsideSent: [Date] = []
 
     public struct Info: Equatable, Sendable {
         public let name: String
@@ -440,6 +447,10 @@ public final class Bus {
     /// Handles one request. `path` is the operation: /panes, /send, /read, /state, /watch or /hook.
     public func handle(path: String, token: String?, body: Data) -> (status: Int, body: Data) {
         let op = path.split(separator: "?").first.map { String($0) }?.trimmingCharacters(in: CharacterSet(charactersIn: "/")) ?? ""
+        // D15 (b): only while the owner has it switched on; otherwise the path is what it always was.
+        if let expected = outsideToken, op == Outside.sender || op.hasPrefix(Outside.sender + "/") {
+            return outside(op, token: token, expected: expected, body: body)
+        }
         guard let token, let sender = panes.first(where: { $0.token == token }) else {
             return recorded(["op": op], error(401, "unknown or missing X-Dojo-Token"))
         }
@@ -475,6 +486,27 @@ public final class Bus {
         default:
             result = error(404, "unknown operation '\(op)'; use panes, send, read, state or watch")
         }
+        return recorded(line, result)
+    }
+
+    /// D15 (b): `/outside/send`, and nothing else. The sender is the route's, never the caller's.
+    private func outside(_ op: String, token: String?, expected: String, body: Data) -> (status: Int, body: Data) {
+        var line: [String: Any] = ["op": op == "outside/send" ? "send" : op, "from": Outside.sender, "via": "outside"]
+        guard let token, Outside.same(token, expected) else {
+            return recorded(line, error(401, "unknown or missing X-Dojo-Outside-Token"))
+        }
+        guard op == "outside/send" else { return recorded(line, error(404, "the outside route only sends: /outside/send")) }
+        guard let args = (body.isEmpty ? [:] : (try? JSONSerialization.jsonObject(with: body))) as? [String: Any] else {
+            return recorded(line, error(400, "body must be a JSON object"))
+        }
+        if let name = args["pane"] as? String { line["pane"] = name }
+        let minute = now().addingTimeInterval(-60)
+        outsideSent.removeAll { $0 < minute }
+        guard outsideSent.count < Outside.perMinute else {
+            return recorded(line, error(429, "more than \(Outside.perMinute) lines a minute from outside; try again later"))
+        }
+        let result = send(from: outsider, args, &line)
+        if result.status == 200 { outsideSent.append(now()) }
         return recorded(line, result)
     }
 

@@ -32,7 +32,14 @@ class FakeBus:
                 n = int(self.headers.get("Content-Length") or 0)
                 body = json.loads(self.rfile.read(n) or b"{}")
                 bus.requests.append((self.path, self.headers.get("X-Dojo-Token"), body))
-                if self.headers.get("X-Dojo-Token") != "tok-1":
+                if self.path == "/outside/send":
+                    # D15 (b): the outside route, with its own token in its own header
+                    bus.outside_headers = dict(self.headers)
+                    if self.headers.get("X-Dojo-Outside-Token") != "out-1":
+                        out, code = {"error": "unknown or missing X-Dojo-Outside-Token"}, 401
+                    else:
+                        out, code = {"pane": body["pane"], "delivered": True, "queued": 0, "state": "idle"}, 200
+                elif self.headers.get("X-Dojo-Token") != "tok-1":
                     out, code = {"error": "unknown token"}, 401
                 elif self.path == "/panes":
                     out, code = {"you": "claude-1", "panes": [
@@ -130,6 +137,62 @@ class ShimTest(unittest.TestCase):
         content = res[0]["result"]["content"]
         self.assertEqual(content[0]["text"], "key [redacted: github token]\n[dojo token]")
         self.assertIn("took 2 secrets out", content[1]["text"])
+
+    def outside_home(self, token_file):
+        home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home)
+        if token_file is not None:
+            os.makedirs(os.path.join(home, ".dojo"))
+            with open(os.path.join(home, ".dojo", "outside-token"), "w") as f:
+                f.write(token_file)
+        env = {k: v for k, v in self.env.items() if k not in ("DOJO_TOKEN", "DOJO_PANE")}
+        env["HOME"] = home
+        return env
+
+    def cli_env(self, env, *argv, stdin=""):
+        out, err = io.StringIO(), io.StringIO()
+        saved = dict(os.environ)
+        os.environ.clear()
+        os.environ.update(env)
+        try:
+            return load_shim().cli(list(argv), out=out, err=err, stdin=io.StringIO(stdin)), out.getvalue(), err.getvalue()
+        finally:
+            os.environ.clear()
+            os.environ.update(saved)
+
+    def test_send_outside_a_pane_uses_the_owners_outside_route(self):
+        env = self.outside_home(json.dumps({"port": self.bus.port, "token": "out-1"}))
+        code, out, err = self.cli_env(env, "send", "fable", "-", stdin="the owner changed B11\n")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(out, "fable: delivered (state idle, queued 0)\n")
+        path, pane_token, body = self.bus.requests[-1]
+        self.assertEqual((path, pane_token, body), ("/outside/send", None, {"pane": "fable", "text": "the owner changed B11\n"}))
+        self.assertEqual(self.bus.outside_headers.get("X-Dojo-Outside-Token"), "out-1")
+
+    def test_send_outside_a_pane_with_the_route_off_refuses_as_before(self):
+        code, out, err = self.cli_env(self.outside_home(None), "send", "fable", "hello")
+        self.assertEqual((code, out), (1, ""))
+        self.assertIn("not inside Xyntetik Dojo", err)
+        self.assertIn("sending from outside is off", err)
+        self.assertEqual(self.bus.requests, [])
+        for bad in ("", "{", json.dumps({"token": "out-1"}), json.dumps({"port": "x", "token": "out-1"})):
+            code, _, err = self.cli_env(self.outside_home(bad), "send", "fable", "hello")
+            self.assertEqual(code, 1, bad)
+        self.assertEqual(self.bus.requests, [])
+
+    def test_only_send_goes_through_the_outside_route(self):
+        env = self.outside_home(json.dumps({"port": self.bus.port, "token": "out-1"}))
+        for argv in (["panes"], ["read", "fable"], ["state", "fable"], ["watch", "fable"], ["relay", "ready"]):
+            code, _, err = self.cli_env(env, *argv)
+            self.assertEqual(code, 1, argv)
+            self.assertIn("DOJO_TOKEN is not set", err)
+        self.assertEqual(self.bus.requests, [])
+
+    def test_a_stale_token_is_refused_by_the_bus(self):
+        env = self.outside_home(json.dumps({"port": self.bus.port, "token": "old"}))
+        code, _, err = self.cli_env(env, "send", "fable", "hello")
+        self.assertEqual(code, 1)
+        self.assertIn("bus refused (401)", err)
 
     def test_relay_needs_words(self):
         code, _, err = self.cli("relay")
