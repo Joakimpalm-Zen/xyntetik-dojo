@@ -105,7 +105,21 @@ final class TerminalPane: TerminalView, PaneIO {
         guard !bandWaiting else { return }
         let shade = dimmed ? Theme.shadeDimmed : Theme.shade
         feed(byteArray: Repaint.band(red: shade.red, green: shade.green, blue: shade.blue)[...])
+        lastBandPaint = clock()
+        bandPaints += 1
     }
+
+    /// D27: the band goes in again while output flows, at most once per interval and only between sequences.
+    /// Since Claude Code 2.1.322, panes showed xterm's brown in the band's slot until a focus change, and the
+    /// stream carried none of the resets `Repaint.touchesPalette` looks for. SwiftTerm cannot be asked for a
+    /// palette entry from here, and it rebuilds all 256 when a default colour changes, so the slot is set again
+    /// by time rather than by a sign in the stream. Each set redraws the whole pane once.
+    static let bandInterval: TimeInterval = 1
+    /// The clock the interval is read from; a test moves it.
+    var clock: () -> Date = Date.init
+    /// When the band last went in, and how many times; for the interval and for tests.
+    private(set) var lastBandPaint = Date.distantPast
+    private(set) var bandPaints = 0
 
     required init?(coder: NSCoder) { fatalError("not used") }
 
@@ -182,7 +196,8 @@ final class TerminalPane: TerminalView, PaneIO {
         parser.advance(bytes)
         let seen = paletteTail + bytes
         paletteTail = Array(seen.suffix(Repaint.paletteMarkLength - 1))
-        if bandWaiting || Repaint.touchesPalette(seen) { paintBand() }
+        let due = clock().timeIntervalSince(lastBandPaint) >= TerminalPane.bandInterval
+        if bandWaiting || Repaint.touchesPalette(seen) || (due && parser.isAtRest) { paintBand() }
     }
 
     /// `Theme.brand` as a terminal colour code.
