@@ -37,8 +37,9 @@ import Testing
 
     /// A pane that has had `chunks`, with `between` run after the first. What a harness or the owner can see of
     /// it: the screen, the title and the folder.
-    private func run(_ chunks: [[UInt8]], between: (TerminalPane) -> Void = { _ in }) async -> (seen: [String], pane: TerminalPane) {
+    private func run(_ chunks: [[UInt8]], before: (TerminalPane) -> Void = { _ in }, between: (TerminalPane) -> Void = { _ in }) async -> (seen: [String], pane: TerminalPane) {
         let pane = TerminalPane(name: "p")
+        before(pane)
         let reports = Reports()
         pane.terminalDelegate = reports
         for (i, chunk) in chunks.enumerated() {
@@ -99,6 +100,53 @@ import Testing
         }
         #expect(!split.pane.bandWaiting)
         #expect(split.seen[1] == "half and half")
+    }
+
+    /// D27: the band goes in again after a chunk once the interval has passed, so a palette reset the stream
+    /// does not show (a default-colour change makes SwiftTerm rebuild all 256 slots) lasts at most that long.
+    @Test func theBandGoesInAgainOnceTheIntervalHasPassed() {
+        _ = NSApplication.shared
+        let pane = TerminalPane(name: "p")
+        var now = pane.lastBandPaint
+        pane.clock = { now }
+        let painted = pane.bandPaints
+        now += TerminalPane.bandInterval / 2
+        pane.show(Array("within the interval\r\n".utf8))
+        #expect(pane.bandPaints == painted)
+        // A default-colour change, which SwiftTerm answers by rebuilding the palette.
+        pane.nativeBackgroundColor = Theme.terminalPaperDimmed
+        now += TerminalPane.bandInterval
+        pane.show(Array("after it\r\n".utf8))
+        #expect(pane.bandPaints == painted + 1)
+        #expect(pane.lastBandPaint == now)
+    }
+
+    /// Never in the middle of a sequence: a chunk that ends inside one waits, and the next one that ends at rest paints.
+    @Test func theBandNeverGoesInMidSequence() {
+        _ = NSApplication.shared
+        let pane = TerminalPane(name: "p")
+        var now = pane.lastBandPaint + TerminalPane.bandInterval * 5
+        pane.clock = { now }
+        let painted = pane.bandPaints
+        pane.show(Array("\u{1b}]0;half".utf8))
+        #expect(pane.bandPaints == painted)
+        now += 1
+        pane.show(Array(" and half\u{7}".utf8))
+        #expect(pane.bandPaints == painted + 1)
+    }
+
+    /// The output is the same with the band set again after every chunk as with it never set again.
+    @Test func theBandAgainLeavesTheOutputWhole() async {
+        _ = NSApplication.shared
+        for stream in BandInStreamTests.streams {
+            let bytes = Array(stream.utf8)
+            for cut in 0...bytes.count {
+                let chunks = [Array(bytes[..<cut]), Array(bytes[cut...])]
+                let never = await run(chunks, before: { $0.clock = { Date.distantPast } }).seen
+                let always = await run(chunks, before: { $0.clock = { Date.distantFuture } }).seen
+                #expect(always == never, "\(stream) cut at \(cut)")
+            }
+        }
     }
 
     @Test func aStringThatNeverEndsKeepsTheBandWaiting() {
