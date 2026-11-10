@@ -491,18 +491,40 @@ final class AppModel: NSObject, ObservableObject {
         guard !keepingList else { return }
         SavedPanes.save(items.map { item in
             SavedPane(kind: item.kind, host: bus.info(item.name)?.host ?? "", directory: item.directory, name: item.name,
-                      unrestricted: item.unrestricted, session: bus.sessionId(item.name))
+                      unrestricted: item.unrestricted, session: bus.sessionId(item.name),
+                      coordinator: bus.coordinatorName == item.name, mayRead: bus.info(item.name)?.reads ?? [])
         }, to: AppModel.panesFile)
     }
 
-    /// The button in the empty window. Nothing reopens by itself.
+    /// The button in the empty window. Nothing reopens by itself. The coordinator mark and the read grants
+    /// come back once every pane is open, since a grant names another pane.
     func reopenLast() {
-        for pane in lastPanes {
+        let panes = lastPanes
+        for pane in panes {
             if let trouble = addPane(kind: pane.kind, host: pane.host, name: pane.name, directory: pane.directory, unrestricted: pane.unrestricted,
                                      session: pane.session, reopened: true) {
                 problem = "\(pane.name): \(trouble)"
             }
         }
+        for pane in panes {
+            if pane.coordinator { bus.setCoordinator(pane.name) }
+            for target in pane.mayRead { bus.setRead(pane.name, of: target, allowed: true) }
+        }
+        savePanes()
+    }
+
+    // MARK: roles (D21.2)
+
+    /// Marks `name` as the coordinator, or none with nil; a menu choice of the owner's.
+    func markCoordinator(_ name: String?) {
+        if let trouble = bus.setCoordinator(name) { problem = trouble }
+        savePanes()
+    }
+
+    /// Lets the worker `name` read `target`, or no longer; a menu choice of the owner's.
+    func setRead(_ name: String, of target: String, allowed: Bool) {
+        if let trouble = bus.setRead(name, of: target, allowed: allowed) { problem = trouble }
+        savePanes()
     }
 
     /// A remote pane whose connection dropped can come back, if it has a session to come back to.
@@ -514,11 +536,20 @@ final class AppModel: NSObject, ObservableObject {
     func reopen(_ item: Item) {
         guard canReopen(item), let session = bus.sessionId(item.name) else { return }
         let host = bus.info(item.name)?.host ?? ""
+        // its roles come back with it: its own mark and grants, and the grants others had on it
+        let wasCoordinator = bus.coordinatorName == item.name
+        let reads = bus.info(item.name)?.reads ?? []
+        let readBy = bus.all.filter { $0.reads.contains(item.name) }.map(\.name)
         close(item.name)
         if let trouble = addPane(kind: item.kind, host: host, name: item.name, directory: item.directory, unrestricted: item.unrestricted,
                                  session: session, reopened: true) {
             problem = "\(item.name): \(trouble)"
+            return
         }
+        if wasCoordinator { bus.setCoordinator(item.name) }
+        for target in reads { bus.setRead(item.name, of: target, allowed: true) }
+        for worker in readBy { bus.setRead(worker, of: item.name, allowed: true) }
+        savePanes()
     }
 
     // MARK: bus server

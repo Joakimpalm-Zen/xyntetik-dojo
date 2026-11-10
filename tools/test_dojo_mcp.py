@@ -36,8 +36,10 @@ class FakeBus:
                     out, code = {"error": "unknown token"}, 401
                 elif self.path == "/panes":
                     out, code = {"you": "claude-1", "panes": [
-                        {"name": "claude-1", "kind": "claude", "host": "", "state": "idle", "queued": 0, "model": ""},
-                        {"name": "codex-1", "kind": "codex", "host": "box", "state": "prompt", "queued": 1, "model": ""}]}, 200
+                        {"name": "claude-1", "kind": "claude", "host": "", "state": "idle", "queued": 0, "model": "",
+                         "role": "coordinator"},
+                        {"name": "codex-1", "kind": "codex", "host": "box", "state": "prompt", "queued": 1, "model": "",
+                         "role": "worker"}]}, 200
                 elif self.path == "/send":
                     out, code = {"pane": body["pane"], "delivered": False, "queued": 1, "state": "prompt",
                                  "note": "codex-1 is at a prompt; queued until it is idle."}, 200
@@ -215,6 +217,8 @@ class ShimTest(unittest.TestCase):
         self.assertEqual(self.bus.requests[-1][2]["text"], "from stdin\n")
         r = self.run_cli("panes")
         self.assertIn("* claude-1", r.stdout)
+        self.assertIn("(coordinator)", r.stdout.splitlines()[0])
+        self.assertIn("(worker)", r.stdout.splitlines()[1])
         self.assertIn("codex-1", r.stdout)
         self.assertIn("box", r.stdout)
         r = self.run_cli("read", "codex-1", "2")

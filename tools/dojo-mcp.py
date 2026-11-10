@@ -564,9 +564,11 @@ def cli(argv, out=sys.stdout, err=sys.stderr, stdin=sys.stdin):
             res = bus_call("panes", {})
             for p in res.get("panes", []):
                 mark = "*" if p.get("name") == res.get("you") else " "
-                out.write("%s %-12s %-6s %-14s %-8s queued=%s %s\n" % (
+                # D21.2: once the owner marks a coordinator, the agents say which they are
+                role = " (%s)" % p["role"] if p.get("role") else ""
+                out.write("%s %-12s %-6s %-14s %-8s queued=%s %s%s\n" % (
                     mark, p.get("name"), p.get("kind"), p.get("host") or "local",
-                    p.get("state"), p.get("queued", 0), p.get("model") or ""))
+                    p.get("state"), p.get("queued", 0), p.get("model") or "", role))
             return 0
         if cmd == "send" and len(rest) >= 2:
             text = stdin.read() if rest[1:] == ["-"] else " ".join(rest[1:])

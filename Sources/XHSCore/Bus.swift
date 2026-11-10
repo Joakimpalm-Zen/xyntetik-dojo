@@ -33,10 +33,15 @@ public final class Bus {
         public let model: String
         /// The owner has unsent text in the pane; the bus holds its queue until that is sent or cleared.
         public let draft: Bool
+        /// `coordinator` or `worker` once the owner has marked a coordinator (D21.2); empty before, and for
+        /// panes that are not agents.
+        public let role: String
+        /// The panes a worker may read, by the owner's grant.
+        public let reads: [String]
 
         var json: [String: Any] {
             ["name": name, "kind": kind.rawValue, "host": host, "state": state.rawValue, "queued": queued, "model": model,
-             "draft": draft]
+             "draft": draft, "role": role, "reads": reads]
         }
     }
 
@@ -51,6 +56,10 @@ public final class Bus {
         let unrestricted: Bool
         /// When the pane last reached a permission prompt.
         var promptSince: Date?
+        /// The owner marked this pane as the coordinator (D21.2); at most one pane is.
+        var coordinator = false
+        /// The panes this one may read while it is a worker, by the owner's grant.
+        var mayRead: [ObjectIdentifier] = []
         /// Who sent what; the `[from: name]` line is built at delivery, so a renamed sender is named right.
         var queue: [(sender: Pane, text: String)] = []
         var lastOwnerInput: Date?
@@ -169,6 +178,7 @@ public final class Bus {
         if gone != nil { note(["op": "close", "pane": name]) }
         panes.removeAll { $0.name == name }
         for p in panes { p.watchers.removeAll { $0.asker === gone } }
+        if let gone { for p in panes { p.mayRead.removeAll { $0 == ObjectIdentifier(gone) } } }
         if let gone { tellWatchers(of: gone, "\(gone.name) was closed.") }
         onChange?()
     }
@@ -302,6 +312,65 @@ public final class Bus {
         }
     }
 
+    // MARK: roles (D21.2)
+
+    public enum Role: String, Sendable { case coordinator, worker }
+
+    /// The pane the owner marked as the coordinator, if any.
+    public var coordinatorName: String? { panes.first { $0.coordinator }?.name }
+
+    private func role(of p: Pane) -> Role? {
+        guard p.kind.isAgent, panes.contains(where: { $0.coordinator }) else { return nil }
+        return p.coordinator ? .coordinator : .worker
+    }
+
+    /// Marks `name` as the coordinator, or none with nil. One pane at most: marking one unmarks the other.
+    /// Until a coordinator is marked every pane may do everything, as before roles (the owner's choice).
+    /// Returns a reason when the pane cannot be one.
+    @discardableResult
+    public func setCoordinator(_ name: String?) -> String? {
+        if let name {
+            guard let p = pane(named: name) else { return "no pane named '\(name)'" }
+            guard p.kind.isAgent else { return "\(name) is not an agent pane; only an agent can coordinate" }
+            for other in panes { other.coordinator = other === p }
+        } else {
+            for other in panes { other.coordinator = false }
+        }
+        note(["op": "role", "coordinator": name ?? ""])
+        onChange?()
+        return nil
+    }
+
+    /// Lets the worker `name` read `target`, or no longer.
+    @discardableResult
+    public func setRead(_ name: String, of target: String, allowed: Bool) -> String? {
+        guard let p = pane(named: name) else { return "no pane named '\(name)'" }
+        guard let t = pane(named: target), t !== p else { return "no other pane named '\(target)'" }
+        p.mayRead.removeAll { $0 == ObjectIdentifier(t) }
+        if allowed { p.mayRead.append(ObjectIdentifier(t)) }
+        note(["op": "grant", "pane": name, "read": target, "allowed": allowed])
+        onChange?()
+        return nil
+    }
+
+    /// Why a worker may not do this, or nil. Only `read` and `watch` are limited: every pane may list the
+    /// panes, ask a state and send (workers to each other too, the owner's choice); a pane that is not an
+    /// agent, and every pane while no coordinator is marked, may do everything.
+    private func refusal(_ op: String, from sender: Pane, _ args: [String: Any]) -> String? {
+        guard role(of: sender) == .worker, let coordinator = panes.first(where: { $0.coordinator }),
+              let target = target(args) else { return nil }
+        switch op {
+        case "read" where target !== sender && !sender.mayRead.contains(ObjectIdentifier(target)):
+            return "read of '\(target.name)' is not allowed for '\(sender.name)', a worker pane; "
+                + "ask the coordinator, '\(coordinator.name)'"
+        case "watch" where target !== coordinator:
+            return "watch of '\(target.name)' is not allowed for '\(sender.name)', a worker pane; "
+                + "a worker watches only the coordinator, '\(coordinator.name)'"
+        default:
+            return nil
+        }
+    }
+
     // MARK: the configured relay
 
     /// Answers /relay when a relay is configured, later and off the main actor, since the program may take
@@ -373,6 +442,7 @@ public final class Bus {
         }
         var line: [String: Any] = ["op": op, "from": sender.name]
         if let name = args["pane"] as? String { line["pane"] = name }
+        if let why = refusal(op, from: sender, args) { return recorded(line, error(403, why)) }
         let result: (status: Int, body: Data)
         switch op {
         case "panes":
@@ -564,7 +634,9 @@ public final class Bus {
     }
 
     private func info(_ p: Pane) -> Info {
-        Info(name: p.name, kind: p.kind, host: p.host, state: p.state, queued: p.queue.count, model: p.model, draft: p.hasDraft)
+        Info(name: p.name, kind: p.kind, host: p.host, state: p.state, queued: p.queue.count, model: p.model, draft: p.hasDraft,
+             role: role(of: p)?.rawValue ?? "",
+             reads: panes.filter { p.mayRead.contains(ObjectIdentifier($0)) }.map(\.name))
     }
 
     private func noPane(_ args: [String: Any]) -> (status: Int, body: Data) {

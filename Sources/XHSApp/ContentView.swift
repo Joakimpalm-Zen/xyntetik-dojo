@@ -264,6 +264,30 @@ struct PaneCell: View {
     @StateObject private var rename = RenameForm()
     let item: AppModel.Item
 
+    /// The name's menu: rename, and the roles of D21.2 for an agent pane.
+    @ViewBuilder
+    private func nameMenu(_ info: Bus.Info?) -> some View {
+        Button("Rename") { startRename() }
+        if item.kind.isAgent {
+            Divider()
+            if info?.role == "coordinator" {
+                Button("Stop Being the Coordinator") { model.markCoordinator(nil) }
+            } else {
+                Button("Make This the Coordinator") { model.markCoordinator(item.name) }
+            }
+            if info?.role == "worker" {
+                let others = model.items.map(\.name).filter { $0 != item.name }
+                Menu("May Read") {
+                    ForEach(others, id: \.self) { other in
+                        Toggle(other, isOn: Binding(
+                            get: { model.bus.info(item.name)?.reads.contains(other) ?? false },
+                            set: { model.setRead(item.name, of: other, allowed: $0) }))
+                    }
+                }
+            }
+        }
+    }
+
     var body: some View {
         let info = model.bus.info(item.name)
         VStack(spacing: 0) {
@@ -281,11 +305,21 @@ struct PaneCell: View {
                     }
                 } else {
                     Text(item.name).font(.system(.callout, design: .monospaced)).bold().foregroundStyle(Color(Theme.ink))
+                        .layoutPriority(1)
                         .help("Double-click to rename")
                         .onTapGesture(count: 2) { startRename() }
-                        .contextMenu { Button("Rename") { startRename() } }
+                        .contextMenu { nameMenu(info) }
                 }
                 Text(info?.kind.title ?? "").foregroundStyle(Color(Theme.muted))
+                if info?.role == "coordinator" {
+                    // D21.2: the owner's coordinator; with one marked, the other agents are workers
+                    Text("coordinator").foregroundStyle(Color(Theme.tealInk)).fixedSize()
+                        .help("Workers read only what you let them and watch only this pane. Right-click the name to change it.")
+                } else if let reads = info?.reads, !reads.isEmpty {
+                    Text(reads.count == 1 ? "reads \(reads[0])" : "reads \(reads.count) panes").foregroundStyle(Color(Theme.muted))
+                        .fixedSize()
+                        .help("A worker that may read \(reads.joined(separator: ", ")), by your grant. Right-click the name to change it.")
+                }
                 if Permissions.unrestricted(item.kind, ticked: item.unrestricted) {
                     // D21.1: a pane that acts without the harness asking first says so
                     Text("unrestricted").foregroundStyle(Color(Theme.coralInk)).fixedSize()
@@ -311,12 +345,14 @@ struct PaneCell: View {
                 }
                 if model.finishedUnseen(item) { UnseenMark() }
                 Text(model.finishedUnseen(item) ? "finished" : info?.state.rawValue ?? "").font(.caption).foregroundStyle(Color(PaneCell.tone(info?.state)))
+                    .fixedSize()
                 Button { model.close(item.name) } label: { Image(systemName: "xmark") }
                     .buttonStyle(.borderless)
                     .foregroundStyle(Color(Theme.muted))
                     .help("Close \(item.name)")
             }
             .font(.callout)
+            .lineLimit(1)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             // The pane with the keys looks like the selected tab: the lightest paper, a teal line along its foot.
