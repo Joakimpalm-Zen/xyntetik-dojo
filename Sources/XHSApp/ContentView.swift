@@ -189,6 +189,7 @@ struct TabStrip: View {
                     TabButton(selected: selected, action: { model.show(tab: item.id) }) {
                         StateDot(state: model.bus.info(item.name)?.state)
                         Text(item.name).font(.system(.callout, design: .monospaced)).fontWeight(selected ? .bold : .regular)
+                        if let info = model.bus.info(item.name), !info.label.isEmpty { PaneLabel(info: info, compact: true) }
                         if model.finishedUnseen(item) { UnseenMark() }
                     }
                 }
@@ -311,7 +312,14 @@ struct PaneCell: View {
                         .onTapGesture(count: 2) { startRename() }
                         .contextMenu { nameMenu(info) }
                 }
-                Text(info?.kind.title ?? "").foregroundStyle(Color(Theme.muted))
+                // D15: what the pane says it is working on, beside its name, then what and where it is
+                let labelled = !(info?.label.isEmpty ?? true)
+                HeaderWords(labelled: labelled) {
+                    if let info, labelled { PaneLabel(info: info, compact: false) }
+                    Text(info?.kind.title ?? "").foregroundStyle(Color(Theme.muted)).fixedSize()
+                    Text(info?.host.isEmpty == false ? info!.host : "local").foregroundStyle(Color(Theme.muted)).fixedSize()
+                }
+                .layoutPriority(0.5)
                 if info?.role == "coordinator" {
                     // D21.2: the owner's coordinator; with one marked, the other agents are workers
                     Text("coordinator").foregroundStyle(Color(Theme.tealInk)).fixedSize()
@@ -331,7 +339,6 @@ struct PaneCell: View {
                     Text("started fresh").foregroundStyle(Color(Theme.coralInk)).fixedSize()
                         .help("There was no session to resume, so this pane started a new conversation")
                 }
-                Text(info?.host.isEmpty == false ? info!.host : "local").foregroundStyle(Color(Theme.muted))
                 if !item.directory.isEmpty {
                     Text((item.directory as NSString).lastPathComponent).foregroundStyle(Color(Theme.muted))
                         .lineLimit(1).truncationMode(.middle).help(item.directory)
@@ -446,6 +453,95 @@ struct StateDot: View {
         }
         .frame(width: 12, height: 12)
         .help(state?.rawValue ?? "")
+    }
+}
+
+/// D15: a pane's own label, in a hairline capsule beside its name. Idle with a label for `idleFlagAfter`
+/// or more, it turns coral and says for how long, so a pane that stopped while holding work stands out.
+struct PaneLabel: View {
+    let info: Bus.Info
+    /// The tab's: a shorter label.
+    let compact: Bool
+
+    /// A tab has less room: a long label ends in an ellipsis there, and the pointer shows all of it.
+    static func shown(_ label: String, compact: Bool) -> String {
+        let room = compact ? 16 : Bus.maxLabelLength
+        return label.count > room ? String(label.prefix(room - 1)) + "\u{2026}" : label
+    }
+
+    static func minutes(_ seconds: TimeInterval) -> String {
+        let m = Int(seconds / 60)
+        return m >= 60 ? "\(m / 60)h \(m % 60)m" : "\(m)m"
+    }
+
+    var body: some View {
+        let flagged = info.idleFlag != nil
+        let shape = Capsule(style: .continuous)
+        HStack(spacing: 4) {
+            Text(PaneLabel.shown(info.label, compact: compact)).font(.system(.caption, design: .monospaced))
+                .foregroundStyle(Color(flagged ? Theme.coralInk : Theme.ink))
+                .lineLimit(1).truncationMode(.tail)
+            if let idle = info.idleFlag {
+                Text("idle \(PaneLabel.minutes(idle))").font(.caption).bold()
+                    .foregroundStyle(Color(Theme.coralInk)).fixedSize()
+            }
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 1)
+        .background(shape.fill(Color(flagged ? Theme.coral : Theme.paper).opacity(flagged ? 0.18 : 1)))
+        .overlay(shape.stroke(Color(flagged ? Theme.coral : Theme.rule), lineWidth: 1))
+
+        .help(info.idleFlag.map { "Idle for \(PaneLabel.minutes($0)) while labelled \(info.label): it may have stopped with work in hand" }
+              ?? "Set by the pane with dojo label: \(info.label)")
+    }
+}
+
+/// What a header says about a pane after its name: its label first, which gives way by truncating, then
+/// short words that each show whole while they fit after it and are left out after that, never a sliver.
+/// It takes only the width of what it shows, so nothing it leaves out leaves a gap.
+struct HeaderWords: Layout {
+    var spacing: CGFloat = 8
+    /// The first subview is the label, which may shrink.
+    var labelled: Bool
+
+    private func layout(_ subviews: Subviews, in width: CGFloat?) -> [CGSize?] {
+        var sizes: [CGSize?] = []
+        var used: CGFloat = 0
+        for (index, subview) in subviews.enumerated() {
+            let gap: CGFloat = sizes.contains { $0 != nil } ? spacing : 0
+            let ideal = subview.sizeThatFits(.unspecified)
+            if index == 0, labelled {
+                let room = width.map { max(0, $0) } ?? ideal.width
+                let size = subview.sizeThatFits(ProposedViewSize(width: min(ideal.width, room), height: nil))
+                sizes.append(size)
+                used = size.width
+            } else if width.map({ used + gap + ideal.width <= $0 + 0.5 }) ?? true {
+                sizes.append(ideal)
+                used += gap + ideal.width
+            } else {
+                sizes.append(nil)
+            }
+        }
+        return sizes
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let shown = layout(subviews, in: proposal.width).compactMap { $0 }
+        let width = shown.reduce(0) { $0 + $1.width } + spacing * CGFloat(max(0, shown.count - 1))
+        return CGSize(width: width, height: shown.map(\.height).max() ?? 0)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX
+        for (subview, size) in zip(subviews, layout(subviews, in: bounds.width)) {
+            guard let size else {
+                // Out of sight: what does not fit is not drawn at all.
+                subview.place(at: CGPoint(x: -100_000, y: bounds.midY), anchor: .leading, proposal: .unspecified)
+                continue
+            }
+            subview.place(at: CGPoint(x: x, y: bounds.midY), anchor: .leading, proposal: ProposedViewSize(size))
+            x += size.width + spacing
+        }
     }
 }
 

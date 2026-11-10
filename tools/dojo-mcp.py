@@ -7,6 +7,7 @@ Modes:
   dojo send <pane> <text...>  type a message into another terminal ("-" reads stdin)
   dojo read <pane> [lines]    print the last lines of a terminal's screen
   dojo state <pane>           print a terminal's state
+  dojo label [text...]        set this terminal's own label, shown beside its name; no text clears it
   dojo hook                   forward a harness hook event (JSON on stdin) to the bus
   dojo install                link ~/.dojo/bin/dojo and add the Codex MCP server and hooks
   dojo audit [--pane P] [--since WHEN]
@@ -540,7 +541,7 @@ def audit(argv, out, err, home=None, now=None):
 
 # ---------------------------------------------------------------- CLI
 
-USAGE = """usage: dojo panes | send <pane> <text...> | send <pane> - (text on stdin) | read <pane> [lines] | state <pane> | watch <pane> | relay <words...> | hook | install | audit [--pane P] [--since WHEN]"""
+USAGE = """usage: dojo panes | send <pane> <text...> | send <pane> - (text on stdin) | read <pane> [lines] | state <pane> | watch <pane> | label [text...] | relay <words...> | hook | install | audit [--pane P] [--since WHEN]"""
 
 
 def cli(argv, out=sys.stdout, err=sys.stderr, stdin=sys.stdin):
@@ -566,9 +567,15 @@ def cli(argv, out=sys.stdout, err=sys.stderr, stdin=sys.stdin):
                 mark = "*" if p.get("name") == res.get("you") else " "
                 # D21.2: once the owner marks a coordinator, the agents say which they are
                 role = " (%s)" % p["role"] if p.get("role") else ""
-                out.write("%s %-12s %-6s %-14s %-8s queued=%s %s%s\n" % (
+                # D15: what the pane says it is working on, last so the columns before it stay put
+                label = " label=%s" % p["label"] if p.get("label") else ""
+                out.write("%s %-12s %-6s %-14s %-8s queued=%s %s%s%s\n" % (
                     mark, p.get("name"), p.get("kind"), p.get("host") or "local",
-                    p.get("state"), p.get("queued", 0), p.get("model") or "", role))
+                    p.get("state"), p.get("queued", 0), p.get("model") or "", role, label))
+            return 0
+        if cmd == "label":
+            res = bus_call("label", {"text": " ".join(rest)})
+            out.write("%s: %s\n" % (res.get("pane"), "label " + res["label"] if res.get("label") else "no label"))
             return 0
         if cmd == "send" and len(rest) >= 2:
             text = stdin.read() if rest[1:] == ["-"] else " ".join(rest[1:])

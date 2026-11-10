@@ -91,6 +91,8 @@ final class AppModel: NSObject, ObservableObject {
     private var runnerForwards: [ObjectIdentifier: Int] = [:]
     private var server: BusServer?
     private var timer: Timer?
+    /// D15: ~/.dojo/live.json (a smoke's goes in its throwaway folder).
+    let live = LiveState(url: AppModel.liveFile)
 
     override init() {
         let env = ProcessInfo.processInfo.environment
@@ -111,7 +113,13 @@ final class AppModel: NSObject, ObservableObject {
         lastPanes = SavedPanes.load(AppModel.panesFile)
         // D21.2: one line per bus operation, in the app's own folder (a smoke's is a throwaway one).
         bus.record = BusRecord(directory: AppModel.auditFolder)
-        bus.onChange = { [weak self] in self?.revision &+= 1 }
+        bus.onChange = { [weak self] in
+            guard let self else { return }
+            self.revision &+= 1
+            // D15: the panes as a file other tools can read (LiveState), at most once a second.
+            self.live.changed { [weak self] in self?.bus.all ?? [] }
+        }
+        live.write([])
         bus.onSession = { [weak self] in self?.savePanes() }
         bus.onAttention = { [weak self] name, attention in self?.attend(name, attention) }
         startServer()
@@ -475,6 +483,7 @@ final class AppModel: NSObject, ObservableObject {
         keepingList = true
         for item in items { close(item.name) }
         keepingList = false
+        live.remove()
     }
 
     // MARK: reopening
@@ -807,6 +816,7 @@ final class AppModel: NSObject, ObservableObject {
             print("DOJO_SMOKE failed: the bus did not answer on 127.0.0.1:\(port)")
             exit(1)
         }
+        await proveLive(name)
         let host = bus.info(name)?.host ?? ""
         let location = host.isEmpty ? "locally" : "on \(host) (\(remoteShells[name] == .windows ? "Windows" : "POSIX") shell)"
         let dims = items.first(where: { $0.name == name })?.view.terminalDimensions
@@ -827,6 +837,8 @@ final class AppModel: NSObject, ObservableObject {
                 self.smokeHooks("shell-3", [["hook_event_name": "UserPromptSubmit"]])
                 self.smokeHooks("shell-4", [["hook_event_name": "UserPromptSubmit"], ["hook_event_name": "PermissionRequest"]])
                 self.smokeHooks("shell-2", [["hook_event_name": "UserPromptSubmit"], ["hook_event_name": "Stop"]])
+                // DOJO_SMOKE_SHOT_LABELS=1: D15's labels and idle flag in the picture.
+                if ProcessInfo.processInfo.environment["DOJO_SMOKE_SHOT_LABELS"] == "1" { self.smokeLabels() }
                 self.failIfSeen()
                 self.write(shot: shot, of: window)
                 // DOJO_SMOKE_SHOT_PICKER=<file.png>: the picker as well, drawn in the window.
@@ -848,6 +860,40 @@ final class AppModel: NSObject, ObservableObject {
         await endSmoke()
     }
 
+    /// D15: a label set over the bus reaches the bus and the throwaway live.json within its second, and
+    /// clears again, so the pictures after it look as before.
+    private func proveLive(_ name: String) async {
+        func label(_ text: String) async -> Bool {
+            var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/label")!)
+            request.httpMethod = "POST"
+            request.setValue(tokens[name], forHTTPHeaderField: "X-Dojo-Token")
+            request.httpBody = try? JSONSerialization.data(withJSONObject: ["text": text])
+            request.timeoutInterval = 5
+            guard let (_, response) = try? await URLSession.shared.data(for: request) else { return false }
+            return (response as? HTTPURLResponse)?.statusCode == 200 && bus.info(name)?.label == text
+        }
+        guard await label("SMOKE1") else {
+            print("DOJO_SMOKE failed: the bus did not take the pane's label")
+            exit(1)
+        }
+        try? await Task.sleep(nanoseconds: UInt64((LiveState.interval + 0.5) * 1_000_000_000))
+        let listed = LiveState.read(AppModel.liveFile)?.first { $0["name"] as? String == name }
+        guard listed?["label"] as? String == "SMOKE1", listed?["state"] as? String == bus.info(name)?.state.rawValue else {
+            print("DOJO_SMOKE failed: live.json has \(String(describing: listed)), not the pane with its label")
+            exit(1)
+        }
+        _ = await label("")
+    }
+
+    /// The pictures' labels: one pane flagged idle with a claim, one at work with one, as if twelve minutes had gone.
+    private func smokeLabels() {
+        for (pane, text) in [("shell-2", "B11, D15"), ("shell-3", "R6.45.1"), ("shell-5", "a label of forty characters, the longest")] {
+            _ = bus.handle(path: "/label", token: tokens[pane], body: (try? JSONSerialization.data(withJSONObject: ["text": text])) ?? Data())
+        }
+        bus.now = { Date().addingTimeInterval(12 * 60) }
+        bus.tick()
+    }
+
     /// Quits as the app quits, then proves the next launch's offer: the panes outlive the quit, with their
     /// session, and the button brings them back. DOJO_SMOKE_SHOT_EMPTY=<file.png>: the empty window with it.
     private func endSmoke() async {
@@ -860,6 +906,11 @@ final class AppModel: NSObject, ObservableObject {
             smokeHooks(pane, [["hook_event_name": "UserPromptSubmit", "session_id": "11111111-2222-3333-4444-555555555555"]])
         }
         closeAll()
+        // D15: a Dojo that quit leaves no live.json for a reader to take for running.
+        if FileManager.default.fileExists(atPath: AppModel.liveFile.path) {
+            print("DOJO_SMOKE failed: live.json is still there after quitting")
+            exit(1)
+        }
         if local {
             lastPanes = SavedPanes.load(AppModel.panesFile)
             guard lastPanes.map(\.name) == names, lastPanes.contains(where: { $0.session != nil }) else {
@@ -942,6 +993,7 @@ final class AppModel: NSObject, ObservableObject {
     }
     static let relayFile = Headless.state().appendingPathComponent("relay")
     static let auditFolder = Headless.state().appendingPathComponent("audit")
+    static let liveFile = Headless.state().appendingPathComponent("live.json")
 
     /// A folder picker for the New terminal sheet; nil when cancelled.
     static func chooseFolder() -> String? {

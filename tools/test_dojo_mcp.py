@@ -39,7 +39,9 @@ class FakeBus:
                         {"name": "claude-1", "kind": "claude", "host": "", "state": "idle", "queued": 0, "model": "",
                          "role": "coordinator"},
                         {"name": "codex-1", "kind": "codex", "host": "box", "state": "prompt", "queued": 1, "model": "",
-                         "role": "worker"}]}, 200
+                         "role": "worker", "label": "B11, D15"}]}, 200
+                elif self.path == "/label":
+                    out, code = {"pane": "claude-1", "label": body["text"].strip()}, 200
                 elif self.path == "/send":
                     out, code = {"pane": body["pane"], "delivered": False, "queued": 1, "state": "prompt",
                                  "note": "codex-1 is at a prompt; queued until it is idle."}, 200
@@ -131,6 +133,14 @@ class ShimTest(unittest.TestCase):
         self.assertEqual(content[0]["text"], "key [redacted: github token]\n[dojo token]")
         self.assertIn("took 2 secrets out", content[1]["text"])
 
+    def test_label_sets_the_panes_own_label_and_no_words_clear_it(self):
+        code, out, _ = self.cli("label", "B11,", "D15")
+        self.assertEqual((code, out), (0, "claude-1: label B11, D15\n"))
+        self.assertEqual(self.bus.requests[-1][0:3], ("/label", "tok-1", {"text": "B11, D15"}))
+        code, out, _ = self.cli("label")
+        self.assertEqual((code, out), (0, "claude-1: no label\n"))
+        self.assertEqual(self.bus.requests[-1][2], {"text": ""})
+
     def test_relay_needs_words(self):
         code, _, err = self.cli("relay")
         self.assertEqual(code, 2)
@@ -219,6 +229,9 @@ class ShimTest(unittest.TestCase):
         self.assertIn("* claude-1", r.stdout)
         self.assertIn("(coordinator)", r.stdout.splitlines()[0])
         self.assertIn("(worker)", r.stdout.splitlines()[1])
+        # D15: a label goes last, so the columns before it stay where readers look for them
+        self.assertTrue(r.stdout.splitlines()[1].endswith("(worker) label=B11, D15"), r.stdout)
+        self.assertNotIn("label=", r.stdout.splitlines()[0])
         self.assertIn("codex-1", r.stdout)
         self.assertIn("box", r.stdout)
         r = self.run_cli("read", "codex-1", "2")
