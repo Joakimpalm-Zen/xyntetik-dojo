@@ -25,8 +25,7 @@ import Testing
         #expect(Array(plan.args.prefix(3)) == ["-l", "-i", "-c"])
         #expect(plan.environment == ["DOJO_PANE": "claude-1", "DOJO_PORT": "7788", "DOJO_TOKEN": "tok"])
         let argv = shellArgs(plan.args[3], home: home)
-        #expect(argv.prefix(4) == ["env", "PATH=/home/tester/.dojo/bin:/usr/bin:/bin", "claude",
-                                   "--dangerously-skip-permissions"])
+        #expect(argv.prefix(4) == ["env", "PATH=/home/tester/.dojo/bin:/usr/bin:/bin", "claude", "--settings"])
         let settings = try #require(argv.firstIndex(of: "--settings"))
         let parsed = try JSONSerialization.jsonObject(with: Data(argv[settings + 1].utf8)) as! NSDictionary
         #expect(parsed["theme"] as? String == "light")
@@ -51,8 +50,14 @@ import Testing
         let harness = shellArgs(remote[4], home: "/remote/home")
         #expect(Array(harness.prefix(6)) == ["env", "DOJO_PANE=codex-2", "DOJO_PORT=7788", "DOJO_TOKEN=tok",
                                              "PATH=/remote/home/.dojo/bin:/usr/bin:/bin", "codex"])
-        #expect(Array(harness[6...8]) == ["--yolo", "--dangerously-bypass-hook-trust", "-c"])
-        #expect(harness[9] == "developer_instructions=" + Shell.toml(PeerRule.launchPrompt(paneName: "codex-2")))
+        #expect(Array(harness[6...7]) == ["--dangerously-bypass-hook-trust", "-c"])
+        #expect(harness[8] == "developer_instructions=" + Shell.toml(PeerRule.launchPrompt(paneName: "codex-2")))
+        // the tick reaches a host the same way
+        let ticked = Launcher.plan(kind: .codex, paneName: "codex-2", host: "user@box", port: 7788, token: "tok",
+                                   runnerModel: nil, loginShell: "/bin/zsh", unrestricted: true)
+        let tickedHarness = shellArgs(shellArgs(shellArgs(ticked.args[3], home: home)[9], home: "/remote/home")[4],
+                                      home: "/remote/home")
+        #expect(Array(tickedHarness[6...8]) == ["--yolo", "--dangerously-bypass-hook-trust", "-c"])
     }
 
     @Test func remoteUsesTheConfiguredPort() {
@@ -258,13 +263,53 @@ import Testing
         #expect(Launcher.probeNote(error: "ssh: connect to host box port 22: No route to host\n").hasPrefix("The host did not answer the shell probe (ssh: connect to host box port 22: No route to host); assuming a POSIX shell."))
     }
 
-    @Test func askFirstKeepsTheHarnessesOwnApprovals() {
-        let claude = Launcher.harnessWords(kind: .claude, paneName: "claude-1", port: 7788, runnerModel: nil, askFirst: true)
-        #expect(!claude.contains(.literal("--dangerously-skip-permissions")))
+    // D21.1: a pane keeps the harness's own permission prompts unless the owner ticks "Skip permission
+    // prompts". Until then the default ran Claude and Codex without them.
+    private let bypasses: [ShellWord] = [.literal("--dangerously-skip-permissions"), .literal("--yolo"),
+                                         .literal("--dangerously-bypass-approvals-and-sandbox")]
+
+    private func words(_ kind: HarnessKind, unrestricted: Bool, session: String? = nil) -> [ShellWord] {
+        Launcher.harnessWords(kind: kind, paneName: "\(kind)-1", port: 7788, runnerModel: nil,
+                              unrestricted: unrestricted, session: session)
+    }
+
+    @Test func aPaneKeepsEachHarnesssOwnPromptsUnlessTicked() {
+        for kind in HarnessKind.allCases {
+            let plain = Launcher.harnessWords(kind: kind, paneName: "\(kind)-1", port: 7788, runnerModel: nil)
+            #expect(!plain.contains { bypasses.contains($0) }, "\(kind) skips its prompts by default")
+            #expect(plain == words(kind, unrestricted: false), "the default is the unticked form")
+        }
+        let claude = words(.claude, unrestricted: false)
         #expect(claude.contains(.literal("--mcp-config")))
-        let codex = Launcher.harnessWords(kind: .codex, paneName: "codex-1", port: 7788, runnerModel: nil, askFirst: true)
-        #expect(!codex.contains(.literal("--yolo")))
-        #expect(codex.contains(.literal("--dangerously-bypass-hook-trust")), "the state hooks are still trusted")
-        #expect(Launcher.harnessWords(kind: .claude, paneName: "claude-1", port: 7788, runnerModel: nil).contains(.literal("--dangerously-skip-permissions")))
+        let codex = words(.codex, unrestricted: false)
+        #expect(codex.contains(.literal("--dangerously-bypass-hook-trust")), "Dojo's state hooks are trusted either way")
+    }
+
+    @Test func theTickSkipsThePromptsOfEachHarnessThatHasThem() {
+        #expect(Array(words(.claude, unrestricted: true).prefix(2)) == [.literal("claude"), .literal("--dangerously-skip-permissions")])
+        #expect(Array(words(.codex, unrestricted: true).prefix(2)) == [.literal("codex"), .literal("--yolo")])
+        let resumed = words(.codex, unrestricted: true, session: "019a2b3c-0000-7000-8000-000000000000")
+        #expect(resumed.contains(.literal("--dangerously-bypass-approvals-and-sandbox")))
+        #expect(!words(.codex, unrestricted: false, session: "019a2b3c-0000-7000-8000-000000000000")
+                    .contains(.literal("--dangerously-bypass-approvals-and-sandbox")))
+    }
+
+    @Test func piHasNoPromptsSoItsPaneIsUnrestrictedEitherWay() {
+        #expect(words(.pi, unrestricted: true) == words(.pi, unrestricted: false))
+        #expect(!Permissions.canAsk(.pi) && Permissions.unrestricted(.pi, ticked: false))
+        #expect(Permissions.canAsk(.claude) && Permissions.canAsk(.codex))
+        #expect(!Permissions.unrestricted(.claude, ticked: false) && Permissions.unrestricted(.claude, ticked: true))
+        #expect(!Permissions.unrestricted(.runner, ticked: true) && !Permissions.unrestricted(.shell, ticked: true))
+    }
+
+    @Test func theTickIsRememberedPerHarnessAndNoneOnAFreshInstall() {
+        let f = FileManager.default.temporaryDirectory.appendingPathComponent("unrestricted-\(UUID().uuidString)")
+        #expect(Permissions.remembered(f).isEmpty)
+        #expect(Permissions.remember(.claude, ticked: true, in: f) == [.claude])
+        #expect(Permissions.remember(.pi, ticked: true, in: f) == [.claude], "pi has nothing to remember")
+        #expect(Permissions.remember(.codex, ticked: true, in: f) == [.claude, .codex])
+        #expect(Permissions.remember(.claude, ticked: false, in: f) == [.codex])
+        #expect(Permissions.remembered(f) == [.codex])
+        try? FileManager.default.removeItem(at: f)
     }
 }

@@ -146,26 +146,29 @@ public enum Launcher {
     }
 
     /// The harness command line, the same locally and remotely.
-    /// `askFirst` keeps the harness's own approvals: Claude asks for each permission, Codex keeps its
-    /// approvals and sandbox. Off by default: a supervised pane runs without prompts.
-    public static func harnessWords(kind: HarnessKind, paneName: String, port: Int, runnerModel: String?, askFirst: Bool = false,
+    /// `unrestricted` is the picker's "Skip permission prompts" tick (D21.1): Claude runs with
+    /// --dangerously-skip-permissions, Codex with no approvals and no sandbox. Off by default, so a pane
+    /// keeps the harness's own permission prompts unless the owner ticks it. pi has no permission prompts
+    /// to skip (see `Permissions`), so the tick changes nothing there.
+    public static func harnessWords(kind: HarnessKind, paneName: String, port: Int, runnerModel: String?, unrestricted: Bool = false,
                                     session: String? = nil) -> [ShellWord] {
         let prompt = PeerRule.launchPrompt(paneName: paneName)
         switch kind {
         case .claude:
             return [.literal("claude")] + (session.map { [.literal("--resume"), .literal($0)] } ?? []) +
-                   (askFirst ? [] : [.literal("--dangerously-skip-permissions")]) +
+                   (unrestricted ? [.literal("--dangerously-skip-permissions")] : []) +
                    [.literal("--settings"), .literal(json(claudeSettings(port: port))),
                     .literal("--append-system-prompt"), .literal(prompt),
                     .literal("--mcp-config"), .literal(json(claudeMCP()))]
         case .codex:
             // MCP server and hooks live in ~/.codex/config.toml (written by "dojo install").
-            // Owner default: --yolo (no approvals, no sandbox); the hook-trust bypass
-            // means the pane's state hooks run without a /hooks confirmation.
-            // `codex resume` does not list --yolo, so a resumed pane uses the long form.
+            // Ticked: --yolo, no approvals and no sandbox; `codex resume` does not list --yolo, so a
+            // resumed pane uses the long form. The hook-trust bypass is Dojo's own, in both states: the
+            // pane's state hooks, which "dojo install" wrote, run without a /hooks confirmation. It lets
+            // the model do nothing more.
             let start: [ShellWord] = session.map { [.literal("codex"), .literal("resume"), .literal($0)] } ?? [.literal("codex")]
             let bypass = session == nil ? "--yolo" : "--dangerously-bypass-approvals-and-sandbox"
-            return start + (askFirst ? [] : [.literal(bypass)]) + [.literal("--dangerously-bypass-hook-trust"),
+            return start + (unrestricted ? [.literal(bypass)] : []) + [.literal("--dangerously-bypass-hook-trust"),
                     .literal("-c"), .literal("developer_instructions=" + Shell.toml(prompt))]
         case .pi:
             // The pane's pi gets its four coding tools whatever the owner's pi settings say
@@ -197,7 +200,7 @@ public enum Launcher {
     /// `runnerURL`: the Runner a pi pane uses when it is not the one on its own machine's 8080.
     public static func plan(kind: HarnessKind, paneName: String, host: String?, port: Int, token: String,
                             runnerModel: String?, loginShell: String, remoteShell: RemoteShell = .posix,
-                            directory: String? = nil, askFirst: Bool = false, remotePort: Int? = nil,
+                            directory: String? = nil, unrestricted: Bool = false, remotePort: Int? = nil,
                             session: String? = nil, runnerForward: Int? = nil, runnerURL: String? = nil,
                             msysBash: String? = nil) -> LaunchPlan {
         let local = host == nil || host!.isEmpty
@@ -216,7 +219,7 @@ public enum Launcher {
             // The smoke types a line into this pane and expects it back.
             return LaunchPlan(executable: "/bin/sh", args: ["-c", "read line; echo \"ok $line\""], environment: env, directory: directory)
         }
-        let harness = harnessWords(kind: kind, paneName: paneName, port: busPort, runnerModel: runnerModel, askFirst: askFirst, session: session)
+        let harness = harnessWords(kind: kind, paneName: paneName, port: busPort, runnerModel: runnerModel, unrestricted: unrestricted, session: session)
         let path: ShellWord = .raw(#"PATH="$HOME/.dojo/bin:$PATH""#)
         guard let host, !local else {
             let line = "exec " + Shell.line([.literal("env"), path] + harness)

@@ -286,7 +286,12 @@ struct PaneCell: View {
                         .contextMenu { Button("Rename") { startRename() } }
                 }
                 Text(info?.kind.title ?? "").foregroundStyle(Color(Theme.muted))
-                if item.askFirst { Text("asks").foregroundStyle(Color(Theme.muted)).help("This pane keeps the harness's own approvals") }
+                if Permissions.unrestricted(item.kind, ticked: item.unrestricted) {
+                    // D21.1: a pane that acts without the harness asking first says so
+                    Text("unrestricted").foregroundStyle(Color(Theme.coralInk)).fixedSize()
+                        .help(item.kind == .pi ? "pi has no permission prompts: it runs its tools without asking"
+                                               : "Opened with Skip permission prompts: the agent acts without asking first")
+                }
                 if item.startedFresh {
                     Text("started fresh").foregroundStyle(Color(Theme.coralInk)).fixedSize()
                         .help("There was no session to resume, so this pane started a new conversation")
@@ -436,8 +441,9 @@ struct TerminalHost: NSViewRepresentable {
 final class PickerForm: ObservableObject {
     /// The agent chosen in the segmented control; Open starts it.
     @Published var kind: HarnessKind = .claude
-    /// The harness keeps its own approvals instead of running without prompts.
-    @Published var askFirst = false
+    /// "Skip permission prompts" (D21.1): the agent acts without asking. Unticked on a fresh install; the
+    /// picker starts each harness with the tick the owner last opened it with.
+    @Published var unrestricted = false
     @Published var host = ""
     @Published var name = ""
     @Published var folder = ""
@@ -525,11 +531,17 @@ struct PickerSheet: View {
                     }
                     GridRow {
                         Color.clear.frame(width: 1, height: 1).gridCellUnsizedAxes(.vertical)
-                        Toggle("Ask before acting", isOn: $form.askFirst)
+                        // pi has no prompts to skip: the box shows how it runs and cannot be changed
+                        Toggle("Skip permission prompts",
+                               isOn: Permissions.canAsk(form.kind) ? $form.unrestricted : .constant(true))
                             .toggleStyle(.checkbox)
-                            .help("Claude asks for each permission; Codex keeps its approvals and sandbox")
+                            .disabled(!Permissions.canAsk(form.kind))
                     }
                 }
+                // what the tickbox does, in plain words; below the grid, where wrapped text measures right
+                Text(PickerSheet.permissionNote(form.kind))
+                    .font(.caption).foregroundStyle(Color(Theme.muted))
+                    .fixedSize(horizontal: false, vertical: true)
                 if !form.error.isEmpty {
                     Text(form.error).font(.caption).foregroundStyle(Color(Theme.coralInk))
                         .fixedSize(horizontal: false, vertical: true)
@@ -585,7 +597,12 @@ struct PickerSheet: View {
         .padding(20)
         .frame(width: 540)
         .background(Paper(tone: Theme.surface, density: 0.6))
-        .onAppear { model.refreshRunner() }
+        .onAppear {
+            model.refreshRunner()
+            form.unrestricted = model.unrestrictedKinds.contains(form.kind)
+        }
+        // each agent starts with the tick it was last opened with (D21.1)
+        .onChange(of: form.kind) { _, kind in form.unrestricted = model.unrestrictedKinds.contains(kind) }
     }
 
     private func label(_ text: String) -> some View {
@@ -621,10 +638,28 @@ struct PickerSheet: View {
     }
 
     private func add(_ kind: HarnessKind) {
-        if let problem = model.addPane(kind: kind, host: form.host, name: form.name, directory: form.folder, askFirst: form.askFirst) {
+        let ticked = Permissions.canAsk(kind) && form.unrestricted
+        if let problem = model.addPane(kind: kind, host: form.host, name: form.name, directory: form.folder, unrestricted: ticked) {
             form.error = problem
         } else {
+            if Permissions.canAsk(kind) { model.rememberTick(kind, ticked) }
             model.picking = false
+        }
+    }
+
+    /// What the tickbox does, in plain words, for the agent chosen.
+    static func permissionNote(_ kind: HarnessKind) -> String {
+        switch kind {
+        case .claude:
+            return "Unticked, Claude asks before it runs a command or edits a file. Ticked, it acts without asking. "
+                + "Remembered for Claude."
+        case .codex:
+            return "Unticked, Codex keeps its approvals and its sandbox. Ticked, it acts without asking, outside the "
+                + "sandbox. Remembered for Codex."
+        case .pi:
+            return "pi has no permission prompts: it runs its tools without asking, ticked or not."
+        case .runner, .shell:
+            return ""
         }
     }
 }
