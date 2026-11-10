@@ -40,22 +40,92 @@ public enum SessionId {
     }
 }
 
+/// What a pane may do without asking (D21.1). Claude and Codex have permission prompts of their own,
+/// which a pane keeps unless the owner ticks "Skip permission prompts" in the picker. pi has none: it
+/// runs its tools without asking, so a pi pane is unrestricted whatever the tick says. Runner and the
+/// shell are not agents.
+public enum Permissions {
+    /// The harness has permission prompts the tick can switch off.
+    public static func canAsk(_ kind: HarnessKind) -> Bool { kind == .claude || kind == .codex }
+
+    /// The pane acts without the harness asking first; its header says so.
+    public static func unrestricted(_ kind: HarnessKind, ticked: Bool) -> Bool {
+        switch kind {
+        case .claude, .codex: return ticked
+        case .pi: return true
+        case .runner, .shell: return false
+        }
+    }
+
+    /// The harnesses the owner last opened a pane of with the tick (one per line, in ~/.dojo/unrestricted),
+    /// so the picker starts each the way it was last chosen. None on a fresh install.
+    public static func remembered(_ file: URL) -> Set<HarnessKind> {
+        guard let text = try? String(contentsOf: file, encoding: .utf8) else { return [] }
+        return Set(text.split(separator: "\n").compactMap { HarnessKind(rawValue: String($0)) }.filter(canAsk))
+    }
+
+    /// Records the tick a pane of `kind` was opened with, and returns the harnesses now remembered.
+    @discardableResult
+    public static func remember(_ kind: HarnessKind, ticked: Bool, in file: URL) -> Set<HarnessKind> {
+        var kinds = remembered(file)
+        guard canAsk(kind) else { return kinds }
+        if ticked { kinds.insert(kind) } else { kinds.remove(kind) }
+        let text = kinds.map(\.rawValue).sorted().map { $0 + "\n" }.joined()
+        try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? text.write(to: file, atomically: true, encoding: .utf8)
+        return kinds
+    }
+}
+
 /// A pane as it can be opened again. No token: a reopened pane gets a new one.
 public struct SavedPane: Codable, Equatable, Sendable {
     public let kind: HarnessKind
     public let host: String
     public let directory: String
     public let name: String
-    public let askFirst: Bool
+    /// Opened with "Skip permission prompts" ticked (D21.1).
+    public let unrestricted: Bool
     public let session: String?
 
-    public init(kind: HarnessKind, host: String, directory: String, name: String, askFirst: Bool, session: String?) {
+    public init(kind: HarnessKind, host: String, directory: String, name: String, unrestricted: Bool, session: String?) {
         self.kind = kind
         self.host = host
         self.directory = directory
         self.name = name
-        self.askFirst = askFirst
+        self.unrestricted = unrestricted
         self.session = session
+    }
+
+    // Until D21.1 a pane recorded `askFirst`, the opposite tick, with false meaning "no prompts". A file
+    // written then reopens each pane the way it ran. Both keys are written, so an earlier build can still
+    // read the file.
+    private enum CodingKeys: String, CodingKey { case kind, host, directory, name, unrestricted, askFirst, session }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try c.decode(HarnessKind.self, forKey: .kind)
+        host = try c.decode(String.self, forKey: .host)
+        directory = try c.decode(String.self, forKey: .directory)
+        name = try c.decode(String.self, forKey: .name)
+        if let ticked = try c.decodeIfPresent(Bool.self, forKey: .unrestricted) {
+            unrestricted = ticked
+        } else if let askFirst = try c.decodeIfPresent(Bool.self, forKey: .askFirst) {
+            unrestricted = !askFirst
+        } else {
+            unrestricted = false
+        }
+        session = try c.decodeIfPresent(String.self, forKey: .session)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(kind, forKey: .kind)
+        try c.encode(host, forKey: .host)
+        try c.encode(directory, forKey: .directory)
+        try c.encode(name, forKey: .name)
+        try c.encode(unrestricted, forKey: .unrestricted)
+        try c.encode(!unrestricted, forKey: .askFirst)
+        try c.encodeIfPresent(session, forKey: .session)
     }
 }
 
@@ -83,7 +153,7 @@ public enum SavedPanes {
         guard let data = try? Data(contentsOf: file), let panes = try? JSONDecoder().decode([SavedPane].self, from: data) else { return [] }
         return panes.filter { PaneNames.isValid($0.name) && ($0.host.isEmpty || Hosts.isValid($0.host)) }.map { pane in
             let session = pane.session.flatMap { SessionId.isValid($0) ? $0 : nil }
-            return SavedPane(kind: pane.kind, host: pane.host, directory: pane.directory, name: pane.name, askFirst: pane.askFirst, session: session)
+            return SavedPane(kind: pane.kind, host: pane.host, directory: pane.directory, name: pane.name, unrestricted: pane.unrestricted, session: session)
         }
     }
 }

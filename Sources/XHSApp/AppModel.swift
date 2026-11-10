@@ -12,8 +12,9 @@ final class AppModel: NSObject, ObservableObject {
         var id: ObjectIdentifier { ObjectIdentifier(view) }
         var name: String
         let kind: HarnessKind
-        /// The harness keeps its own approvals (asks before acting).
-        let askFirst: Bool
+        /// Opened with "Skip permission prompts" ticked (D21.1). `Permissions.unrestricted` says whether
+        /// the pane runs without prompts, which pi always does.
+        let unrestricted: Bool
         let view: TerminalPane
         /// The start folder as given, empty for the home folder.
         let directory: String
@@ -38,6 +39,9 @@ final class AppModel: NSObject, ObservableObject {
     @Published private(set) var recentHosts: [String] = []
     /// Start folders used before, latest first (~/.dojo/folders).
     @Published private(set) var recentFolders: [String] = []
+    /// The harnesses the owner last opened with "Skip permission prompts" ticked (~/.dojo/unrestricted):
+    /// the picker starts each that way. None on a fresh install (D21.1).
+    @Published private(set) var unrestrictedKinds: Set<HarnessKind> = []
     /// What Runner serves on this Mac, empty when it does not answer; refreshed when the picker opens.
     @Published private(set) var runnerModel = ""
     /// Who answers on Runner's port: Runner, or another server of the owner's (llama-server, for one), which
@@ -103,6 +107,7 @@ final class AppModel: NSObject, ObservableObject {
         }
         recentHosts = RecentHosts.load(AppModel.hostsFile)
         recentFolders = RecentHosts.load(AppModel.foldersFile, valid: RecentHosts.isFolder)
+        unrestrictedKinds = Permissions.remembered(AppModel.unrestrictedFile)
         lastPanes = SavedPanes.load(AppModel.panesFile)
         bus.onChange = { [weak self] in self?.revision &+= 1 }
         bus.onSession = { [weak self] in self?.savePanes() }
@@ -277,7 +282,7 @@ final class AppModel: NSObject, ObservableObject {
     /// Adds a pane and starts its harness. Returns a message for the picker when the input is not usable.
     /// `directory` is the start folder: on this Mac it must exist (~ is expanded); on a host it is passed as typed.
     @discardableResult
-    func addPane(kind: HarnessKind, host rawHost: String, name rawName: String, directory rawDirectory: String = "", askFirst: Bool = false,
+    func addPane(kind: HarnessKind, host rawHost: String, name rawName: String, directory rawDirectory: String = "", unrestricted: Bool = false,
                  session: String? = nil, reopened: Bool = false) -> String? {
         let host = rawHost.trimmingCharacters(in: .whitespaces)
         if !host.isEmpty, !Hosts.isValid(host) {
@@ -325,16 +330,16 @@ final class AppModel: NSObject, ObservableObject {
         tokens[name] = token
         if !host.isEmpty { recentHosts = RecentHosts.remember(host, in: AppModel.hostsFile) }
         if !directory.isEmpty { recentFolders = RecentHosts.remember(directory, in: AppModel.foldersFile, valid: RecentHosts.isFolder) }
-        items.append(Item(name: name, kind: kind, askFirst: askFirst, view: view, directory: directory))
+        items.append(Item(name: name, kind: kind, unrestricted: unrestricted, view: view, directory: directory))
         if let session { bus.setSession(name, session) }
         lastPanes = []
         savePanes()
-        Task { await launch(view, kind: kind, host: host, token: token, directory: directory, askFirst: askFirst, saved: session, reopened: reopened) }
+        Task { await launch(view, kind: kind, host: host, token: token, directory: directory, unrestricted: unrestricted, saved: session, reopened: reopened) }
         give(keys: view)
         return nil
     }
 
-    private func launch(_ view: TerminalPane, kind: HarnessKind, host: String, token: String, directory: String, askFirst: Bool,
+    private func launch(_ view: TerminalPane, kind: HarnessKind, host: String, token: String, directory: String, unrestricted: Bool,
                         saved: String?, reopened: Bool) async {
         var session = saved
         if kind == .pi {
@@ -395,7 +400,7 @@ final class AppModel: NSObject, ObservableObject {
         if let note { view.feed(text: note + "\r\n\r\n") }
         start(view, Launcher.plan(kind: kind, paneName: view.paneName, host: host.isEmpty ? nil : host, port: port,
                                   token: token, runnerModel: model, loginShell: loginShell, remoteShell: remoteShell,
-                                  directory: directory, askFirst: askFirst, remotePort: remotePort, session: session,
+                                  directory: directory, unrestricted: unrestricted, remotePort: remotePort, session: session,
                                   runnerForward: runnerForward, runnerURL: piRunnerURL, msysBash: msysBash))
     }
 
@@ -483,14 +488,14 @@ final class AppModel: NSObject, ObservableObject {
         guard !keepingList else { return }
         SavedPanes.save(items.map { item in
             SavedPane(kind: item.kind, host: bus.info(item.name)?.host ?? "", directory: item.directory, name: item.name,
-                      askFirst: item.askFirst, session: bus.sessionId(item.name))
+                      unrestricted: item.unrestricted, session: bus.sessionId(item.name))
         }, to: AppModel.panesFile)
     }
 
     /// The button in the empty window. Nothing reopens by itself.
     func reopenLast() {
         for pane in lastPanes {
-            if let trouble = addPane(kind: pane.kind, host: pane.host, name: pane.name, directory: pane.directory, askFirst: pane.askFirst,
+            if let trouble = addPane(kind: pane.kind, host: pane.host, name: pane.name, directory: pane.directory, unrestricted: pane.unrestricted,
                                      session: pane.session, reopened: true) {
                 problem = "\(pane.name): \(trouble)"
             }
@@ -507,7 +512,7 @@ final class AppModel: NSObject, ObservableObject {
         guard canReopen(item), let session = bus.sessionId(item.name) else { return }
         let host = bus.info(item.name)?.host ?? ""
         close(item.name)
-        if let trouble = addPane(kind: item.kind, host: host, name: item.name, directory: item.directory, askFirst: item.askFirst,
+        if let trouble = addPane(kind: item.kind, host: host, name: item.name, directory: item.directory, unrestricted: item.unrestricted,
                                  session: session, reopened: true) {
             problem = "\(item.name): \(trouble)"
         }
@@ -888,6 +893,12 @@ final class AppModel: NSObject, ObservableObject {
     static let hostsFile = Headless.state().appendingPathComponent("hosts")
     static let foldersFile = Headless.state().appendingPathComponent("folders")
     static let panesFile = Headless.state().appendingPathComponent("panes.json")
+    static let unrestrictedFile = Headless.state().appendingPathComponent("unrestricted")
+
+    /// The picker opened a pane of `kind` with the tick as given: the next one starts the same way.
+    func rememberTick(_ kind: HarnessKind, _ ticked: Bool) {
+        unrestrictedKinds = Permissions.remember(kind, ticked: ticked, in: AppModel.unrestrictedFile)
+    }
     static let relayFile = Headless.state().appendingPathComponent("relay")
 
     /// A folder picker for the New terminal sheet; nil when cancelled.
