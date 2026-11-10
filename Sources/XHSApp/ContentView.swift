@@ -34,6 +34,7 @@ struct ContentView: View {
                         .padding(.top, 10)
                     if !model.lastPanes.isEmpty {
                         Button("Reopen the last panes (\(model.lastPanes.count))") { model.reopenLast() }
+                            .buttonStyle(.primary)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -124,7 +125,7 @@ struct RunnerStrip: View {
                     .foregroundStyle(Color(Theme.muted))
                     .help(model.runnerLogOpen ? "Hide Runner's log" : "Show Runner's log")
                 if model.canReopen(item) {
-                    Button("Reopen") { model.reopen(item) }.controlSize(.small).help("Connect again and resume this session")
+                    Button("Reopen") { model.reopen(item) }.buttonStyle(.quiet).help("Connect again and resume this session")
                 }
                 Button { model.close(item.name) } label: { Image(systemName: "xmark") }
                     .buttonStyle(.borderless)
@@ -540,11 +541,8 @@ struct PickerSheet: View {
             }
             // The coding agent and where it runs, with Open and Cancel in the same card: they act on this, not on Runner.
             Card {
-                Picker("Coding agent", selection: $form.kind) {
-                    ForEach(HarnessKind.pickable, id: \.self) { kind in Text(kind.title).tag(kind) }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
+                FlatSegments(options: HarnessKind.pickable.map { ($0, $0.title) }, selection: $form.kind)
+                    .accessibilityLabel("Coding agent")
                 let remote = !form.host.trimmingCharacters(in: .whitespaces).isEmpty
                 Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 8) {
                     GridRow {
@@ -558,6 +556,7 @@ struct PickerSheet: View {
                             RecentField(prompt: remote ? "Its home folder on that host" : "Your home folder", text: $form.folder,
                                         recents: remote ? [] : model.recentFolders, shown: { ($0 as NSString).lastPathComponent })
                             Button("Choose") { if let path = AppModel.chooseFolder() { form.folder = path } }
+                                .buttonStyle(.quiet)
                                 .disabled(remote)
                         }
                     }
@@ -584,10 +583,9 @@ struct PickerSheet: View {
                 }
                 HStack {
                     Spacer()
-                    Button("Cancel") { model.picking = false }.keyboardShortcut(.cancelAction)
+                    Button("Cancel") { model.picking = false }.keyboardShortcut(.cancelAction).buttonStyle(.quiet)
                     Button("Open") { add(form.kind) }
-                        .buttonStyle(.borderedProminent)
-                        .tint(Color(Theme.tealInk))
+                        .buttonStyle(.primary)
                         .keyboardShortcut(.defaultAction)
                 }
             }
@@ -604,21 +602,38 @@ struct PickerSheet: View {
                     let host = form.host.trimmingCharacters(in: .whitespaces)
                     if host.isEmpty {
                         Button(runnerPane == nil && model.runnerModel.isEmpty ? "Start Runner" : "Runner") { add(.runner) }
+                            .buttonStyle(.quiet)
                             .disabled(runnerPane != nil || model.foreignServer)
                     } else {
                         Button("Start Runner on \(host)") { add(.runner) }
+                            .buttonStyle(.quiet)
                             .disabled(model.runnerPane(host: host) != nil)
                     }
                     if !model.runnerFits.isEmpty {
                         Text("Serve").foregroundStyle(Color(Theme.muted))
                         // Picking another model replaces the Runner pane with one serving it.
-                        Picker("Serve", selection: Binding(get: { chosenSpelling }, set: { model.chooseRunnerModel($0); model.picking = false })) {
+                        // A quiet flat button that opens the list, in place of the stock popup's bezel.
+                        Menu {
                             ForEach(model.runnerFits, id: \.spelling) { fit in
-                                Text("\(fit.id)  \(fit.resident) GiB").tag(fit.spelling)
+                                // the model already chosen does nothing, as the popup's own selection did: no restart
+                                Button("\(fit.id)  \(fit.resident) GiB") {
+                                    guard fit.spelling != chosenSpelling else { return }
+                                    model.chooseRunnerModel(fit.spelling); model.picking = false
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Text(model.runnerFits.first { $0.spelling == chosenSpelling }.map { "\($0.id)  \($0.resident) GiB" } ?? "Choose a model")
+                                    .lineLimit(1).truncationMode(.middle)
+                                Image(systemName: "chevron.up.chevron.down").font(.system(size: 9, weight: .semibold))
                             }
                         }
-                        .labelsHidden()
-                        .frame(maxWidth: 320)
+                        .menuStyle(.button)
+                        .buttonStyle(.quiet)
+                        .menuIndicator(.hidden)
+                        .fixedSize()
+                        .frame(maxWidth: 320, alignment: .leading)
+                        .accessibilityLabel("Serve")
                     }
                 }
                 if let fit = model.runnerFits.first(where: { $0.spelling == chosenSpelling }) {
