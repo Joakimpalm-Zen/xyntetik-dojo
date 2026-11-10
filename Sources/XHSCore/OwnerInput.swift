@@ -40,6 +40,8 @@ public enum OwnerInput {
             default: return .text                                    // a character, with any modifier
             }
         }
+        // D26: the pointer moving or the wheel turning over a pane whose program tracks the mouse. Not the owner typing.
+        if pointer(bytes) { return .pointer }
         // Keys that only move or delete: arrows left and right, Home, End, Page keys, forward Delete, mouse reports.
         if moves(s) { return .other }
         // A bracketed paste, Up or Down recalling a prompt, Alt-key chords, anything else: text may have landed.
@@ -49,6 +51,25 @@ public enum OwnerInput {
     /// Among the kitty functional keys, those that add text: the keypad digits and signs, keypad Enter being a send.
     static func functionalKeyAddsText(_ code: Int) -> Bool {
         (57399...57413).contains(code)   // keypad 0-9 and the keypad operators
+    }
+
+    /// A mouse report for motion or the wheel, in the SGR form (CSI < b ; x ; y M or m) or the legacy one (CSI M and
+    /// three bytes). Bit 32 of the button code is motion, bit 64 the wheel. A press or a release is not here: a click
+    /// is the owner acting in the pane.
+    static func pointer(_ bytes: ArraySlice<UInt8>) -> Bool {
+        let b = Array(bytes)
+        guard b.count >= 3, b[0] == 0x1B, b[1] == UInt8(ascii: "[") else { return false }
+        let code: Int
+        if b[2] == UInt8(ascii: "<"), let last = b.last, last == UInt8(ascii: "M") || last == UInt8(ascii: "m") {
+            let body = String(decoding: b[3..<(b.count - 1)], as: UTF8.self).split(separator: ";")
+            guard body.count == 3, let c = Int(body[0]), body.dropFirst().allSatisfy({ Int($0) != nil }) else { return false }
+            code = c
+        } else if b[2] == UInt8(ascii: "M"), b.count == 6 {
+            code = Int(b[3]) - 32
+        } else {
+            return false
+        }
+        return code & 32 != 0 || code & 64 != 0
     }
 
     /// CSI sequences for cursor movement, forward delete and mouse reports.
