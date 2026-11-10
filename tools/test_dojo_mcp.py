@@ -2,6 +2,8 @@
 
 Run: python3 -m unittest discover -s tools -p 'test_*.py'
 """
+import datetime
+import hashlib
 import http.server
 import io
 import json
@@ -621,6 +623,109 @@ x = true
             self.assertIn("\r\n", text, "line endings kept")
             with open(config + ".before-dojo", "rb") as f:
                 self.assertEqual(f.read(), self.MIXED.encode())
+
+
+
+class AuditTest(unittest.TestCase):
+    """dojo audit reads ~/.dojo/audit as the app writes it: JSON lines, each with the hash of the one before."""
+
+    def setUp(self):
+        self.m = load_shim()
+        self.home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.home)
+        self.folder = os.path.join(self.home, ".dojo", "audit")
+        os.makedirs(self.folder)
+
+    def write(self, day, entries, prev="0" * 64):
+        """Writes the entries as the app would, chained from `prev`; returns the last line's hash."""
+        with open(os.path.join(self.folder, day + ".jsonl"), "wb") as fh:
+            for e in entries:
+                line = json.dumps(dict(e, prev=prev), sort_keys=True, separators=(",", ":")).encode()
+                fh.write(line + b"\n")
+                prev = hashlib.sha256(line).hexdigest()
+        return prev
+
+    def run_audit(self, *argv, now=None):
+        out, err = io.StringIO(), io.StringIO()
+        code = self.m.audit(list(argv), out, err, home=self.home, now=now)
+        return code, out.getvalue(), err.getvalue()
+
+    def test_prints_every_line_with_a_sends_text_and_checks_the_chain(self):
+        last = self.write("2026-11-09", [
+            {"time": "2026-11-09T22:00:00.000Z", "op": "open", "pane": "claude-1", "kind": "claude", "posture": "prompts"},
+        ])
+        self.write("2026-11-10", [
+            {"time": "2026-11-10T14:35:12.250Z", "op": "send", "from": "claude-1", "pane": "codex-1",
+             "outcome": "delivered", "chars": 20, "text": "please review\nthe diff"},
+            {"time": "2026-11-10T14:35:13.000Z", "op": "read", "from": "codex-1", "pane": "claude-1", "outcome": "ok",
+             "lines": 40},
+            {"time": "2026-11-10T14:36:00.000Z", "op": "pane-state", "pane": "codex-1", "state": "running",
+             "was": "prompt", "owner_keys": True},
+        ], prev=last)
+        code, out, err = self.run_audit()
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out.splitlines(), [
+            "2026-11-09 22:00:00Z open         claude-1 (kind claude, posture prompts)",
+            "2026-11-10 14:35:12Z send         claude-1 -> codex-1 delivered (chars 20)",
+            "    please review",
+            "    the diff",
+            "2026-11-10 14:35:13Z read         codex-1 -> claude-1 ok (lines 40)",
+            "2026-11-10 14:36:00Z pane-state   codex-1 (owner_keys true, state running, was prompt)",
+        ])
+
+    def test_by_pane_and_by_time(self):
+        self.write("2026-11-10", [
+            {"time": "2026-11-10T10:00:00.000Z", "op": "send", "from": "a", "pane": "b", "outcome": "delivered", "text": "x"},
+            {"time": "2026-11-10T13:00:00.000Z", "op": "deliver", "pane": "c", "senders": ["a"], "messages": 1},
+            {"time": "2026-11-10T14:00:00.000Z", "op": "panes", "from": "c", "outcome": "ok"},
+        ])
+        _, out, _ = self.run_audit("--pane", "b")
+        self.assertEqual(len(out.splitlines()), 2)  # the send and its text
+        _, out, _ = self.run_audit("--pane", "a")
+        self.assertIn("deliver", out)               # a sender of a delivery
+        now = datetime.datetime(2026, 11, 10, 14, 30, tzinfo=datetime.timezone.utc).timestamp()
+        _, out, _ = self.run_audit("--since", "2h", now=now)
+        self.assertEqual([l.split()[2] for l in out.splitlines()], ["deliver", "panes"])
+        _, out, _ = self.run_audit("--since", "2026-11-10T13:30")
+        self.assertEqual([l.split()[2] for l in out.splitlines()], ["panes"])
+        code, _, err = self.run_audit("--since", "yesterday")
+        self.assertEqual(code, 2)
+        self.assertIn("--since takes", err)
+
+    def test_a_removed_or_changed_line_breaks_the_chain(self):
+        self.write("2026-11-10", [
+            {"time": "2026-11-10T10:00:00.000Z", "op": "panes", "from": "a", "outcome": "ok"},
+            {"time": "2026-11-10T10:00:01.000Z", "op": "send", "from": "a", "pane": "b", "outcome": "delivered", "text": "x"},
+            {"time": "2026-11-10T10:00:02.000Z", "op": "panes", "from": "a", "outcome": "ok"},
+        ])
+        path = os.path.join(self.folder, "2026-11-10.jsonl")
+        with open(path, "rb") as fh:
+            lines = fh.read().split(b"\n")
+        with open(path, "wb") as fh:
+            fh.write(b"\n".join([lines[0], lines[2], b""]))
+        code, out, err = self.run_audit()
+        self.assertEqual(code, 1)
+        self.assertIn("2026-11-10.jsonl:2: the chain breaks here", err)
+        self.assertEqual(len(out.splitlines()), 2)  # what is there is still shown
+        with open(path, "wb") as fh:
+            fh.write(b"\n".join([lines[0], lines[1].replace(b'"x"', b'"y"'), lines[2], b""]))
+        code, _, err = self.run_audit()
+        self.assertEqual(code, 1)
+        self.assertIn("2026-11-10.jsonl:3: the chain breaks here", err)
+
+    def test_no_record_yet(self):
+        shutil.rmtree(self.folder)
+        code, out, err = self.run_audit()
+        self.assertEqual((code, out), (0, ""))
+        self.assertIn("no bus record", err)
+
+    def test_the_cli_runs_it_without_a_bus(self):
+        self.write("2026-11-10", [{"time": "2026-11-10T10:00:00.000Z", "op": "panes", "from": "a", "outcome": "ok"}])
+        env = dict(os.environ, HOME=self.home)
+        env.pop("DOJO_TOKEN", None)
+        r = subprocess.run([sys.executable, SHIM, "audit"], capture_output=True, text=True, env=env, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("panes", r.stdout)
 
 
 if __name__ == "__main__":

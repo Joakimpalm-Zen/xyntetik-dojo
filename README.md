@@ -107,13 +107,19 @@ For a manual title bar check, resize the window from its minimum width to a wide
 
 For a manual close check, use a disposable app session with a running pane. Click the red window close button and choose Cancel, then repeat with Cmd-W and Cmd-Q. Each attempt shows one quit prompt; Cancel leaves the same window and pane usable. Repeat Cancel several times, then choose Quit and check that the app and its pane exit with no second prompt. Also check that closing an empty window quits without a prompt, and that resizing, minimizing and restoring the window still work. Do not run this check in a session doing useful work.
 
-`DOJO_PORT` overrides the bus port, and `~/.dojo/relay` turns on the relay below. There is no other setting. The only files the app keeps are `~/.dojo/hosts` and `~/.dojo/folders` (the hosts and start folders you used, latest first, one per line) and `~/.dojo/runner/` (Runner's binary, its roster copy, the 16 MiB model heads, the fits list and your model choice); edit or delete them by hand.
+`DOJO_PORT` overrides the bus port, and `~/.dojo/relay` turns on the relay below. There is no other setting. The only files the app keeps are `~/.dojo/hosts` and `~/.dojo/folders` (the hosts and start folders you used, latest first, one per line) `~/.dojo/runner/` (Runner's binary, its roster copy, the 16 MiB model heads, the fits list and your model choice) and `~/.dojo/audit/` (the record of bus traffic, below); edit or delete them by hand.
 
 ### The relay, off unless you set it up
 
 A pane on another host can run one program on this Mac: `dojo relay <words...>`. `~/.dojo/relay` holds that program's absolute path, and without that file the bus has no such route and nothing changes. Bocka uses it, so that a remote pane can update the plan.
 
 A pane chooses the words and never the program. The words go to it as arguments, with no shell, and the program gets the pane's name in `RELAY_PANE`, from the bus and never from the pane. It runs with a small environment and no stdin, for 20 seconds at most, one at a time. The program and the file must be yours and not writable by others, or the relay refuses. The program decides which words it accepts, so write it as you would anything reachable from another machine. The result goes back to the pane that asked, and like any bus message it is never your approval of anything.
+
+### The record of bus traffic
+
+The app writes one line per bus operation to `~/.dojo/audit/<date>.jsonl` (UTC days), readable only by you: the time, the operation, which pane asked, the pane it was about, and the outcome (delivered, queued, or refused and why). A `send` keeps its text. A `read` keeps who read whom and how many lines, never the screen. The record also has each delivery with its senders and whether the target keeps its permission prompts, each Enter you press in a pane (no content), each change of a pane's state, and whether your keys came in between when a pane leaves a permission prompt. So for anything a pane did, the record shows what came just before it: your keys, or a message and from whom.
+
+Each line carries the SHA-256 of the line before it, so a removed or changed line shows. Files older than 30 days are deleted. Read it with `dojo audit`, by pane (`--pane claude-1`) or by time (`--since 2h`, `--since 2026-11-10T14:00`); it says where the chain breaks, if it does. The record is not a bus route, so no pane can ask the bus for it. The files are yours like any others: a harness running as you could still open them with its own tools.
 
 <a id="first-run"></a>
 ## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> First run
@@ -231,6 +237,7 @@ The pi extension also registers Runner as pi's `runner` provider. It observes th
 - **No control characters.** The bus strips escape sequences and other control characters. Where the harness supports bracketed paste, a message arrives as one paste; otherwise line breaks become spaces.
 - **The owner comes first.** The bus holds messages for a pane you typed into in the last 3 seconds.
 - **Peer messages are not approval.** Each harness is told at launch that `[from: ...]` lines are messages from other sessions, to weigh as information and never as the owner's approval.
+- **A record of the traffic.** Every bus operation is a line in `~/.dojo/audit`, chained by hash and kept 30 days; see [the record](#the-record-of-bus-traffic).
 - **Local and token-checked.** The bus listens on the loopback interface only. Each pane gets a random token for this run of the app; every bus request needs one.
 - The app stores no keys, tokens or SSH credentials.
 
@@ -258,8 +265,8 @@ To install the peer rule permanently as well (for sessions started outside the a
 
 - `Sources/XHSCore/`: the bus, HTTP server, hook mapping, message delivery and launch commands. No UI; all tested.
 - `Sources/XHSApp/`: the window (SwiftUI and AppKit, SwiftTerm panes). View state uses ObservableObjects because `@State` is a macro whose plugin ships only with Xcode.
-- `tools/dojo-mcp.py`: the shim (MCP server, `dojo` command, `dojo hook`, `dojo install`). `tools/dojo-pi.ts`: the pi extension.
-- `docs/bus-capabilities.md`: a design note, not built yet, for who may read or send to whom on the bus, what `read` may return, a record of bus traffic, and how an owner-approved action is told from an agent's (D21.2).
+- `tools/dojo-mcp.py`: the shim (MCP server, `dojo` command, `dojo hook`, `dojo install`, `dojo audit`). `tools/dojo-pi.ts`: the pi extension.
+- `docs/bus-capabilities.md`: the design note for who may read or send to whom on the bus, what `read` may return, a record of bus traffic, and how an owner-approved action is told from an agent's (D21.2). The record is built; redaction and roles come next.
 - `tools/snippets/`: peer-rule paragraphs and the hook and MCP config. `tools/remote-setup.sh`: the one-time install on an ssh host, POSIX or Windows. `tools/check-hygiene.py`: the mechanical half of AGENTS.md (commit trailers, no session ids or addresses, no em dashes in prose, nothing personal in the tree), run by `make test` and by the `hygiene` workflow on every pull request; `.github/workflows/ci.yml` tests and bundles on macOS, on pull requests and once a week, with the SwiftPM build cached on the dependency lock. `tools/runner-start.sh`: find or fetch the latest Runner, read its roster, list what fits, serve the choice (`tools/test_runner_start.sh` checks it against a stub runner, Hub, GitHub and machine size, online and offline).
 - `packaging/Info.plist`, `packaging/make-icon.swift` (the icon), `Makefile`. `Sources/XHSApp/Theme.swift` holds the brand colours and the Ensō.
 - `Package.swift` passes the swift-testing macro plugin path to the test target. Without it, test builds with the Command Line Tools fail on about every other run.

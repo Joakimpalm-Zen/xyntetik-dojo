@@ -9,16 +9,21 @@ Modes:
   dojo state <pane>           print a terminal's state
   dojo hook                   forward a harness hook event (JSON on stdin) to the bus
   dojo install                link ~/.dojo/bin/dojo and add the Codex MCP server and hooks
+  dojo audit [--pane P] [--since WHEN]
+                              print the record of bus traffic, the owner's, from ~/.dojo/audit
 
 The bus is the supervisor app on 127.0.0.1:$DOJO_PORT (default 7788). Every call
 carries $DOJO_TOKEN, which the app gives each terminal it starts; the bus knows
 the sender from it.
 """
+import datetime
+import hashlib
 import json
 import os
 import re
 import shutil
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -419,9 +424,114 @@ def install(home=None, out=sys.stdout, windows=None):
     return 0
 
 
+# ---------------------------------------------------------------- the record (D21.2)
+# The app writes one JSON line per bus operation to ~/.dojo/audit/<day>.jsonl, each with the SHA-256 of
+# the line before it in "prev". `dojo audit` reads the files directly: the record is not a bus route.
+
+AUDIT_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}\.jsonl$")
+AUDIT_SHOWN = ("time", "prev", "op", "from", "pane", "outcome", "text")
+
+
+def audit_folder(home=None):
+    return os.path.join(home or os.path.expanduser("~"), ".dojo", "audit")
+
+
+def audit_since(text, now=None):
+    """30m, 2h, 3d, or a date or time (UTC unless it says otherwise), as a unix time."""
+    m = re.fullmatch(r"(\d+)([mhd])", text)
+    if m:
+        return (now if now is not None else time.time()) - int(m.group(1)) * {"m": 60, "h": 3600, "d": 86400}[m.group(2)]
+    try:
+        when = datetime.datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        raise ValueError("--since takes 30m, 2h, 3d, or a date or time such as 2026-11-10T14:00")
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=datetime.timezone.utc)
+    return when.timestamp()
+
+
+def audit_entries(folder):
+    """Every line, oldest first, and where the chain breaks. The first line of the oldest file is where the
+    check starts: the files before it may have been deleted after 30 days."""
+    entries, problems, prev = [], [], None
+    names = sorted(n for n in os.listdir(folder) if AUDIT_DAY.match(n)) if os.path.isdir(folder) else []
+    for name in names:
+        with open(os.path.join(folder, name), "rb") as fh:
+            raw_lines = fh.read().split(b"\n")
+        for number, raw in enumerate(raw_lines, 1):
+            if not raw:
+                continue
+            try:
+                entry = json.loads(raw.decode("utf-8"))
+            except ValueError:
+                entry = None
+            if not isinstance(entry, dict):
+                problems.append("%s:%d: not a record line" % (name, number))
+            elif prev is not None and entry.get("prev") != prev:
+                problems.append("%s:%d: the chain breaks here: a line before it was removed or changed" % (name, number))
+            prev = hashlib.sha256(raw).hexdigest()
+            if isinstance(entry, dict):
+                entries.append(entry)
+    return entries, problems
+
+
+def audit_text(entry):
+    """One entry as text: time, operation, who to whom, outcome, the other fields, then a send's text."""
+    when = entry.get("time", "")
+    when = when[:10] + " " + when[11:19] + "Z" if len(when) >= 19 else when
+    who = entry.get("from")
+    pane = entry.get("pane")
+    route = "%s -> %s" % (who, pane) if who and pane else (who or pane or "")
+    rest = ", ".join("%s %s" % (k, ",".join(v) if isinstance(v, list) else json.dumps(v) if isinstance(v, bool) else v)
+                     for k, v in sorted(entry.items()) if k not in AUDIT_SHOWN)
+    line = " ".join(x for x in (when, "%-12s" % entry.get("op", "?"), route, entry.get("outcome", ""),
+                                "(%s)" % rest if rest else "") if x)
+    text = entry.get("text")
+    if isinstance(text, str):
+        line += "\n" + "\n".join("    " + t for t in text.split("\n"))
+    return line
+
+
+def audit(argv, out, err, home=None, now=None):
+    pane, since, i = None, None, 0
+    while i < len(argv):
+        if argv[i] == "--pane" and i + 1 < len(argv):
+            pane, i = argv[i + 1], i + 2
+        elif argv[i] == "--since" and i + 1 < len(argv):
+            try:
+                since = audit_since(argv[i + 1], now)
+            except ValueError as e:
+                err.write("dojo: %s\n" % e)
+                return 2
+            i += 2
+        else:
+            err.write("usage: dojo audit [--pane NAME] [--since 30m|2h|3d|DATE]\n")
+            return 2
+    folder = audit_folder(home)
+    entries, problems = audit_entries(folder)
+    if not entries and not problems:
+        err.write("dojo: no bus record in %s yet\n" % folder)
+        return 0
+    for entry in entries:
+        if pane and pane not in (entry.get("from"), entry.get("pane"), entry.get("to")) \
+                and pane not in (entry.get("senders") or []):
+            continue
+        if since is not None:
+            try:
+                stamp = datetime.datetime.fromisoformat(entry.get("time", "").replace("Z", "+00:00")).timestamp()
+            except ValueError:
+                stamp = None
+            if stamp is not None and stamp < since:
+                continue
+        out.write(audit_text(entry) + "\n")
+    for p in problems:
+        err.write("dojo: %s\n" % p)
+    return 1 if problems else 0
+
+
 # ---------------------------------------------------------------- CLI
 
-USAGE = """usage: dojo panes | send <pane> <text...> | send <pane> - (text on stdin) | read <pane> [lines] | state <pane> | watch <pane> | relay <words...> | hook | install"""
+USAGE = """usage: dojo panes | send <pane> <text...> | send <pane> - (text on stdin) | read <pane> [lines] | state <pane> | watch <pane> | relay <words...> | hook | install | audit [--pane P] [--since WHEN]"""
 
 
 def cli(argv, out=sys.stdout, err=sys.stderr, stdin=sys.stdin):
@@ -438,6 +548,8 @@ def cli(argv, out=sys.stdout, err=sys.stderr, stdin=sys.stdin):
         return 0
     if cmd == "install":
         return install(out=out)
+    if cmd == "audit":
+        return audit(rest, out, err)
     try:
         if cmd == "panes" and not rest:
             res = bus_call("panes", {})
