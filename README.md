@@ -33,7 +33,7 @@ watch, you type, you stay in charge.
 - **They talk, you see it.** A harness runs `dojo send codex-1 "review the diff"` and the line lands in that terminal as typed input, tagged with its sender in the Xyntetik green. A busy pane reads it when its current step ends; a pane at a prompt gets it queued.
 - **Never over your shoulder.** The bus never answers a prompt, never sends your half-written text, and every message carries its sender from the pane's token, not from the text.
 - **A local model, fitted.** A Runner pane fetches Xyntetik Runner if needed, asks it about seven models from the first 16 MiB of each, and serves the largest whose resident weights fit in half of this Mac's RAM (or a share you set), wired in at the longest context it was trained for that fits, for the pi panes.
-- **Small on purpose.** SwiftPM only, no Xcode. One port, two text files of recent hosts and folders, nothing else kept. Apache 2.0.
+- **Small on purpose.** SwiftPM only, no Xcode. One port, and a few small files in `~/.dojo`, each [listed below](#files-it-keeps). Apache 2.0.
 
 <p align="center">
   <a href="https://buy.stripe.com/9B69AUddpdx9auHgP27N600"><img src="packaging/readme/support-button.svg" alt="Support this work" height="44"></a>
@@ -107,7 +107,18 @@ For a manual title bar check, resize the window from its minimum width to a wide
 
 For a manual close check, use a disposable app session with a running pane. Click the red window close button and choose Cancel, then repeat with Cmd-W and Cmd-Q. Each attempt shows one quit prompt; Cancel leaves the same window and pane usable. Repeat Cancel several times, then choose Quit and check that the app and its pane exit with no second prompt. Also check that closing an empty window quits without a prompt, and that resizing, minimizing and restoring the window still work. Do not run this check in a session doing useful work.
 
-`DOJO_PORT` overrides the bus port, and `~/.dojo/relay` turns on the relay below. There is no other setting. The only files the app keeps are `~/.dojo/hosts` and `~/.dojo/folders` (the hosts and start folders you used, latest first, one per line) `~/.dojo/runner/` (Runner's binary, its roster copy, the 16 MiB model heads, the fits list and your model choice) and `~/.dojo/audit/` (the record of bus traffic, below); edit or delete them by hand.
+<a id="files-it-keeps"></a>
+
+`DOJO_PORT` overrides the bus port, and `~/.dojo/relay` turns on the relay below. There is no other setting. Beside the tools the first run copies there, the only files the app keeps in `~/.dojo` are:
+
+- `hosts` and `folders`: the hosts and start folders you used, latest first, one per line;
+- `panes.json`: the panes the empty window offers to reopen, readable only by you, with no tokens;
+- `unrestricted`: the agents whose last pane skipped permission prompts, so the picker's box starts that way;
+- `notifications`: what macOS allows the app (alerts, the badge), written at launch and after each request;
+- `runner/`: Runner's binary, its roster copy, the 16 MiB model heads, the fits list and your model choice;
+- `audit/`: the record of bus traffic, below.
+
+Edit or delete any of them by hand.
 
 ### The relay, off unless you set it up
 
