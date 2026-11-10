@@ -77,6 +77,25 @@ import Testing
         #expect(outside(["pane": "codex-1", "text": ""]).0 == 400)
     }
 
+    @Test func freeTextOnlyNoTypedMessageFromOutside() {
+        bus.outsideToken = "out"
+        let tries: [([String: Any], String)] = [
+            (["pane": "codex-1", "type": "assign", "fields": ["item": "D1", "what": "w"]], "type"),
+            (["pane": "codex-1", "text": "hello", "type": "bug"], "type"),
+            (["pane": "codex-1", "text": "hello", "fields": ["observed": "x"]], "fields"),
+            (["pane": "codex-1", "text": "hello", "type": NSNull()], "type"),
+            (["pane": "codex-1", "text": "hello", "fields": [:] as [String: String]], "fields"),
+        ]
+        for (args, named) in tries {
+            let (status, reply) = outside(args)
+            #expect(status == 400, "\(args)")
+            #expect((reply["error"] as? String)?.hasPrefix("\(named) is not taken from outside Dojo") == true, "\(reply)")
+        }
+        #expect(targetIO.typed.isEmpty)
+        // Refusals do not count against the minute's lines
+        for _ in 0..<Outside.perMinute { #expect(outside().0 == 200) }
+    }
+
     @Test func thirtyLinesAMinuteAtMost() {
         bus.outsideToken = "out"
         for _ in 0..<Outside.perMinute { #expect(outside().0 == 200) }

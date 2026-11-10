@@ -15,6 +15,9 @@ public enum Outside {
     public static let sender = "outside"
     /// Lines a minute, from all outside callers together.
     public static let perMinute = 30
+    /// What a pane's send may carry and a line from outside may not: a typed message's kind and its fields.
+    /// Refused when present at all, whatever the value, so a later meaning of either cannot come in this way.
+    public static let paneOnly = ["type", "fields"]
 
     /// Nil when there is no switch; a failure when there is one that someone else could have made or changed.
     public static func switchState(_ url: URL) -> Checked<Bool>? {

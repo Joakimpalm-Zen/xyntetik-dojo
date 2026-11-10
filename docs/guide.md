@@ -187,7 +187,7 @@ touch ~/.dojo/outside && chmod 600 ~/.dojo/outside
 
 Within five seconds the app writes `~/.dojo/outside-token`, and `dojo send` run outside a pane uses it. To switch it off, delete `~/.dojo/outside`: the token file goes within five seconds, and `dojo send` outside a pane refuses again. The switch must be a regular file of yours that no one else can write, or it does not count and the window says why.
 
-It only sends. It cannot list the panes, read one, watch one or ask a state. Every line arrives as `[from: outside]`, whatever the program says about itself, so a program says who it is in its own text. A line from outside waits at a permission prompt and behind your unsent text exactly as a pane's message does, at most 30 lines a minute get through, and the record below keeps every use, refused ones too. Like any bus message, it is never your approval of anything.
+It only sends, and only free text: a request that carries a typed message's `type` or `fields` is refused. It cannot list the panes, read one, watch one or ask a state. Every line arrives as `[from: outside]`, whatever the program says about itself, so a program says who it is in its own text. A line from outside waits at a permission prompt and behind your unsent text exactly as a pane's message does, at most 30 lines a minute get through, and the record below keeps every use, refused ones too. Like any bus message, it is never your approval of anything.
 
 ### The record of bus traffic
 

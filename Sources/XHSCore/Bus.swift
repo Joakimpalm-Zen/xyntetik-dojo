@@ -500,6 +500,10 @@ public final class Bus {
             return recorded(line, error(400, "body must be a JSON object"))
         }
         if let name = args["pane"] as? String { line["pane"] = name }
+        // Free text only: a typed message (D21.5) is between panes, never from a program outside them.
+        for field in Outside.paneOnly where args.keys.contains(field) {
+            return recorded(line, error(400, "\(field) is not taken from outside Dojo: send free text only"))
+        }
         let minute = now().addingTimeInterval(-60)
         outsideSent.removeAll { $0 < minute }
         guard outsideSent.count < Outside.perMinute else {
