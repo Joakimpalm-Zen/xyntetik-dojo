@@ -185,6 +185,124 @@ struct Wordmark: View {
     }
 }
 
+// MARK: buttons
+
+/// The one button look, the owner's pick of 2026-11-10 (Bocka B6 variant 5, built in Bocka B8, here in D24):
+/// flat, no bezel and no shadow, at three levels. `primary` is filled teal, for the main action; `quiet` is
+/// paper with a hairline, for everything beside it; `textLink` is the label alone, for the lesser actions.
+/// Bocka's Theme.swift states the same values under the same names.
+enum FlatLook {
+    static let corner: CGFloat = 7
+    static let font = Font.system(size: 12)
+    static let primaryWeight = Font.Weight.medium
+    static let paddingH: CGFloat = 10
+    static let paddingV: CGFloat = 3
+    /// The label on teal.
+    static let onTeal = Theme.color(0xFFFFFF)
+    static let pressedOpacity = 0.75
+    static let disabledOpacity = 0.45
+    /// Under the pointer: a filled button lightens by this much white, a quiet one's hairline darkens to
+    /// the rule, a link is underlined.
+    static let hoverLift = 0.10
+}
+
+/// Whether the pointer is over a button. An object, not @State: this SDK's @State needs Xcode's plugin.
+final class ButtonHover: ObservableObject {
+    @Published var on = false
+}
+
+struct FlatButton: ButtonStyle {
+    enum Level { case primary, quiet, textLink }
+    let level: Level
+
+    func makeBody(configuration: Configuration) -> some View {
+        FlatButtonBody(level: level, label: configuration.label, pressed: configuration.isPressed)
+    }
+}
+
+private struct FlatButtonBody<Label: View>: View {
+    let level: FlatButton.Level
+    let label: Label
+    let pressed: Bool
+    @Environment(\.isEnabled) private var isEnabled
+    @StateObject private var hover = ButtonHover()
+
+    var body: some View {
+        let alpha = (pressed ? FlatLook.pressedOpacity : 1) * (isEnabled ? 1 : FlatLook.disabledOpacity)
+        let over = hover.on && isEnabled
+        let shape = RoundedRectangle(cornerRadius: FlatLook.corner)
+        Group {
+            switch level {
+            case .primary:
+                label
+                    .font(FlatLook.font.weight(FlatLook.primaryWeight))
+                    .foregroundStyle(Color(FlatLook.onTeal))
+                    .padding(.horizontal, FlatLook.paddingH).padding(.vertical, FlatLook.paddingV)
+                    .background(Color(Theme.tealInk), in: shape)
+                    .overlay(shape.fill(Color.white.opacity(over ? FlatLook.hoverLift : 0)))
+                    .contentShape(shape)
+            case .quiet:
+                label
+                    .font(FlatLook.font)
+                    .foregroundStyle(Color(Theme.ink))
+                    .padding(.horizontal, FlatLook.paddingH).padding(.vertical, FlatLook.paddingV)
+                    .background(Color(Theme.paper), in: shape)
+                    .overlay(shape.strokeBorder(Color(over ? Theme.rule : Theme.line), lineWidth: 1))
+                    .contentShape(shape)
+            case .textLink:
+                label
+                    .font(FlatLook.font)
+                    .foregroundStyle(Color(Theme.tealInk))
+                    .underline(over)
+                    .padding(.vertical, FlatLook.paddingV)
+                    .contentShape(Rectangle())
+            }
+        }
+        .opacity(alpha)
+        .onHover { hover.on = $0 }
+    }
+}
+
+extension ButtonStyle where Self == FlatButton {
+    static var primary: FlatButton { FlatButton(level: .primary) }
+    static var quiet: FlatButton { FlatButton(level: .quiet) }
+    static var textLink: FlatButton { FlatButton(level: .textLink) }
+}
+
+/// A choice of a few, as flat segments: the chosen one on a teal wash with a teal hairline, the others quiet.
+/// In place of the stock segmented control, so it sits beside the flat buttons without a bezel.
+struct FlatSegments<Value: Hashable>: View {
+    let options: [(value: Value, title: String)]
+    @Binding var selection: Value
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(options, id: \.value) { option in
+                let chosen = option.value == selection
+                Button(option.title) { selection = option.value }
+                    .buttonStyle(FlatSegment(chosen: chosen))
+                    .accessibilityAddTraits(chosen ? .isSelected : [])
+            }
+        }
+    }
+}
+
+private struct FlatSegment: ButtonStyle {
+    let chosen: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        let shape = RoundedRectangle(cornerRadius: FlatLook.corner)
+        configuration.label
+            .font(FlatLook.font.weight(chosen ? FlatLook.primaryWeight : .regular))
+            .foregroundStyle(Color(chosen ? Theme.tealInk : Theme.ink))
+            .padding(.horizontal, FlatLook.paddingH + 4).padding(.vertical, FlatLook.paddingV + 1)
+            .background(chosen ? Color(Theme.teal).opacity(0.16) : Color(Theme.paper), in: shape)
+            .overlay(shape.strokeBorder(Color(chosen ? Theme.tealInk : Theme.line), lineWidth: 1))
+            .contentShape(shape)
+            .opacity(configuration.isPressed ? FlatLook.pressedOpacity : 1)
+    }
+}
+
 /// A sheet of recycled paper: a tone with faint fibre flecks scattered over it. The flecks come from a fixed
 /// seed, so the sheet looks the same every time it is drawn.
 struct Paper: View {
