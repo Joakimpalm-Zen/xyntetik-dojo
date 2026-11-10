@@ -109,6 +109,8 @@ final class AppModel: NSObject, ObservableObject {
         recentFolders = RecentHosts.load(AppModel.foldersFile, valid: RecentHosts.isFolder)
         unrestrictedKinds = Permissions.remembered(AppModel.unrestrictedFile)
         lastPanes = SavedPanes.load(AppModel.panesFile)
+        // D21.2: one line per bus operation, in the app's own folder (a smoke's is a throwaway one).
+        bus.record = BusRecord(directory: AppModel.auditFolder)
         bus.onChange = { [weak self] in self?.revision &+= 1 }
         bus.onSession = { [weak self] in self?.savePanes() }
         bus.onAttention = { [weak self] name, attention in self?.attend(name, attention) }
@@ -327,7 +329,7 @@ final class AppModel: NSObject, ObservableObject {
         }
         // The bus holds relayed messages while the owner types in the pane and while unsent text sits there.
         view.onOwnerInput = { [weak self, weak view] key in if let view { self?.bus.noteOwnerInput(view.paneName, key) } }
-        let token = bus.add(name: name, kind: kind, host: host, io: view)
+        let token = bus.add(name: name, kind: kind, host: host, unrestricted: unrestricted, io: view)
         tokens[name] = token
         if !host.isEmpty { recentHosts = RecentHosts.remember(host, in: AppModel.hostsFile) }
         if !directory.isEmpty { recentFolders = RecentHosts.remember(directory, in: AppModel.foldersFile, valid: RecentHosts.isFolder) }
@@ -908,6 +910,7 @@ final class AppModel: NSObject, ObservableObject {
         unrestrictedKinds = Permissions.remember(kind, ticked: ticked, in: AppModel.unrestrictedFile)
     }
     static let relayFile = Headless.state().appendingPathComponent("relay")
+    static let auditFolder = Headless.state().appendingPathComponent("audit")
 
     /// A folder picker for the New terminal sheet; nil when cancelled.
     static func chooseFolder() -> String? {

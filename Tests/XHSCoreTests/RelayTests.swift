@@ -186,6 +186,25 @@ private final class Rig {
         #expect(out.json["stdout"] as? String == "remote-1|claim|--as|someone-else|")
     }
 
+    @Test func theRecordKeepsTheCallerTheWordCountAndTheCodeNotTheWords() async throws {
+        let rig = try Rig()
+        bus.relayConfig = rig.config
+        let folder = rig.dir.appendingPathComponent("audit")
+        bus.record = BusRecord(directory: folder)
+        _ = await ask(["claim", "R1.2"], token: token)
+        _ = await ask(["x"], token: "wrong")
+        let text = BusRecord.files(in: folder).compactMap { try? String(contentsOf: $0, encoding: .utf8) }.joined()
+        let relays = text.split(separator: "\n").map { json(Data($0.utf8)) }.filter { $0["op"] as? String == "relay" }
+        #expect(relays.count == 2)
+        #expect(relays[0]["from"] as? String == "remote-1")
+        #expect(relays[0]["words"] as? Int == 2)
+        #expect(relays[0]["code"] as? Int == 0)
+        #expect(relays[0]["outcome"] as? String == "ok")
+        #expect(relays[1]["outcome"] as? String == "refused")
+        #expect(relays[1]["status"] as? Int == 401)
+        #expect(!text.contains("R1.2"))
+    }
+
     @Test func aBadTokenRunsNothing() async throws {
         let rig = try Rig(script: "#!/bin/sh\ntouch \"$0.ran\"\n")
         bus.relayConfig = rig.config

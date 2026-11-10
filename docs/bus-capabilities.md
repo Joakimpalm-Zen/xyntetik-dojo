@@ -1,7 +1,9 @@
 # Bus capabilities: a design note (D21.2)
 
-Status: proposal. Nothing here is built. The owner's choices are listed at the end; each has options and a
-recommendation, and the build waits for them.
+Status: the owner chose on 2026-11-10: as today until a coordinator is marked (1a), worker-to-worker `send`
+allowed (2a), the record keeps the text of each `send` and the metadata of everything for 30 days (3a), and
+redaction is always on (4a). Built: the record (step 1 of the build order, D21.2.5). Next: redaction in `read`,
+then roles.
 
 The question: who may read or send to whom on the bus, what `read` may return, what record the bus keeps,
 and how an action the owner approved is told apart from one an agent started. The answer must keep the way
@@ -106,11 +108,13 @@ Redaction is a backstop. A pattern list misses things, so the primary control is
 ### 3. A record of bus traffic
 
 - One line per bus operation in `~/.dojo/audit/<date>.jsonl`, readable only by the owner: time, operation,
-  caller, target, outcome (delivered, queued, refused and why), and sizes. Whether the text of a `send` is kept
-  is choice 3. A `read` records who read whom and how many lines, never the screen.
+  caller, target, outcome (delivered, queued, refused and why), and sizes. The text of a `send` is kept
+  (choice 3). A `read` records who read whom and how many lines, never the screen. A hook is the pane
+  reporting on itself, so the record keeps the change of state it causes, not the hook.
 - Each line carries the SHA-256 of the line before it, so a removed or edited line shows.
-- Kept for a set number of days (choice 3).
-- The owner reads it with `dojo audit` (by pane, by time). Panes cannot: the record is not a bus route.
+- Kept for 30 days (choice 3).
+- The owner reads it with `dojo audit` (by pane, by time). It is not a bus route, so no pane can ask the bus
+  for it; a harness running as the owner could still open the files with its own tools.
 
 ### 4. Owner-approved or agent-originated
 

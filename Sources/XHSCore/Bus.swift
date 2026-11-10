@@ -20,6 +20,8 @@ public protocol PaneIO: AnyObject {
 public final class Bus {
     /// Where the relay's config is, nil for none: see `Relay`.
     public var relayConfig: URL?
+    /// The record of bus traffic, nil for none: see `BusRecord`.
+    public var record: BusRecord?
     private var relayRunning = false
 
     public struct Info: Equatable, Sendable {
@@ -45,6 +47,10 @@ public final class Bus {
         let token: String
         var model: String
         var state: PaneState
+        /// The harness skips its own permission prompts (D21.1, ticked); the record says so beside each delivery.
+        let unrestricted: Bool
+        /// When the pane last reached a permission prompt.
+        var promptSince: Date?
         /// Who sent what; the `[from: name]` line is built at delivery, so a renamed sender is named right.
         var queue: [(sender: Pane, text: String)] = []
         var lastOwnerInput: Date?
@@ -67,14 +73,24 @@ public final class Bus {
         var watchers: [(asker: Pane, since: Date)] = []
         weak var io: PaneIO?
 
-        init(name: String, kind: HarnessKind, host: String, token: String, model: String, state: PaneState, io: PaneIO?) {
+        init(name: String, kind: HarnessKind, host: String, token: String, model: String, state: PaneState, unrestricted: Bool,
+             io: PaneIO?) {
             self.name = name
             self.kind = kind
             self.host = host
             self.token = token
             self.model = model
             self.state = state
+            self.unrestricted = unrestricted
             self.io = io
+        }
+
+        /// What the record calls the pane's permission setting; nil where there are no prompts to keep.
+        var posture: String? {
+            switch kind {
+            case .shell, .runner: return nil
+            default: return unrestricted ? "unrestricted" : "prompts"
+            }
         }
     }
 
@@ -116,12 +132,17 @@ public final class Bus {
     public func info(_ name: String) -> Info? { pane(named: name).map(info) }
 
     /// Registers a pane and returns its token. Harness panes start as `starting` and change state from hooks.
+    /// `unrestricted` is the pane's D21.1 setting, for the record.
     @discardableResult
-    public func add(name: String, kind: HarnessKind, host: String = "", model: String = "", io: PaneIO? = nil) -> String {
+    public func add(name: String, kind: HarnessKind, host: String = "", model: String = "", unrestricted: Bool = false,
+                    io: PaneIO? = nil) -> String {
         precondition(pane(named: name) == nil, "duplicate pane name \(name)")
         let token = Bus.newToken()
         let initial: PaneState = kind == .shell ? .idle : .starting
-        panes.append(Pane(name: name, kind: kind, host: host, token: token, model: model, state: initial, io: io))
+        let p = Pane(name: name, kind: kind, host: host, token: token, model: model, state: initial, unrestricted: unrestricted,
+                     io: io)
+        panes.append(p)
+        note(["op": "open", "pane": name, "kind": kind.rawValue, "host": host, "posture": p.posture as Any])
         onChange?()
         return token
     }
@@ -138,12 +159,14 @@ public final class Bus {
         if new == name { return nil }
         guard pane(named: new) == nil else { return "\(new) is already open." }
         p.name = new
+        note(["op": "rename", "pane": name, "to": new])
         onChange?()
         return nil
     }
 
     public func remove(_ name: String) {
         let gone = pane(named: name)
+        if gone != nil { note(["op": "close", "pane": name]) }
         panes.removeAll { $0.name == name }
         for p in panes { p.watchers.removeAll { $0.asker === gone } }
         if let gone { tellWatchers(of: gone, "\(gone.name) was closed.") }
@@ -152,6 +175,14 @@ public final class Bus {
 
     public func setState(_ name: String, _ state: PaneState) {
         guard let p = pane(named: name), p.state != state else { return }
+        var line: [String: Any] = ["op": "pane-state", "pane": name, "state": state.rawValue, "was": p.state.rawValue]
+        if p.state == .prompt {
+            // Who answered it: the owner's keys came in between, or nothing did. The bus never types into a
+            // prompt, so no delivery can have.
+            line["owner_keys"] = p.lastOwnerInput.map { $0 >= (p.promptSince ?? .distantPast) } ?? false
+        }
+        if state == .prompt { p.promptSince = now() }
+        note(line)
         p.state = state
         onChange?()
         flush(p)
@@ -211,6 +242,8 @@ public final class Bus {
     public func noteOwnerInput(_ name: String, _ key: OwnerKey = .text) {
         guard let p = pane(named: name), key != .reply else { return }
         p.lastOwnerInput = now()
+        // Each submission the owner makes from the keyboard, with no content.
+        if key == .submit { note(["op": "owner-submit", "pane": name]) }
         let before = p.hasDraft
         switch key {
         case .text: p.hasDraft = true; p.typedSinceSubmit = true
@@ -277,13 +310,16 @@ public final class Bus {
     public func relay(path: String, token: String?, body: Data, reply: @escaping @MainActor (Int, Data) -> Void) -> Bool {
         guard path.trimmingCharacters(in: CharacterSet(charactersIn: "/")) == "relay", let config = relayConfig,
               let program = Relay.program(config: config) else { return false }
+        var line: [String: Any] = ["op": "relay"]
         func refuse(_ result: (status: Int, body: Data)) -> Bool {
+            let result = recorded(line, result)
             reply(result.status, result.body)
             return true
         }
         guard let token, let sender = panes.first(where: { $0.token == token }) else {
             return refuse(error(401, "unknown or missing X-Dojo-Token"))
         }
+        line["from"] = sender.name
         guard case .success(let path) = program else {
             guard case .failure(let why) = program else { return true }
             return refuse(error(403, why))
@@ -293,14 +329,20 @@ public final class Bus {
         case .failure(let why):
             return refuse(error(400, why))
         case .success(let words):
+            // Metadata only: the words are the owner's program's arguments, not a message to a pane.
+            line["words"] = words.count
             guard !relayRunning else { return refuse(error(429, "a relay is already running; try again")) }
             relayRunning = true
-            Relay.run(program: path, words: words, pane: sender.name) { outcome in
+            Relay.run(program: path, words: words, pane: sender.name) { [line] outcome in
                 Task { @MainActor [weak self] in
                     guard let self else { return }
                     self.relayRunning = false
-                    let result = self.ok(["code": Int(outcome.code), "stdout": outcome.stdout, "stderr": outcome.stderr,
-                                          "timedOut": outcome.timedOut, "truncated": outcome.truncated])
+                    var line = line
+                    line["code"] = Int(outcome.code)
+                    if outcome.timedOut { line["timed_out"] = true }
+                    let result = self.recorded(line, self.ok(["code": Int(outcome.code), "stdout": outcome.stdout,
+                                                              "stderr": outcome.stderr, "timedOut": outcome.timedOut,
+                                                              "truncated": outcome.truncated]))
                     reply(result.status, result.body)
                 }
             }
@@ -312,8 +354,9 @@ public final class Bus {
 
     /// Handles one request. `path` is the operation: /panes, /send, /read, /state, /watch or /hook.
     public func handle(path: String, token: String?, body: Data) -> (status: Int, body: Data) {
+        let op = path.split(separator: "?").first.map { String($0) }?.trimmingCharacters(in: CharacterSet(charactersIn: "/")) ?? ""
         guard let token, let sender = panes.first(where: { $0.token == token }) else {
-            return error(401, "unknown or missing X-Dojo-Token")
+            return recorded(["op": op], error(401, "unknown or missing X-Dojo-Token"))
         }
         let args: [String: Any]
         if body.isEmpty {
@@ -321,27 +364,57 @@ public final class Bus {
         } else if let parsed = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] {
             args = parsed
         } else {
-            return error(400, "body must be a JSON object")
+            return recorded(["op": op, "from": sender.name], error(400, "body must be a JSON object"))
         }
-        let op = path.split(separator: "?").first.map { String($0) }?.trimmingCharacters(in: CharacterSet(charactersIn: "/")) ?? ""
-        switch op {
-        case "panes":
-            return ok(["you": sender.name, "panes": panes.map { info($0).json }])
-        case "send":
-            return send(from: sender, args)
-        case "read":
-            return read(args)
-        case "state":
-            guard let target = target(args) else { return noPane(args) }
-            return ok(info(target).json)
-        case "watch":
-            return watch(from: sender, args)
-        case "hook":
+        // A hook is the pane reporting on itself; the state change it causes is what the record keeps.
+        if op == "hook" {
             applyHook(sender, args)
             return (200, Data())
-        default:
-            return error(404, "unknown operation '\(op)'; use panes, send, read, state or watch")
         }
+        var line: [String: Any] = ["op": op, "from": sender.name]
+        if let name = args["pane"] as? String { line["pane"] = name }
+        let result: (status: Int, body: Data)
+        switch op {
+        case "panes":
+            result = ok(["you": sender.name, "panes": panes.map { info($0).json }])
+        case "send":
+            result = send(from: sender, args, &line)
+        case "read":
+            result = read(args, &line)
+        case "state":
+            guard let target = target(args) else { return recorded(line, noPane(args)) }
+            result = ok(info(target).json)
+        case "watch":
+            result = watch(from: sender, args)
+        default:
+            result = error(404, "unknown operation '\(op)'; use panes, send, read, state or watch")
+        }
+        return recorded(line, result)
+    }
+
+    /// Records one operation with its outcome, and returns the result unchanged.
+    private func recorded(_ line: [String: Any], _ result: (status: Int, body: Data)) -> (status: Int, body: Data) {
+        var line = line
+        if result.status == 200 {
+            if line["outcome"] == nil { line["outcome"] = "ok" }
+        } else {
+            line["outcome"] = "refused"
+            line["status"] = result.status
+            line["reason"] = ((try? JSONSerialization.jsonObject(with: result.body)) as? [String: Any])?["error"] as? String ?? ""
+            // A refused send keeps no text: nothing of it reached a pane.
+            line["text"] = nil
+        }
+        note(line)
+        return result
+    }
+
+    /// One line for the record. A field whose value is a nil optional is left out.
+    private func note(_ line: [String: Any]) {
+        guard let record else { return }
+        record.append(line.filter { field in
+            let mirror = Mirror(reflecting: field.value)
+            return !(mirror.displayStyle == .optional && mirror.children.isEmpty)
+        })
     }
 
     // MARK: operations
@@ -357,17 +430,21 @@ public final class Bus {
         return ok(["pane": target.name, "state": target.state.rawValue])
     }
 
-    private func send(from sender: Pane, _ args: [String: Any]) -> (status: Int, body: Data) {
+    private func send(from sender: Pane, _ args: [String: Any], _ line: inout [String: Any]) -> (status: Int, body: Data) {
         guard let target = target(args) else { return noPane(args) }
         guard target.state != .exited else { return error(409, "\(target.name) has exited") }
         guard target.kind != .runner else { return error(409, "\(target.name) is the model server, not a harness") }
         let text = Delivery.sanitize(args["text"] as? String ?? "")
         guard !text.isEmpty else { return error(400, "text is empty") }
         guard text.count <= Bus.maxMessageLength else { return error(413, "text is longer than \(Bus.maxMessageLength) characters") }
+        // The owner's choice (D21.2): the record keeps the text of each send.
+        line["text"] = text
+        line["chars"] = text.count
         let before = target.queue.count
         target.queue.append((sender: sender, text: text))
         flush(target)
         let delivered = target.queue.count <= before
+        line["outcome"] = delivered ? "delivered" : "queued"
         var result: [String: Any] = ["pane": target.name, "delivered": delivered, "queued": target.queue.count, "state": target.state.rawValue]
         if delivered {
             if target.state == .running {
@@ -384,11 +461,13 @@ public final class Bus {
         return ok(result)
     }
 
-    private func read(_ args: [String: Any]) -> (status: Int, body: Data) {
+    /// The record says who read whom and how many lines, never what the screen showed.
+    private func read(_ args: [String: Any], _ line: inout [String: Any]) -> (status: Int, body: Data) {
         guard let target = target(args) else { return noPane(args) }
         let requested = (args["lines"] as? NSNumber)?.intValue ?? 40
         let lines = min(max(requested, 1), Bus.maxReadLines)
         let text = Bus.lastLines(target.io?.screenText() ?? "", lines)
+        line["lines"] = text.isEmpty ? 0 : text.components(separatedBy: "\n").count
         return ok(["pane": target.name, "state": target.state.rawValue, "text": text])
     }
 
@@ -447,6 +526,11 @@ public final class Bus {
             p.typedSinceSubmit = false
         }
         let message = p.queue.map { Delivery.line(from: $0.sender.name, text: $0.text) }.joined(separator: "\n")
+        var senders: [String] = []
+        for entry in p.queue where !senders.contains(entry.sender.name) { senders.append(entry.sender.name) }
+        // The target's posture at the time: in a pane that skips its prompts, what follows is the agent's.
+        note(["op": "deliver", "pane": p.name, "senders": senders, "messages": p.queue.count, "chars": message.count,
+              "posture": p.posture as Any])
         p.queue.removeAll()
         io.write(Delivery.bytes(message, bracketedPaste: io.bracketedPasteEnabled))
         if p.kind != .shell { p.state = .running }
