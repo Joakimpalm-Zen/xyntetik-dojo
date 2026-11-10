@@ -128,6 +128,11 @@ the record adds:
   bus delivery (none can arrive there), the record says so.
 - **Every bus delivery:** with its sender, and the target's posture at the time ("prompts" or
   "unrestricted").
+- **The Enter after each delivery:** sent; owed, when a prompt opened or a key that adds no text came
+  between the paste and its Enter, which then goes once the pane is back and the owner has been quiet; or
+  dropped, when the owner typed text into that composer after the paste (the bus never sends the owner's
+  words) or pressed Enter or Ctrl-C there themselves. The pointer moving or the wheel turning over a pane
+  whose program tracks the mouse is not a key.
 
 So for any action in a pane the record shows what came just before it: the owner's keys, or a message and
 from whom. In a pane that skips its prompts, an action after a bus message is the agent's by definition, and
