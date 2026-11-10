@@ -8,6 +8,9 @@ public enum HarnessKind: String, Codable, CaseIterable, Sendable {
     /// The coding agents the picker offers in its first row; Runner has a row of its own.
     public static let pickable: [HarnessKind] = [.claude, .codex, .pi]
 
+    /// A coding agent, which a coordinator's roles apply to (D21.2); Runner and the shell are not.
+    public var isAgent: Bool { HarnessKind.pickable.contains(self) }
+
     public var title: String {
         switch self {
         case .claude: return "Claude"
@@ -86,20 +89,26 @@ public struct SavedPane: Codable, Equatable, Sendable {
     /// Opened with "Skip permission prompts" ticked (D21.1).
     public let unrestricted: Bool
     public let session: String?
+    /// The owner's coordinator (D21.2), and the panes this one may read as a worker.
+    public let coordinator: Bool
+    public let mayRead: [String]
 
-    public init(kind: HarnessKind, host: String, directory: String, name: String, unrestricted: Bool, session: String?) {
+    public init(kind: HarnessKind, host: String, directory: String, name: String, unrestricted: Bool, session: String?,
+                coordinator: Bool = false, mayRead: [String] = []) {
         self.kind = kind
         self.host = host
         self.directory = directory
         self.name = name
         self.unrestricted = unrestricted
         self.session = session
+        self.coordinator = coordinator
+        self.mayRead = mayRead
     }
 
     // Until D21.1 a pane recorded `askFirst`, the opposite tick, with false meaning "no prompts". A file
     // written then reopens each pane the way it ran. Both keys are written, so an earlier build can still
     // read the file.
-    private enum CodingKeys: String, CodingKey { case kind, host, directory, name, unrestricted, askFirst, session }
+    private enum CodingKeys: String, CodingKey { case kind, host, directory, name, unrestricted, askFirst, session, coordinator, mayRead }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -115,6 +124,8 @@ public struct SavedPane: Codable, Equatable, Sendable {
             unrestricted = false
         }
         session = try c.decodeIfPresent(String.self, forKey: .session)
+        coordinator = try c.decodeIfPresent(Bool.self, forKey: .coordinator) ?? false
+        mayRead = try c.decodeIfPresent([String].self, forKey: .mayRead) ?? []
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -126,6 +137,9 @@ public struct SavedPane: Codable, Equatable, Sendable {
         try c.encode(unrestricted, forKey: .unrestricted)
         try c.encode(!unrestricted, forKey: .askFirst)
         try c.encodeIfPresent(session, forKey: .session)
+        // written only when set, so a file without roles stays as an earlier build wrote it
+        if coordinator { try c.encode(true, forKey: .coordinator) }
+        if !mayRead.isEmpty { try c.encode(mayRead, forKey: .mayRead) }
     }
 }
 
@@ -153,7 +167,8 @@ public enum SavedPanes {
         guard let data = try? Data(contentsOf: file), let panes = try? JSONDecoder().decode([SavedPane].self, from: data) else { return [] }
         return panes.filter { PaneNames.isValid($0.name) && ($0.host.isEmpty || Hosts.isValid($0.host)) }.map { pane in
             let session = pane.session.flatMap { SessionId.isValid($0) ? $0 : nil }
-            return SavedPane(kind: pane.kind, host: pane.host, directory: pane.directory, name: pane.name, unrestricted: pane.unrestricted, session: session)
+            return SavedPane(kind: pane.kind, host: pane.host, directory: pane.directory, name: pane.name, unrestricted: pane.unrestricted, session: session,
+                             coordinator: pane.coordinator, mayRead: pane.mayRead.filter(PaneNames.isValid))
         }
     }
 }
