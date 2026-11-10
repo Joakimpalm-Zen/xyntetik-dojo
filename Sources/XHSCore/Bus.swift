@@ -546,7 +546,14 @@ public final class Bus {
 
     private func applyHook(_ pane: Pane, _ event: [String: Any]) {
         // SessionStart may carry `model`; Claude Code's PostModelSwitch carries the new one as `to_model`.
-        if let model = (event["to_model"] ?? event["model"]) as? String, !model.isEmpty, model != pane.model {
+        var named = (event["to_model"] ?? event["model"]) as? String
+        // D29: a resumed Claude Code session's SessionStart names no model, and its transcript does. Only on this
+        // Mac: a pane on a host has its transcript there.
+        if named?.isEmpty ?? true, event["hook_event_name"] as? String == "SessionStart", pane.kind == .claude,
+           pane.host.isEmpty, let path = event["transcript_path"] as? String {
+            named = Transcript.lastModel(at: path)
+        }
+        if let model = named, !model.isEmpty, model != pane.model {
             pane.model = model
             onChange?()
         }
