@@ -61,7 +61,7 @@ final class AppModel: NSObject, ObservableObject {
     /// What a smoke would have notified, in place of notifying.
     private var smokeNotified: [String] = []
     private lazy var notifier: Notifier = {
-        let notifier = Notifier()
+        let notifier = Notifier(record: AppModel.notificationsFile)
         notifier.onOpen = { [weak self] pane in self?.open(pane) }
         return notifier
     }()
@@ -194,7 +194,8 @@ final class AppModel: NSObject, ObservableObject {
         unseen.remove(focusedPane)
     }
 
-    /// Starts listening for clicks on notifications, also those from before a relaunch.
+    /// Starts listening for clicks on notifications, also those from before a relaunch, and records what
+    /// macOS allows the app (D23).
     func startNotifying() {
         _ = notifier
     }
@@ -719,6 +720,12 @@ final class AppModel: NSObject, ObservableObject {
     /// reported twice as Claude Code does, then answered, then a finished turn.
     private func proveAttention(_ name: String) async {
         guard let first = items.first(where: { $0.name == name }), let second = items.first(where: { $0.name != name }) else { return }
+        // D23: macOS shows the Dock badge only for an app that asked for badges. The smoke cannot see the
+        // Dock, so it checks the ask.
+        guard Notifier.options.contains(.alert), Notifier.options.contains(.badge) else {
+            print("DOJO_SMOKE failed: the app asks for \(Notifier.options), not alerts and badges")
+            exit(1)
+        }
         func expect(_ step: String, waiting wanted: Int, unseen seen: Bool, notified: [String]) async {
             try? await Task.sleep(nanoseconds: 300_000_000)
             let badge = NSApp.dockTile.badgeLabel
@@ -894,6 +901,7 @@ final class AppModel: NSObject, ObservableObject {
     static let foldersFile = Headless.state().appendingPathComponent("folders")
     static let panesFile = Headless.state().appendingPathComponent("panes.json")
     static let unrestrictedFile = Headless.state().appendingPathComponent("unrestricted")
+    static let notificationsFile = Headless.state().appendingPathComponent("notifications")
 
     /// The picker opened a pane of `kind` with the tick as given: the next one starts the same way.
     func rememberTick(_ kind: HarnessKind, _ ticked: Bool) {
