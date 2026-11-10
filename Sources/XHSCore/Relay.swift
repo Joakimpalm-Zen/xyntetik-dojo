@@ -45,7 +45,7 @@ public enum Relay {
         return .success(path)
     }
 
-    private static func unsafe(_ info: stat, _ what: String) -> String? {
+    static func unsafe(_ info: stat, _ what: String) -> String? {
         if info.st_mode & S_IFMT != S_IFREG { return "\(what) is not a regular file" }
         if info.st_uid != getuid() { return "\(what) belongs to another user" }
         if info.st_mode & 0o022 != 0 { return "\(what) is writable by others" }

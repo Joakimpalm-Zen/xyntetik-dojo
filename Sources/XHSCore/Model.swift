@@ -202,11 +202,13 @@ public enum PaneNames {
     }
 
     /// The rule, as the window states it.
-    public static let rule = "A name uses a-z, 0-9, '-', '_' or '.', up to 24 characters."
+    public static let rule = "A name uses a-z, 0-9, '-', '_' or '.', up to 24 characters, and is not 'outside'."
 
     /// A user-set name: 1 to 24 characters, lowercase letters, digits, '-', '_' or '.', starting with a letter or digit.
     public static func isValid(_ name: String) -> Bool {
         guard (1...24).contains(name.count), let first = name.unicodeScalars.first else { return false }
+        // D15 (b): the sender of every line from outside Dojo; a pane under that name could pass for it.
+        guard name != Outside.sender else { return false }
         let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789-_.")
         let leading = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789")
         return leading.contains(first) && name.unicodeScalars.allSatisfy { allowed.contains($0) }

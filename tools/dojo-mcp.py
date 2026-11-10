@@ -4,7 +4,8 @@
 Modes:
   dojo-mcp.py                 MCP stdio server with the tools panes, send, read, state, watch
   dojo panes                  list the terminals in the supervisor window
-  dojo send <pane> <text...>  type a message into another terminal ("-" reads stdin)
+  dojo send <pane> <text...>  type a message into another terminal ("-" reads stdin); from outside
+                              Dojo only when the owner switched that on, and then as [from: outside]
   dojo send <pane> --type T key=value...
                               a typed message: assign, report, merged or bug (docs/bus-capabilities.md)
   dojo read <pane> [lines]    print the last lines of a terminal's screen
@@ -131,6 +132,42 @@ def bus_call(op, payload, timeout=10):
         raise BusError("bus refused (%d): %s" % (e.code, detail))
     except (urllib.error.URLError, OSError) as e:
         raise BusError("bus not reachable on 127.0.0.1:%s: %s" % (port, e))
+    return json.loads(body.decode("utf-8")) if body else {}
+
+
+def outside_token_file():
+    return os.path.join(os.path.expanduser("~"), ".dojo", "outside-token")
+
+
+def outside_send(pane, text, timeout=10):
+    """D15 (b): `dojo send` from a program outside Dojo. Only while the owner has switched the outside
+    route on (~/.dojo/outside), when the app keeps its token and port in ~/.dojo/outside-token. The line
+    arrives as [from: outside]: the route names the sender, never this program."""
+    try:
+        with open(outside_token_file(), encoding="utf-8") as f:
+            info = json.load(f)
+        token, port = str(info["token"]), int(info["port"])
+    except (OSError, ValueError, KeyError, TypeError):
+        raise BusError("not inside Xyntetik Dojo: DOJO_TOKEN is not set, and sending from outside is off "
+                       "(see Sending from outside Dojo in the guide)")
+    req = urllib.request.Request(
+        "http://127.0.0.1:%d/outside/send" % port,
+        data=json.dumps({"pane": pane, "text": text}).encode("utf-8"),
+        headers={"Content-Type": "application/json", "X-Dojo-Outside-Token": token},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read()
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", "replace")
+        try:
+            detail = json.loads(detail).get("error", detail)
+        except ValueError:
+            pass
+        raise BusError("bus refused (%d): %s" % (e.code, detail))
+    except (urllib.error.URLError, OSError) as e:
+        raise BusError("bus not reachable on 127.0.0.1:%d: %s" % (port, e))
     return json.loads(body.decode("utf-8")) if body else {}
 
 
@@ -605,7 +642,12 @@ def cli(argv, out=sys.stdout, err=sys.stderr, stdin=sys.stdin):
             res = bus_call("send", {"pane": rest[0], "type": rest[2], "fields": fields})
         elif cmd == "send" and len(rest) >= 2:
             text = stdin.read() if rest[1:] == ["-"] else " ".join(rest[1:])
-            res = bus_call("send", {"pane": rest[0], "text": text})
+            # Outside a pane: the owner's outside route, if switched on (D15 b), free text only;
+            # a typed message above always needs a pane's token.
+            if os.environ.get("DOJO_TOKEN"):
+                res = bus_call("send", {"pane": rest[0], "text": text})
+            else:
+                res = outside_send(rest[0], text)
         if cmd == "send" and len(rest) >= 2:
             out.write("%s: %s (state %s, queued %s)\n" % (
                 rest[0], "delivered" if res.get("delivered") else "queued",

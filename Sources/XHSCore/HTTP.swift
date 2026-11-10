@@ -131,7 +131,9 @@ public final class BusServer {
                 if let data { buffer.append(data) }
                 switch HTTPRequest.parse(buffer) {
                 case .complete(let request):
-                    let token = request.headers["x-dojo-token"]
+                    // D15 (b): the outside route has a token of its own, in a header of its own.
+                    let token = request.path.hasPrefix("/outside") ? request.headers["x-dojo-outside-token"]
+                                                                   : request.headers["x-dojo-token"]
                     if self.deferred?(request.path, token, request.body, { [weak self] status, body in
                         guard let self else { return connection.cancel() }
                         self.reply(connection, status, body)
