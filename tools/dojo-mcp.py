@@ -368,7 +368,10 @@ def without_old_block(text):
 
 
 def install(home=None, out=sys.stdout, windows=None):
-    home = home or os.path.expanduser("~")
+    # The shell's HOME, where remote-setup put this script and where every pane looks ("$HOME/.dojo").
+    # On POSIX that is what expanduser reads anyway; a native Windows Python reads USERPROFILE instead,
+    # which a host can point HOME away from (MSYS2's own /home, say), so HOME wins when it is set.
+    home = home or os.environ.get("HOME") or os.path.expanduser("~")
     windows = sys.platform == "win32" if windows is None else windows
     dojo_dir = os.path.join(home, ".dojo")
     script = os.path.join(dojo_dir, "dojo-mcp.py")

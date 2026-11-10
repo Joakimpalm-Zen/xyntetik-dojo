@@ -35,4 +35,6 @@ case $probe in
         ;;
 esac
 # runner-start.sh is what a Runner pane on the host runs (D12): the same script as on this Mac.
-COPYFILE_DISABLE=1 tar -C "$tools" -cf - dojo-mcp.py dojo-pi.ts runner-start.sh | ssh "$host" "$remote"
+# --no-xattrs: macOS's tar would add its provenance attributes as extended headers, which the host's tar
+# warns about (MSYS2's GNU tar does, once per file).
+COPYFILE_DISABLE=1 tar --no-xattrs --no-mac-metadata -C "$tools" -cf - dojo-mcp.py dojo-pi.ts runner-start.sh | ssh "$host" "$remote"
