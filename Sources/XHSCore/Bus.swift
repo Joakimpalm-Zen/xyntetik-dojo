@@ -75,8 +75,15 @@ public final class Bus {
         /// Who sent what; the `[from: name]` line is built at delivery, so a renamed sender is named right.
         var queue: [(sender: Pane, text: String)] = []
         var lastOwnerInput: Date?
+        /// When the owner last typed a key that can add text, apart from the other keys (D26).
+        var lastOwnerText: Date?
         /// The message text is in the composer and its Enter is still to come.
         var enterPending = false
+        /// D26: the bus's text is in the composer and the guard held its Enter back; it is pressed once the guard
+        /// clears, unless the owner types text first, which leaves the composer to them.
+        var enterOwed = false
+        /// When the owed text went into the composer.
+        var pastedAt: Date?
         /// The owner may have unsent text in the composer: set by any key that can add text, cleared by
         /// Ctrl-C or by the harness reporting a submission that nothing was typed after.
         var hasDraft = false
@@ -264,12 +271,21 @@ public final class Bus {
         case other
         /// Not the owner at all: the terminal answering the program's query.
         case reply
+        /// The pointer moved or the wheel turned over a pane whose program tracks the mouse (Claude Code since
+        /// 2.1.322). No text, and not the owner typing: it neither holds a delivery nor stops its Enter (D26).
+        case pointer
     }
 
     /// The owner typed into the pane: hold relayed messages for a moment, and while text may be unsent.
     public func noteOwnerInput(_ name: String, _ key: OwnerKey = .text) {
-        guard let p = pane(named: name), key != .reply else { return }
+        guard let p = pane(named: name), key != .reply, key != .pointer else { return }
         p.lastOwnerInput = now()
+        if key == .text { p.lastOwnerText = now() }
+        // The owner sent or emptied the composer themselves: the bus's owed Enter would only send an empty line.
+        if p.enterOwed, key == .submit || key == .clear {
+            p.enterOwed = false
+            note(["op": "enter", "pane": name, "outcome": "dropped", "why": key == .submit ? "the owner pressed Enter" : "the owner emptied the composer"])
+        }
         // Each submission the owner makes from the keyboard, with no content.
         if key == .submit { note(["op": "owner-submit", "pane": name]) }
         let before = p.hasDraft
@@ -279,7 +295,7 @@ public final class Bus {
         case .submit:
             p.typedSinceSubmit = false
             if p.kind == .shell || p.kind == .runner { p.hasDraft = false }   // no hooks there: Enter is it
-        case .other, .reply: break
+        case .other, .reply, .pointer: break
         }
         if before != p.hasDraft { onChange?() }
     }
@@ -594,7 +610,14 @@ public final class Bus {
 
     private func applyHook(_ pane: Pane, _ event: [String: Any]) {
         // SessionStart may carry `model`; Claude Code's PostModelSwitch carries the new one as `to_model`.
-        if let model = (event["to_model"] ?? event["model"]) as? String, !model.isEmpty, model != pane.model {
+        var named = (event["to_model"] ?? event["model"]) as? String
+        // D29: a resumed Claude Code session's SessionStart names no model, and its transcript does. Only on this
+        // Mac: a pane on a host has its transcript there.
+        if named?.isEmpty ?? true, event["hook_event_name"] as? String == "SessionStart", pane.kind == .claude,
+           pane.host.isEmpty, let path = event["transcript_path"] as? String {
+            named = Transcript.lastModel(at: path)
+        }
+        if let model = named, !model.isEmpty, model != pane.model {
             pane.model = model
             onChange?()
         }
@@ -636,6 +659,11 @@ public final class Bus {
     /// there and has nothing unsent. A running harness keeps the input in its own queue and reads it
     /// when its current step ends, which is sooner than the end of its turn.
     private func flush(_ p: Pane) {
+        // An owed Enter goes first, and nothing more is typed on top of the text it is owed for.
+        if p.enterOwed {
+            pressOwedEnter(p)
+            if p.enterOwed { return }
+        }
         guard p.state == .idle || p.state == .running, !p.queue.isEmpty, !p.enterPending, let io = p.io else { return }
         if let last = p.lastOwnerInput, now().timeIntervalSince(last) < ownerQuietInterval { return }
         // A hook ends a draft hold, but a turn the harness refuses fires none, and the owner's text is gone
@@ -666,13 +694,46 @@ public final class Bus {
             schedule(submitDelay) { [weak self, weak p, weak io] in
                 guard let self, let p else { return }
                 p.enterPending = false
-                let ownerTyped = p.lastOwnerInput.map { $0 > pasted } ?? false
-                if p.state == .idle || p.state == .running, !p.hasDraft, !ownerTyped { io?.write(Delivery.enter) }
+                let textAfter = p.lastOwnerText.map { $0 > pasted } ?? false
+                let keysAfter = p.lastOwnerInput.map { $0 > pasted } ?? false
+                if textAfter {
+                    // The owner's words are in that composer now: the bus never sends them (D26).
+                    self.note(["op": "enter", "pane": p.name, "outcome": "dropped", "why": "the owner typed after the paste"])
+                } else if p.state == .idle || p.state == .running, !p.hasDraft, !keysAfter {
+                    io?.write(Delivery.enter)
+                    self.note(["op": "enter", "pane": p.name, "outcome": "sent"])
+                } else {
+                    // A prompt opened, or the owner pressed a key that adds no text: the Enter waits for the guard
+                    // to clear (D26). Before, it was dropped, and the text stayed in the composer for good.
+                    p.enterOwed = true
+                    p.pastedAt = pasted
+                    self.note(["op": "enter", "pane": p.name, "outcome": "owed",
+                               "why": keysAfter ? "owner keys after the paste" : "the pane is \(p.state.rawValue)"])
+                }
                 self.flush(p)
             }
         } else {
             io.write(Delivery.enter)
+            note(["op": "enter", "pane": p.name, "outcome": "sent"])
         }
+        onChange?()
+    }
+
+    /// D26: the Enter the guard held back, pressed once the pane is idle or running and the owner has been quiet.
+    /// Never when owner text came after the paste: then the composer holds their words too.
+    private func pressOwedEnter(_ p: Pane) {
+        guard let io = p.io else { return }
+        if let typed = p.lastOwnerText, let pasted = p.pastedAt, typed > pasted {
+            p.enterOwed = false
+            note(["op": "enter", "pane": p.name, "outcome": "dropped", "why": "the owner typed after the paste"])
+            return
+        }
+        guard p.state == .idle || p.state == .running, !p.hasDraft else { return }
+        if let last = p.lastOwnerInput, now().timeIntervalSince(last) < ownerQuietInterval { return }
+        p.enterOwed = false
+        io.write(Delivery.enter)
+        if p.kind != .shell { p.state = .running }
+        note(["op": "enter", "pane": p.name, "outcome": "sent", "late": true])
         onChange?()
     }
 

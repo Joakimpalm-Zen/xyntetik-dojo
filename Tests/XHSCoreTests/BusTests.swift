@@ -244,6 +244,20 @@ import Testing
         #expect(bus.info("codex-1")?.state == .idle)
     }
 
+    /// D29: a resume names no model in its SessionStart; a Claude pane on this Mac reads it from the transcript.
+    @Test func aResumedClaudePaneTakesItsModelFromTheTranscript() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("resumed-\(UUID().uuidString).jsonl")
+        try Data(#"{"type":"assistant","message":{"model":"claude-fable-5-2","content":[]}}"#.utf8).write(to: url)
+        hook(senderToken, "SessionStart", ["source": "resume", "transcript_path": url.path])
+        #expect(bus.info("claude-1")?.model == "claude-fable-5-2")
+        // A pane on a host has its transcript there: nothing is read here.
+        hook(targetToken, "SessionStart", ["source": "resume", "transcript_path": url.path])
+        #expect(bus.info("codex-1")?.model == "")
+        // A model the hook names wins over the transcript.
+        hook(senderToken, "SessionStart", ["source": "startup", "model": "claude-opus-5-5", "transcript_path": url.path])
+        #expect(bus.info("claude-1")?.model == "claude-opus-5-5")
+    }
+
     @Test func stateReportsQueueAndModel() {
         hook(targetToken, "SessionStart", ["model": "gpt-x"])
         hook(targetToken, "PermissionRequest")
