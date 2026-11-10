@@ -43,6 +43,8 @@ class FakeBus:
                                  "note": "codex-1 is at a prompt; queued until it is idle."}, 200
                 elif self.path == "/read":
                     out, code = {"pane": body["pane"], "state": "idle", "text": "line a\nline b"}, 200
+                    if body["pane"] == "secretive":
+                        out["text"], out["redacted"] = "key [redacted: github token]\n[dojo token]", 2
                 elif self.path == "/state":
                     out, code = {"pane": body["pane"], "state": "idle", "queued": 0}, 200
                 elif self.path == "/watch":
@@ -114,6 +116,18 @@ class ShimTest(unittest.TestCase):
         code, out, err = self.cli("relay", "claim")
         self.assertEqual((code, out), (1, ""))
         self.assertIn("bus refused (404)", err)
+
+    def test_read_says_when_the_bus_took_secrets_out(self):
+        code, out, err = self.cli("read", "secretive")
+        self.assertEqual((code, out), (0, "key [redacted: github token]\n[dojo token]\n"))
+        self.assertIn("The bus took 2 secrets out of this text", err)
+        code, out, err = self.cli("read", "codex-1")
+        self.assertEqual((code, err), (0, ""))
+        res = self.mcp([{"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                         "params": {"name": "read", "arguments": {"pane": "secretive"}}}])
+        content = res[0]["result"]["content"]
+        self.assertEqual(content[0]["text"], "key [redacted: github token]\n[dojo token]")
+        self.assertIn("took 2 secrets out", content[1]["text"])
 
     def test_relay_needs_words(self):
         code, _, err = self.cli("relay")

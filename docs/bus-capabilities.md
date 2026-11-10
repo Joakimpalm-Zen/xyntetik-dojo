@@ -2,8 +2,8 @@
 
 Status: the owner chose on 2026-11-10: as today until a coordinator is marked (1a), worker-to-worker `send`
 allowed (2a), the record keeps the text of each `send` and the metadata of everything for 30 days (3a), and
-redaction is always on (4a). Built: the record (step 1 of the build order, D21.2.5). Next: redaction in `read`,
-then roles.
+redaction is always on (4a). Built: the record (step 1 of the build order, D21.2.5) and redaction in `read`
+(step 2, D21.2.6, `Sources/XHSCore/Redact.swift`). Next: roles.
 
 The question: who may read or send to whom on the bus, what `read` may return, what record the bus keeps,
 and how an action the owner approved is told apart from one an agent started. The answer must keep the way

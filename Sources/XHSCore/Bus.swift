@@ -466,9 +466,12 @@ public final class Bus {
         guard let target = target(args) else { return noPane(args) }
         let requested = (args["lines"] as? NSNumber)?.intValue ?? 40
         let lines = min(max(requested, 1), Bus.maxReadLines)
-        let text = Bus.lastLines(target.io?.screenText() ?? "", lines)
-        line["lines"] = text.isEmpty ? 0 : text.components(separatedBy: "\n").count
-        return ok(["pane": target.name, "state": target.state.rawValue, "text": text])
+        let screen = Bus.lastLines(target.io?.screenText() ?? "", lines)
+        // D21.2: secrets are taken out of what leaves the bus, always; the pane's own screen is untouched.
+        let clean = Redact.apply(screen, tokens: panes.map(\.token))
+        line["lines"] = screen.isEmpty ? 0 : screen.components(separatedBy: "\n").count
+        line["redacted"] = clean.count
+        return ok(["pane": target.name, "state": target.state.rawValue, "text": clean.text, "redacted": clean.count])
     }
 
     private func applyHook(_ pane: Pane, _ event: [String: Any]) {
