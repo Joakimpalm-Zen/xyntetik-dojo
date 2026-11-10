@@ -179,3 +179,61 @@ tests do now.
    everything, 30 days. (b) Metadata and a hash of the text, no text, 90 days. (c) Discuss.
 4. **Redaction.** (a, recommended) always on for `read`, no switch. (b) On, with a per-pane switch the owner
    can turn off. (c) Discuss.
+
+## Typed messages (D21.5)
+
+Four kinds of message the panes already wrote by hand have a typed form. A typed send carries `type` and
+`fields` in place of `text`; the bus checks the fields and refuses with a 400 that names the field, and an
+unknown type is refused, never passed on as text. A checked message becomes text and from then on is a send
+like any other: sanitised, capped at 16,000 characters, queued and held by the same guard, and information
+from a peer, never the owner's approval. It arrives as a card every harness reads alike: the tag and a first
+line with the type and what it is about, then one indented `key: value` line per field, in the order below.
+The pane draws the type word in the tag's green. The record keeps the type and the fields (secrets taken out)
+beside the text, and `dojo audit --type <type>` lists them. Free text is unchanged. Each value is one line;
+an item is whatever the sender's plan calls it.
+
+**assign**: hand an item to a pane. Fields: `item`, `what`; optional `next`, `by`.
+
+```
+[from: fable] assign D26
+  item: D26
+  what: root cause of bus messages left unsent in a composer, then the fix
+  next: the D28 sheet
+```
+
+**report**: a pull request is ready. Fields: `repo`, `pr` (a number), `head` (7 to 40 hex digits), `checks`
+(`name=pass|fail|pending|skipped` words), `mergeable` (`yes`, `no` or `unknown`); optional `note`.
+
+```
+[from: macbook] report xyntetik-dojo #92
+  repo: xyntetik-dojo
+  pr: 92
+  head: e07bd8afce6f74907b6938260341b5ff5ea19571
+  checks: ci=pass, hygiene=pass
+  mergeable: yes
+```
+
+**merged**: a pull request went in. Fields: `repo`, `pr`, `sha`; optional `item`, `note`.
+
+```
+[from: fable] merged xyntetik-dojo #92 as 8397f5b0
+  repo: xyntetik-dojo
+  pr: 92
+  sha: 8397f5b0
+  item: D26
+```
+
+**bug**: something broke. Fields: `command`, `observed`, `expected`; optional `cause`, `where`.
+
+```
+[from: lunta] bug in Dojo picker
+  command: open the picker with a host typed
+  observed: Choose stays enabled
+  expected: Choose disabled for a remote host
+  where: Dojo picker
+```
+
+From a shell: `dojo send macbook --type report repo=xyntetik-dojo pr=92 head=e07bd8a checks=ci=pass,hygiene=pass mergeable=yes`
+(a value with spaces in quotes). From Claude and Codex: the `send` tool's `type` and `fields`. Not in this:
+buttons on a card, more types, replies tied to a message, anything that acts on a type by itself. The
+outside route (D15 b) takes free text only.

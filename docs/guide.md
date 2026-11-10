@@ -111,7 +111,10 @@ EOF
 dojo read claude-1 60              # last 60 lines of claude-1's screen
 dojo state pi-1
 dojo watch codex-1                 # one line comes here when codex-1 next goes idle, reaches a prompt or exits
+dojo send fable --type report repo=xyntetik-dojo pr=92 head=e07bd8a checks=ci=pass,hygiene=pass mergeable=yes
 ```
+
+Four kinds of message have a typed form: `assign`, `report`, `merged` and `bug`. The bus checks the fields, refuses a message that is wrong with what is wrong, and types a card the other side reads as plain lines; `dojo audit --type report` lists them later. The fields of each are in [the bus note](bus-capabilities.md#typed-messages-d215).
 
 <p align="center">
   <img src="../packaging/readme/window.png" alt="Claude Code asks Codex and pi to reply over the bus; both replies land in its pane as green [from: name] lines" width="900">
