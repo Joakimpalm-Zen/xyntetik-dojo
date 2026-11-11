@@ -60,11 +60,18 @@ import XHSCore
         #expect(ratio(Theme.terminalInk, Theme.terminalPaper) >= 7)
     }
 
-    /// The band behind a user's message is the pane's ground one step darker: visible, and never lighter.
-    @Test func theMessageBandIsOneStepDarkerThanThePane() {
-        let shade = NSColor(srgbRed: CGFloat(Theme.shade.red) / 255, green: CGFloat(Theme.shade.green) / 255, blue: CGFloat(Theme.shade.blue) / 255, alpha: 1)
-        let step = ratio(shade, Theme.terminalPaper)
-        #expect(step > 1.06 && step < 1.14, "the band differs from the pane by \(step)")
-        #expect(ratio(shade, Theme.terminalInk) < ratio(Theme.terminalPaper, Theme.terminalInk), "the band is lighter than the pane")
+    /// The band behind a user's message is the owner's pick from the D28 sheet, variant 3: a very light teal
+    /// tint over the pane's ground (2026-11-11). It replaced a neutral step of 1.06 to 1.14, which the owner
+    /// found had lost the tint. It still shows, it is never lighter than the pane, and it leans to teal.
+    @Test func theMessageBandIsTheOwnersLightTealTint() {
+        #expect(Theme.shade.red == 0xD5 && Theme.shade.green == 0xD8 && Theme.shade.blue == 0xC0)
+        #expect(Theme.shadeDimmed.red == 0xCC && Theme.shadeDimmed.green == 0xCE && Theme.shadeDimmed.blue == 0xB6)
+        for (band, ground) in [(Theme.shade, Theme.terminalPaper), (Theme.shadeDimmed, Theme.terminalPaperDimmed)] {
+            let shade = NSColor(srgbRed: CGFloat(band.red) / 255, green: CGFloat(band.green) / 255, blue: CGFloat(band.blue) / 255, alpha: 1)
+            let step = ratio(shade, ground)
+            #expect(step > 1.02 && step < 1.14, "the band differs from the pane by \(step)")
+            #expect(ratio(shade, Theme.terminalInk) < ratio(ground, Theme.terminalInk), "the band is lighter than the pane")
+            #expect(band.green > band.red, "the band has lost its teal")
+        }
     }
 }

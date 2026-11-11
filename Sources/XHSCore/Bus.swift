@@ -23,6 +23,13 @@ public final class Bus {
     /// The record of bus traffic, nil for none: see `BusRecord`.
     public var record: BusRecord?
     private var relayRunning = false
+    /// D15 (b): the outside route's token while the owner has it switched on (OutsideRoute); nil, no route.
+    public var outsideToken: String?
+    /// Who sends a line from outside Dojo: never in the list of panes, never a pane anyone can read.
+    private lazy var outsider = Pane(name: Outside.sender, kind: .shell, host: "", token: "", model: "", state: .idle,
+                                     unrestricted: false, io: nil)
+    /// When the outside lines of the last minute were sent.
+    private var outsideSent: [Date] = []
 
     public struct Info: Equatable, Sendable {
         public let name: String
@@ -486,6 +493,10 @@ public final class Bus {
     /// Handles one request. `path` is the operation: /panes, /send, /read, /state, /watch, /label or /hook.
     public func handle(path: String, token: String?, body: Data) -> (status: Int, body: Data) {
         let op = path.split(separator: "?").first.map { String($0) }?.trimmingCharacters(in: CharacterSet(charactersIn: "/")) ?? ""
+        // D15 (b): only while the owner has it switched on; otherwise the path is what it always was.
+        if let expected = outsideToken, op == Outside.sender || op.hasPrefix(Outside.sender + "/") {
+            return outside(op, token: token, expected: expected, body: body)
+        }
         guard let token, let sender = panes.first(where: { $0.token == token }) else {
             return recorded(["op": op], error(401, "unknown or missing X-Dojo-Token"))
         }
@@ -523,6 +534,31 @@ public final class Bus {
         default:
             result = error(404, "unknown operation '\(op)'; use panes, send, read, state, watch or label")
         }
+        return recorded(line, result)
+    }
+
+    /// D15 (b): `/outside/send`, and nothing else. The sender is the route's, never the caller's.
+    private func outside(_ op: String, token: String?, expected: String, body: Data) -> (status: Int, body: Data) {
+        var line: [String: Any] = ["op": op == "outside/send" ? "send" : op, "from": Outside.sender, "via": "outside"]
+        guard let token, Outside.same(token, expected) else {
+            return recorded(line, error(401, "unknown or missing X-Dojo-Outside-Token"))
+        }
+        guard op == "outside/send" else { return recorded(line, error(404, "the outside route only sends: /outside/send")) }
+        guard let args = (body.isEmpty ? [:] : (try? JSONSerialization.jsonObject(with: body))) as? [String: Any] else {
+            return recorded(line, error(400, "body must be a JSON object"))
+        }
+        if let name = args["pane"] as? String { line["pane"] = name }
+        // Free text only: a typed message (D21.5) is between panes, never from a program outside them.
+        for field in Outside.paneOnly where args.keys.contains(field) {
+            return recorded(line, error(400, "\(field) is not taken from outside Dojo: send free text only"))
+        }
+        let minute = now().addingTimeInterval(-60)
+        outsideSent.removeAll { $0 < minute }
+        guard outsideSent.count < Outside.perMinute else {
+            return recorded(line, error(429, "more than \(Outside.perMinute) lines a minute from outside; try again later"))
+        }
+        let result = send(from: outsider, args, &line)
+        if result.status == 200 { outsideSent.append(now()) }
         return recorded(line, result)
     }
 
@@ -568,7 +604,25 @@ public final class Bus {
         guard let target = target(args) else { return noPane(args) }
         guard target.state != .exited else { return error(409, "\(target.name) has exited") }
         guard target.kind != .runner else { return error(409, "\(target.name) is the model server, not a harness") }
-        let text = Delivery.sanitize(args["text"] as? String ?? "")
+        let text: String
+        if let type = args["type"] {
+            // D21.5: a typed message is checked here and becomes text; from then on it is a send like any other
+            // (sanitised, capped, queued, held by the same guard, never approval). An unknown type is refused,
+            // never passed on as text.
+            guard args["text"] == nil else { return error(400, "a typed message takes fields, not text") }
+            guard let type = type as? String else { return error(400, "type must be text") }
+            switch Typed.render(type: type, fields: args["fields"]) {
+            case .failure(let refusal): return error(400, refusal.reason)
+            case .success(let typed):
+                text = Delivery.sanitize(typed.text)
+                // Kept apart for `dojo audit --type`, with secrets taken out as on any route out of the bus.
+                let tokens = panes.map(\.token)
+                line["type"] = type
+                line["fields"] = typed.fields.mapValues { Redact.apply($0, tokens: tokens).text }
+            }
+        } else {
+            text = Delivery.sanitize(args["text"] as? String ?? "")
+        }
         guard !text.isEmpty else { return error(400, "text is empty") }
         guard text.count <= Bus.maxMessageLength else { return error(413, "text is longer than \(Bus.maxMessageLength) characters") }
         // The owner's choice (D21.2): the record keeps the text of each send.

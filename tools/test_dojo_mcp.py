@@ -32,7 +32,14 @@ class FakeBus:
                 n = int(self.headers.get("Content-Length") or 0)
                 body = json.loads(self.rfile.read(n) or b"{}")
                 bus.requests.append((self.path, self.headers.get("X-Dojo-Token"), body))
-                if self.headers.get("X-Dojo-Token") != "tok-1":
+                if self.path == "/outside/send":
+                    # D15 (b): the outside route, with its own token in its own header
+                    bus.outside_headers = dict(self.headers)
+                    if self.headers.get("X-Dojo-Outside-Token") != "out-1":
+                        out, code = {"error": "unknown or missing X-Dojo-Outside-Token"}, 401
+                    else:
+                        out, code = {"pane": body["pane"], "delivered": True, "queued": 0, "state": "idle"}, 200
+                elif self.headers.get("X-Dojo-Token") != "tok-1":
                     out, code = {"error": "unknown token"}, 401
                 elif self.path == "/panes":
                     out, code = {"you": "claude-1", "panes": [
@@ -104,6 +111,38 @@ class ShimTest(unittest.TestCase):
             os.environ.clear()
             os.environ.update(saved)
 
+    def test_a_typed_send_carries_its_type_and_fields(self):
+        # D21.5: dojo send <pane> --type T key=value..., a value with spaces in quotes as the shell gives it
+        code, out, _ = self.cli("send", "codex-1", "--type", "report", "repo=xyntetik-dojo", "pr=92", "head=e07bd8a",
+                                "checks=ci=pass,hygiene=pass", "mergeable=yes", "note=two words")
+        self.assertEqual(code, 0)
+        path, _, body = self.bus.requests[-1]
+        self.assertEqual(path, "/send")
+        self.assertEqual(body, {"pane": "codex-1", "type": "report", "fields": {
+            "repo": "xyntetik-dojo", "pr": "92", "head": "e07bd8a", "checks": "ci=pass,hygiene=pass",
+            "mergeable": "yes", "note": "two words"}})
+        self.assertTrue(out.startswith("codex-1: queued"))
+
+    def test_a_typed_send_needs_key_value_words(self):
+        code, _, err = self.cli("send", "codex-1", "--type", "bug", "just words")
+        self.assertEqual(code, 2)
+        self.assertIn("key=value", err)
+        code, _, err = self.cli("send", "codex-1", "--type")
+        self.assertEqual(code, 2)
+        self.assertIn("usage: dojo send <pane> --type", err)
+        self.assertFalse(any(r[0] == "/send" for r in self.bus.requests))
+
+    def test_the_send_tool_takes_a_type_and_fields(self):
+        m = load_shim()
+        self.assertEqual(m.tool_payload("send", {"pane": "p", "type": "merged", "fields": {"repo": "r", "pr": 92, "sha": "abcdef1"}}),
+                         {"pane": "p", "type": "merged", "fields": {"repo": "r", "pr": "92", "sha": "abcdef1"}})
+        self.assertEqual(m.tool_payload("send", {"pane": "p", "text": "hi"}), {"pane": "p", "text": "hi"})
+        with self.assertRaises(ValueError):
+            m.tool_payload("send", {"pane": "p", "type": "bug", "fields": "not an object"})
+        send = next(t for t in m.TOOLS if t["name"] == "send")
+        self.assertEqual(send["inputSchema"]["properties"]["type"]["enum"], ["assign", "report", "merged", "bug"])
+        self.assertEqual(send["inputSchema"]["required"], ["pane"])
+
     def test_send_says_why_a_message_waits(self):
         code, out, _ = self.cli("send", "codex-1", "hello")
         self.assertEqual(code, 0)
@@ -140,6 +179,62 @@ class ShimTest(unittest.TestCase):
         code, out, _ = self.cli("label")
         self.assertEqual((code, out), (0, "claude-1: no label\n"))
         self.assertEqual(self.bus.requests[-1][2], {"text": ""})
+
+    def outside_home(self, token_file):
+        home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home)
+        if token_file is not None:
+            os.makedirs(os.path.join(home, ".dojo"))
+            with open(os.path.join(home, ".dojo", "outside-token"), "w") as f:
+                f.write(token_file)
+        env = {k: v for k, v in self.env.items() if k not in ("DOJO_TOKEN", "DOJO_PANE")}
+        env["HOME"] = home
+        return env
+
+    def cli_env(self, env, *argv, stdin=""):
+        out, err = io.StringIO(), io.StringIO()
+        saved = dict(os.environ)
+        os.environ.clear()
+        os.environ.update(env)
+        try:
+            return load_shim().cli(list(argv), out=out, err=err, stdin=io.StringIO(stdin)), out.getvalue(), err.getvalue()
+        finally:
+            os.environ.clear()
+            os.environ.update(saved)
+
+    def test_send_outside_a_pane_uses_the_owners_outside_route(self):
+        env = self.outside_home(json.dumps({"port": self.bus.port, "token": "out-1"}))
+        code, out, err = self.cli_env(env, "send", "fable", "-", stdin="the owner changed B11\n")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(out, "fable: delivered (state idle, queued 0)\n")
+        path, pane_token, body = self.bus.requests[-1]
+        self.assertEqual((path, pane_token, body), ("/outside/send", None, {"pane": "fable", "text": "the owner changed B11\n"}))
+        self.assertEqual(self.bus.outside_headers.get("X-Dojo-Outside-Token"), "out-1")
+
+    def test_send_outside_a_pane_with_the_route_off_refuses_as_before(self):
+        code, out, err = self.cli_env(self.outside_home(None), "send", "fable", "hello")
+        self.assertEqual((code, out), (1, ""))
+        self.assertIn("not inside Xyntetik Dojo", err)
+        self.assertIn("sending from outside is off", err)
+        self.assertEqual(self.bus.requests, [])
+        for bad in ("", "{", json.dumps({"token": "out-1"}), json.dumps({"port": "x", "token": "out-1"})):
+            code, _, err = self.cli_env(self.outside_home(bad), "send", "fable", "hello")
+            self.assertEqual(code, 1, bad)
+        self.assertEqual(self.bus.requests, [])
+
+    def test_only_send_goes_through_the_outside_route(self):
+        env = self.outside_home(json.dumps({"port": self.bus.port, "token": "out-1"}))
+        for argv in (["panes"], ["read", "fable"], ["state", "fable"], ["watch", "fable"], ["relay", "ready"]):
+            code, _, err = self.cli_env(env, *argv)
+            self.assertEqual(code, 1, argv)
+            self.assertIn("DOJO_TOKEN is not set", err)
+        self.assertEqual(self.bus.requests, [])
+
+    def test_a_stale_token_is_refused_by_the_bus(self):
+        env = self.outside_home(json.dumps({"port": self.bus.port, "token": "old"}))
+        code, _, err = self.cli_env(env, "send", "fable", "hello")
+        self.assertEqual(code, 1)
+        self.assertIn("bus refused (401)", err)
 
     def test_relay_needs_words(self):
         code, _, err = self.cli("relay")
@@ -702,6 +797,22 @@ class AuditTest(unittest.TestCase):
             "    the diff",
             "2026-11-10 14:35:13Z read         codex-1 -> claude-1 ok (lines 40)",
             "2026-11-10 14:36:00Z pane-state   codex-1 (owner_keys true, state running, was prompt)",
+        ])
+
+    def test_by_type(self):
+        # D21.5: the record keeps a typed send's type and fields beside its text; --type picks them out
+        self.write("2026-11-10", [
+            {"time": "2026-11-10T10:00:00.000Z", "op": "send", "from": "a", "pane": "b", "outcome": "delivered", "text": "free"},
+            {"time": "2026-11-10T11:00:00.000Z", "op": "send", "from": "a", "pane": "b", "outcome": "delivered",
+             "type": "report", "fields": {"repo": "r", "pr": "1"}, "text": "report r #1\n  repo: r\n  pr: 1"},
+        ])
+        code, out, err = self.run_audit("--type", "report")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out.splitlines(), [
+            "2026-11-10 11:00:00Z send         a -> b delivered (type report)",
+            "    report r #1",
+            "      repo: r",
+            "      pr: 1",
         ])
 
     def test_by_pane_and_by_time(self):

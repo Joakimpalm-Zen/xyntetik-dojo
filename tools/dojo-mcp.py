@@ -4,13 +4,16 @@
 Modes:
   dojo-mcp.py                 MCP stdio server with the tools panes, send, read, state, watch
   dojo panes                  list the terminals in the supervisor window
-  dojo send <pane> <text...>  type a message into another terminal ("-" reads stdin)
+  dojo send <pane> <text...>  type a message into another terminal ("-" reads stdin); from outside
+                              Dojo only when the owner switched that on, and then as [from: outside]
+  dojo send <pane> --type T key=value...
+                              a typed message: assign, report, merged or bug (docs/bus-capabilities.md)
   dojo read <pane> [lines]    print the last lines of a terminal's screen
   dojo state <pane>           print a terminal's state
   dojo label [text...]        set this terminal's own label, shown beside its name; no text clears it
   dojo hook                   forward a harness hook event (JSON on stdin) to the bus
   dojo install                link ~/.dojo/bin/dojo and add the Codex MCP server and hooks
-  dojo audit [--pane P] [--since WHEN]
+  dojo audit [--pane P] [--since WHEN] [--type T]
                               print the record of bus traffic, the owner's, from ~/.dojo/audit
 
 The bus is the supervisor app on 127.0.0.1:$DOJO_PORT (default 7788). Every call
@@ -52,9 +55,16 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "pane": {"type": "string", "description": "Target terminal name, for example codex-1"},
-                "text": {"type": "string", "description": "The message"},
+                "text": {"type": "string", "description": "The message (free text). Leave it out for a typed message."},
+                "type": {"type": "string", "enum": ["assign", "report", "merged", "bug"],
+                         "description": "A typed message instead of text: assign (item, what; next, by), report "
+                         "(repo, pr, head, checks as name=pass|fail|pending|skipped, mergeable yes|no|unknown; note), "
+                         "merged (repo, pr, sha; item, note), bug (command, observed, expected; cause, where). "
+                         "The bus checks the fields and refuses with what is wrong."},
+                "fields": {"type": "object", "description": "The typed message's fields, each one line of text",
+                           "additionalProperties": {"type": "string"}},
             },
-            "required": ["pane", "text"],
+            "required": ["pane"],
         },
     },
     {
@@ -126,6 +136,42 @@ def bus_call(op, payload, timeout=10):
     return json.loads(body.decode("utf-8")) if body else {}
 
 
+def outside_token_file():
+    return os.path.join(os.path.expanduser("~"), ".dojo", "outside-token")
+
+
+def outside_send(pane, text, timeout=10):
+    """D15 (b): `dojo send` from a program outside Dojo. Only while the owner has switched the outside
+    route on (~/.dojo/outside), when the app keeps its token and port in ~/.dojo/outside-token. The line
+    arrives as [from: outside]: the route names the sender, never this program."""
+    try:
+        with open(outside_token_file(), encoding="utf-8") as f:
+            info = json.load(f)
+        token, port = str(info["token"]), int(info["port"])
+    except (OSError, ValueError, KeyError, TypeError):
+        raise BusError("not inside Xyntetik Dojo: DOJO_TOKEN is not set, and sending from outside is off "
+                       "(see Sending from outside Dojo in the guide)")
+    req = urllib.request.Request(
+        "http://127.0.0.1:%d/outside/send" % port,
+        data=json.dumps({"pane": pane, "text": text}).encode("utf-8"),
+        headers={"Content-Type": "application/json", "X-Dojo-Outside-Token": token},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read()
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", "replace")
+        try:
+            detail = json.loads(detail).get("error", detail)
+        except ValueError:
+            pass
+        raise BusError("bus refused (%d): %s" % (e.code, detail))
+    except (urllib.error.URLError, OSError) as e:
+        raise BusError("bus not reachable on 127.0.0.1:%d: %s" % (port, e))
+    return json.loads(body.decode("utf-8")) if body else {}
+
+
 # ---------------------------------------------------------------- MCP server
 
 def redaction_note(count):
@@ -140,6 +186,12 @@ def tool_payload(name, args):
     if name == "panes":
         return {}
     if name == "send":
+        if args.get("type") is not None:
+            fields = args.get("fields") or {}
+            if not isinstance(fields, dict):
+                raise ValueError("fields must be an object")
+            return {"pane": str(args.get("pane", "")), "type": str(args["type"]),
+                    "fields": {str(k): str(v) for k, v in fields.items()}}
         return {"pane": str(args.get("pane", "")), "text": str(args.get("text", ""))}
     if name == "read":
         return {"pane": str(args.get("pane", "")), "lines": int(args.get("lines", 40) or 40)}
@@ -439,7 +491,8 @@ def install(home=None, out=sys.stdout, windows=None):
 # the line before it in "prev". `dojo audit` reads the files directly: the record is not a bus route.
 
 AUDIT_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}\.jsonl$")
-AUDIT_SHOWN = ("time", "prev", "op", "from", "pane", "outcome", "text")
+# A typed message's fields are in its text, the card as delivered; the type stays in the line.
+AUDIT_SHOWN = ("time", "prev", "op", "from", "pane", "outcome", "text", "fields")
 
 
 def audit_folder(home=None):
@@ -503,10 +556,12 @@ def audit_text(entry):
 
 
 def audit(argv, out, err, home=None, now=None):
-    pane, since, i = None, None, 0
+    pane, since, kind, i = None, None, None, 0
     while i < len(argv):
         if argv[i] == "--pane" and i + 1 < len(argv):
             pane, i = argv[i + 1], i + 2
+        elif argv[i] == "--type" and i + 1 < len(argv):
+            kind, i = argv[i + 1], i + 2
         elif argv[i] == "--since" and i + 1 < len(argv):
             try:
                 since = audit_since(argv[i + 1], now)
@@ -515,7 +570,7 @@ def audit(argv, out, err, home=None, now=None):
                 return 2
             i += 2
         else:
-            err.write("usage: dojo audit [--pane NAME] [--since 30m|2h|3d|DATE]\n")
+            err.write("usage: dojo audit [--pane NAME] [--since 30m|2h|3d|DATE] [--type assign|report|merged|bug]\n")
             return 2
     folder = audit_folder(home)
     entries, problems = audit_entries(folder)
@@ -523,6 +578,8 @@ def audit(argv, out, err, home=None, now=None):
         err.write("dojo: no bus record in %s yet\n" % folder)
         return 0
     for entry in entries:
+        if kind and entry.get("type") != kind:
+            continue
         if pane and pane not in (entry.get("from"), entry.get("pane"), entry.get("to")) \
                 and pane not in (entry.get("senders") or []):
             continue
@@ -577,9 +634,28 @@ def cli(argv, out=sys.stdout, err=sys.stderr, stdin=sys.stdin):
             res = bus_call("label", {"text": " ".join(rest)})
             out.write("%s: %s\n" % (res.get("pane"), "label " + res["label"] if res.get("label") else "no label"))
             return 0
-        if cmd == "send" and len(rest) >= 2:
+        if cmd == "send" and rest[1:2] == ["--type"] and len(rest) < 3:
+            err.write("usage: dojo send <pane> --type assign|report|merged|bug key=value...\n")
+            return 2
+        if cmd == "send" and len(rest) >= 3 and rest[1] == "--type":
+            # D21.5: dojo send <pane> --type report repo=... pr=... (each value one word, or quoted by the shell)
+            fields = {}
+            for word in rest[3:]:
+                if "=" not in word:
+                    err.write("dojo: a typed message takes key=value words, not %r\n" % word)
+                    return 2
+                key, value = word.split("=", 1)
+                fields[key] = value
+            res = bus_call("send", {"pane": rest[0], "type": rest[2], "fields": fields})
+        elif cmd == "send" and len(rest) >= 2:
             text = stdin.read() if rest[1:] == ["-"] else " ".join(rest[1:])
-            res = bus_call("send", {"pane": rest[0], "text": text})
+            # Outside a pane: the owner's outside route, if switched on (D15 b), free text only;
+            # a typed message above always needs a pane's token.
+            if os.environ.get("DOJO_TOKEN"):
+                res = bus_call("send", {"pane": rest[0], "text": text})
+            else:
+                res = outside_send(rest[0], text)
+        if cmd == "send" and len(rest) >= 2:
             out.write("%s: %s (state %s, queued %s)\n" % (
                 rest[0], "delivered" if res.get("delivered") else "queued",
                 res.get("state"), res.get("queued", 0)))
