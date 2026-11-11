@@ -13,10 +13,11 @@ enum Theme {
     static let bg = color(0xD8D2BA)
     static let surface = color(0xE1DBC5)
     static let paper = color(0xE8E3CD)
-    /// The band behind a user's message in a pane: `terminalPaper` one step darker. It keeps that step out of
-    /// focus, where the ground is this same tone.
-    static let shade = (red: 0xD6, green: 0xD1, blue: 0xB9)
-    static let shadeDimmed = (red: 0xCC, green: 0xC7, blue: 0xAF)
+    /// The band behind a user's message in a pane: a very light teal tint, the brand at 5 percent over
+    /// `terminalPaper` (owner's pick, D28 variant 3, 2026-11-11). Out of focus it sits the same way over
+    /// `terminalPaperDimmed`.
+    static let shade = (red: 0xD5, green: 0xD8, blue: 0xC0)
+    static let shadeDimmed = (red: 0xCC, green: 0xCE, blue: 0xB6)
     static let ink = color(0x16232A)
     static let muted = color(0x514D45)
     static let line = color(0xC5BEA5)
