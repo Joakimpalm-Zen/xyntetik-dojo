@@ -5,7 +5,8 @@ import Foundation
 /// composer and reports nothing, so the bus would hold its queue for good (D18).
 ///
 /// It answers only from what it knows for sure: the composer row of a harness it has a rule for, empty or
-/// showing that harness's own placeholder, with nothing in the row under it. Anything else, a placeholder a
+/// showing that harness's own placeholder (alone, or padded out to a hint the harness drew at the right edge),
+/// with nothing in the row under it. Anything else, a placeholder a
 /// later version brings, a draft over two rows, a screen scrolled away, a harness with no rule, is not shown
 /// empty, and the hold stays. A miss costs only the old behaviour; a false yes would type into the owner's text.
 public enum Composer {
@@ -39,7 +40,11 @@ public enum Composer {
         guard let at = foot.lastIndex(where: { row in rule.marks.contains { row.hasPrefix($0) } }),
               let mark = rule.marks.first(where: { foot[at].hasPrefix($0) }) else { return false }
         let rest = String(foot[at].dropFirst(mark.count)).trimmingCharacters(in: blank)
-        guard rest.isEmpty || rule.placeholders.contains(rest) else { return false }
+        // Codex draws a hint at the right edge of the same row when a usage limit is near ("4 on 17 Nov ·
+        // /status"). A placeholder is only drawn in an empty composer, so one followed by the harness's own
+        // padding is still empty; a single space and more words is the owner's text.
+        let padded = rule.placeholders.contains { rest.hasPrefix($0 + "  ") }
+        guard rest.isEmpty || rule.placeholders.contains(rest) || padded else { return false }
         // A draft that goes on in the next row is not empty, however its first row looks.
         guard at + 1 < foot.count else { return true }
         let next = foot[at + 1]
