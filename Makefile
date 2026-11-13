@@ -73,7 +73,7 @@ smoke: app
 	cp -R $(APP) $(SMOKE_APP)
 	/usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier com.xyntetik.dojo.smoke' $(SMOKE_APP)/Contents/Info.plist
 	codesign --force --sign "$(SIGN)" $(SMOKE_APP)
-	DOJO_SMOKE=1 DOJO_SMOKE_HOST=$(HOST) DOJO_SMOKE_SHOT=$(SHOT) DOJO_SMOKE_SHOT_PICKER=$(PICKER) DOJO_SMOKE_SHOT_EMPTY=$(EMPTY) DOJO_SMOKE_SHOT_REOPENED=$(REOPENED) DOJO_PORT=7799 $(SMOKE_APP)/Contents/MacOS/XyntetikDojo
+	DOJO_SMOKE=1 DOJO_SMOKE_HOST=$(HOST) DOJO_SMOKE_SHOT=$(SHOT) DOJO_SMOKE_SHOT_PICKER=$(PICKER) DOJO_SMOKE_POINTER=$(POINTER) DOJO_SMOKE_SHOT_EMPTY=$(EMPTY) DOJO_SMOKE_SHOT_REOPENED=$(REOPENED) DOJO_PORT=7799 $(SMOKE_APP)/Contents/MacOS/XyntetikDojo
 
 # Install the shim and the pi extension on a remote host (POSIX or Windows): make remote-setup HOST=user@box
 remote-setup:
