@@ -215,6 +215,8 @@ make smoke HOST=user@box   # the same, with the pane on that host over ssh
 make smoke SHOT=window.png PICKER=picker.png EMPTY=empty.png REOPENED=reopened.png   # the same, plus pictures of the window, the picker and the empty window to check the look
 ```
 
+The version is the number in `packaging/Info.plist`, and a release is the tag `v<that number>`. The Homebrew formula (`brew install joakimpalm-zen/xyntetik/xyntetik-dojo`, in the [tap](https://github.com/Joakimpalm-Zen/homebrew-xyntetik)) builds that tag's source with `make app SWIFT_BUILD_FLAGS=--disable-sandbox SIGN=-`, and its test fails when the tag and the number in the app differ.
+
 The pi extension tests need Node.js 22.18 or later. They check actual editor submissions, including local commands and autocomplete.
 
 The Swift tests cover the bus and its delivery rules, the command lines (parsed back by a real POSIX shell) and the snippets; the Python tests cover the shim speaking MCP over pipes, the `dojo` command, the hooks, the install and the migration; the shell test covers the Runner pick against a stub runner and Hub. The `ci` workflow runs all of it on every pull request.
