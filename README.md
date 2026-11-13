@@ -48,7 +48,16 @@ ever answers a prompt for you.
 <a id="install"></a><a id="build-and-run"></a>
 ## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> Install
 
-Three commands on a Mac with the Command Line Tools (`xcode-select --install` once):
+One command with [Homebrew](https://brew.sh), on a Mac with the Command Line Tools (`xcode-select --install` once):
+
+```sh
+brew install joakimpalm-zen/xyntetik/xyntetik-dojo
+xyntetik-dojo    # opens the app
+```
+
+Homebrew builds the app from this source on your Mac, which takes a few minutes, and keeps it in its own folder. `brew upgrade xyntetik-dojo` gets a newer version; macOS then asks again for the Desktop, Documents and the local network, because each build is signed on your Mac.
+
+Or build it yourself, which puts the app in /Applications:
 
 ```sh
 git clone https://github.com/Joakimpalm-Zen/xyntetik-dojo.git
