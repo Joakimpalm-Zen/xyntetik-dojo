@@ -36,6 +36,17 @@ import Testing
         #expect(Composer.shownEmpty(kind: .codex, screen: Self.codex("›")))
     }
 
+    /// Codex 0.166.0 with the weekly limit low, read off a pane on 2026-11-13: the composer row carries a
+    /// right-aligned hint after the placeholder. Four messages stayed queued for an idle pane because of it.
+    @Test func codexPlaceholderWithItsUsageHintIsEmpty() {
+        let row = "› Ask Codex to do anything" + String(repeating: " ", count: 119) + "4 on 17 Nov · /status"
+        #expect(Composer.shownEmpty(kind: .codex, screen: Self.codex(row)))
+        // One space and more words is the owner's text, hint or no hint.
+        #expect(!Composer.shownEmpty(kind: .codex, screen: Self.codex("› Ask Codex to do anything else" + String(repeating: " ", count: 40) + "4 on 17 Nov · /status")))
+        // A hint after a draft does not make the draft a placeholder.
+        #expect(!Composer.shownEmpty(kind: .codex, screen: Self.codex("› resume the review" + String(repeating: " ", count: 40) + "4 on 17 Nov · /status")))
+    }
+
     @Test func claudeShowsNothingAfterItsMarkWhenEmpty() {
         #expect(Composer.shownEmpty(kind: .claude, screen: Self.claude("❯\u{a0}")))
         #expect(Composer.shownEmpty(kind: .claude, screen: Self.claude("❯")))
