@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <b>One window for your coding agents, and a bus so they can talk.</b>
+  <b>Run your coding agents as a team.</b>
 </p>
 
 <p align="center">
@@ -23,11 +23,11 @@
 </p>
 <p align="center"><sub>A roll call: one session asks five others to report over the bus, and they do; Runner serves the pi pane's model in the strip at the bottom.</sub></p>
 
-You run Claude Code in one terminal, Codex in another and a local model in a
-third, and you are the one carrying text between them. Dojo puts them in one
-window, on this Mac or over SSH, and lets them talk to each other: one asks
-another for a review, hears when it is done and reads the answer. You see every
-message land, and no message ever answers a prompt for you.
+Claude Code, Codex and local models in one window, on this Mac or over SSH,
+talking to each other on a bus that runs on your Mac. One asks another for a
+review, hears when it is done and reads the answer. Mark one as the coordinator
+and the others become its workers. You see every message land, and no message
+ever answers a prompt for you.
 
 - **Every agent in one window.** Claude Code, Codex and pi side by side in real terminals, on this Mac or on a Linux, Mac or Windows host over SSH. Press plus to add one; each pane also has a tab of its own for a close look.
 - **They talk, you see it.** `dojo send codex-1 "review the diff"` lands in that terminal as typed input, tagged with who sent it. `dojo watch` tells a pane when another finishes, and `dojo read` shows another pane's screen.
