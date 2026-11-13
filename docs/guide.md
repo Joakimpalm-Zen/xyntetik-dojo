@@ -101,7 +101,7 @@ Each remote pane has its own forward to the bus, on a free port of its host, so 
 The five operations, as MCP tools for Claude and Codex (`mcp__dojo__panes` and so on) and as the `dojo` command for pi and any shell in a pane:
 
 ```
-dojo panes                         # name, kind, host, state, queued, model; * marks you
+dojo panes                         # name, kind, host, state, queued, model, label; * marks you
 dojo send codex-1 "please review the diff in src/bus.rs"
 dojo send codex-1 - <<'EOF'              # quotes, backticks, several lines: on stdin, nothing runs
 Two things:
@@ -123,6 +123,8 @@ Four kinds of message have a typed form: `assign`, `report`, `merged` and `bug`.
 `watch` replaces waiting and polling. A pane asks once and gets one `[from: codex-1] Bus notice: codex-1 finished its turn.` line, delivered like any message. The notice says it comes from the bus, since the target did not write it, and it says what it rests on: `finished its turn` when a hook reported that, `looks idle` when the screen has been still for 15 seconds but no hook has reported the end of the turn, which may still be going, and `is idle` for a pane with no hook-reported turn. Any of them ends the request; read the pane or watch again, and a real finish after `looks idle` still reaches you. A target that closes ends the request with a line, and so do 12 hours with no news. Remote hosts need `make remote-setup` once for the new command.
 
 `send` types `[from: <your pane>] <text>` into the target terminal and presses Enter, so the target harness gets it as typed input. Ask any harness to do it in plain words: "send codex-1 a summary of what you changed".
+
+A pane can also give itself a label, a short line that says what it is working on: `dojo label B11, D15` (at most 40 characters; `dojo label` with nothing clears it). It shows in a capsule beside the pane's name, in its tab and in `dojo panes`. A pane labels only itself. A labelled pane that has been idle for ten minutes turns its label coral and says how long (`idle 12m`), so a session that stopped with work in hand stands out without anyone reporting it. Nothing in Dojo sets a label: a tool you run in the pane does, such as Bocka for the item the pane has claimed. With no such tool, nothing shows.
 
 | Harness | Bus tools | State | Peer rule |
 |---|---|---|---|
@@ -170,6 +172,7 @@ To install the peer rule permanently as well (for sessions started outside the a
 - `notifications`: what macOS allows the app (alerts, the badge), written at launch and after each request;
 - `runner/`: Runner's binary, its roster copy, the 16 MiB model heads, the fits list and your model choice;
 - `audit/`: the record of bus traffic, below;
+- `live.json`: the panes for other tools on this Mac to read, readable only by you: name, kind, host, state, since when, and label, with the app's process id so a file left by a crash reads as no Dojo. Never a screen, a message, a session or a token. Written at most once a second while the app runs and removed when it quits. Bocka reads it to show which pane holds which item.
 - `outside-token`: only while you have sending from outside switched on, below: the port and a token, readable only by you, new at each launch and removed when the switch goes or the app quits.
 
 Edit or delete any of them by hand.

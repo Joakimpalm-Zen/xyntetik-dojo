@@ -45,10 +45,16 @@ public final class Bus {
         public let role: String
         /// The panes a worker may read, by the owner's grant.
         public let reads: [String]
+        /// D15: what the pane says it is working on, set by the pane itself (`dojo label`); empty for none.
+        public let label: String
+        /// D15: when the pane's state last changed.
+        public let since: Date
+        /// D15: how long a labelled pane has been idle, once that is `idleFlagAfter` or more; nil otherwise.
+        public let idleFlag: TimeInterval?
 
         var json: [String: Any] {
             ["name": name, "kind": kind.rawValue, "host": host, "state": state.rawValue, "queued": queued, "model": model,
-             "draft": draft, "role": role, "reads": reads]
+             "draft": draft, "role": role, "reads": reads, "label": label]
         }
     }
 
@@ -59,6 +65,12 @@ public final class Bus {
         let token: String
         var model: String
         var state: PaneState
+        /// D15: when `state` last changed, by the bus's clock.
+        var stateSince = Date()
+        /// D15: set by the pane itself, one line.
+        var label = ""
+        /// The idle flag's minutes as the header last showed them, so the header redraws once a minute.
+        var flaggedMinutes: Int?
         /// The harness skips its own permission prompts (D21.1, ticked); the record says so beside each delivery.
         let unrestricted: Bool
         /// When the pane last reached a permission prompt.
@@ -121,6 +133,10 @@ public final class Bus {
     public static let watchHours = 12
     public static let maxMessageLength = 16_000
     public static let maxReadLines = 500
+    /// D15: a label is short: an item ID or two, a word or three.
+    public static let maxLabelLength = 40
+    /// D15: a pane idle this long while it has a label is flagged in its header and tab.
+    public var idleFlagAfter: TimeInterval = 600
 
     private var panes: [Pane] = []
     /// Called after any change a pane header shows.
@@ -164,6 +180,7 @@ public final class Bus {
         let initial: PaneState = kind == .shell ? .idle : .starting
         let p = Pane(name: name, kind: kind, host: host, token: token, model: model, state: initial, unrestricted: unrestricted,
                      io: io)
+        p.stateSince = now()
         panes.append(p)
         note(["op": "open", "pane": name, "kind": kind.rawValue, "host": host, "posture": p.posture as Any])
         onChange?()
@@ -208,6 +225,7 @@ public final class Bus {
         if state == .prompt { p.promptSince = now() }
         note(line)
         p.state = state
+        p.stateSince = now()
         onChange?()
         flush(p)
         switch state {
@@ -296,7 +314,35 @@ public final class Bus {
             if p.state == .running || p.state == .starting { watchQuiet(p) }
             flush(p)
             expireWatchers(of: p)
+            // D15: the header says how long a labelled pane has been idle, a minute at a time.
+            let minutes = idleFlag(of: p).map { Int($0 / 60) }
+            if minutes != p.flaggedMinutes {
+                p.flaggedMinutes = minutes
+                onChange?()
+            }
         }
+    }
+
+    private func idleFlag(of p: Pane) -> TimeInterval? {
+        guard p.state == .idle, !p.label.isEmpty else { return nil }
+        let idle = now().timeIntervalSince(p.stateSince)
+        return idle >= idleFlagAfter ? idle : nil
+    }
+
+    /// D15: the pane's own label, as the pane set it. One line, control characters taken out, at most
+    /// `maxLabelLength` characters; empty clears it.
+    private func label(_ sender: Pane, _ args: [String: Any], _ line: inout [String: Any]) -> (status: Int, body: Data) {
+        guard let given = args["text"] as? String else { return error(400, "text is missing") }
+        let clean = String(String.UnicodeScalarView(given.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }))
+            .trimmingCharacters(in: .whitespaces)
+        guard clean.count <= Bus.maxLabelLength else { return error(413, "a label is at most \(Bus.maxLabelLength) characters") }
+        line["label"] = clean
+        if clean != sender.label {
+            sender.label = clean
+            sender.flaggedMinutes = nil
+            onChange?()
+        }
+        return ok(["pane": sender.name, "label": clean])
     }
 
     private func expireWatchers(of target: Pane) {
@@ -444,7 +490,7 @@ public final class Bus {
 
     // MARK: HTTP entry point
 
-    /// Handles one request. `path` is the operation: /panes, /send, /read, /state, /watch or /hook.
+    /// Handles one request. `path` is the operation: /panes, /send, /read, /state, /watch, /label or /hook.
     public func handle(path: String, token: String?, body: Data) -> (status: Int, body: Data) {
         let op = path.split(separator: "?").first.map { String($0) }?.trimmingCharacters(in: CharacterSet(charactersIn: "/")) ?? ""
         // D15 (b): only while the owner has it switched on; otherwise the path is what it always was.
@@ -483,8 +529,10 @@ public final class Bus {
             result = ok(info(target).json)
         case "watch":
             result = watch(from: sender, args)
+        case "label":
+            result = label(sender, args, &line)
         default:
-            result = error(404, "unknown operation '\(op)'; use panes, send, read, state or watch")
+            result = error(404, "unknown operation '\(op)'; use panes, send, read, state, watch or label")
         }
         return recorded(line, result)
     }
@@ -688,7 +736,10 @@ public final class Bus {
               "posture": p.posture as Any])
         p.queue.removeAll()
         io.write(Delivery.bytes(message, bracketedPaste: io.bracketedPasteEnabled))
-        if p.kind != .shell { p.state = .running }
+        if p.kind != .shell, p.state != .running {
+            p.state = .running
+            p.stateSince = now()
+        }
         if submitDelay > 0 {
             // Enter comes a moment later, and only if nothing changed meanwhile: a prompt that opened, or
             // owner keys typed after the paste, would make Enter send the wrong thing.
@@ -751,7 +802,8 @@ public final class Bus {
     private func info(_ p: Pane) -> Info {
         Info(name: p.name, kind: p.kind, host: p.host, state: p.state, queued: p.queue.count, model: p.model, draft: p.hasDraft,
              role: role(of: p)?.rawValue ?? "",
-             reads: panes.filter { p.mayRead.contains(ObjectIdentifier($0)) }.map(\.name))
+             reads: panes.filter { p.mayRead.contains(ObjectIdentifier($0)) }.map(\.name),
+             label: p.label, since: p.stateSince, idleFlag: idleFlag(of: p))
     }
 
     private func noPane(_ args: [String: Any]) -> (status: Int, body: Data) {
