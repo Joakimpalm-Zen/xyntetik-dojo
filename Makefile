@@ -6,10 +6,14 @@ BIN := .build/release/XyntetikDojo
 # Documents and the local network; with the certificate it asks once.
 SIGN := $(shell security find-identity -v -p codesigning 2>/dev/null | grep -q '"Xyntetik Dojo"' && echo "Xyntetik Dojo" || echo -)
 
+# Extra flags for `swift build`. The Homebrew formula passes --disable-sandbox, because SwiftPM's own
+# sandbox cannot start inside Homebrew's.
+SWIFT_BUILD_FLAGS ?=
+
 .PHONY: build test icon app run smoke remote-setup clean cert install
 
 build:
-	swift build -c release
+	swift build -c release $(SWIFT_BUILD_FLAGS)
 
 test:
 	swift test
