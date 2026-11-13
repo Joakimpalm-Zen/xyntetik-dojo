@@ -638,6 +638,7 @@ final class AppModel: NSObject, ObservableObject {
                 view.mouseUp(with: NSEvent.mouseEvent(with: .leftMouseUp, location: NSPoint(x: 20, y: 20), modifierFlags: [], timestamp: 0,
                                                       windowNumber: view.window?.windowNumber ?? 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 0)!)
                 guard view.window?.firstResponder === view else { print("DOJO_SMOKE failed: a click did not focus the pane"); exit(1) }
+                self?.checkPanePointer(view)
                 for character in typed + "\r" {
                     let c = String(character)
                     if let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
@@ -1012,6 +1013,29 @@ final class AppModel: NSObject, ObservableObject {
     /// Writes a window to a PNG, for the smoke's pictures: the window server's own image of it, title bar
     /// included, because the panes draw on the GPU and a view's cached drawing leaves them blank. An app
     /// needs no permission for its own windows. The window stays parked, and is only made opaque for this.
+    /// D19: over a pane the pointer is Dojo's white I-beam, asked for the way AppKit asks (through the runtime).
+    /// DOJO_SMOKE_POINTER=<file.png>: its picture at 2x, for a render of a pane with the pointer over it.
+    private func checkPanePointer(_ view: NSView) {
+        NSCursor.arrow.set()
+        let moved = NSEvent.mouseEvent(with: .mouseMoved, location: NSPoint(x: 20, y: 20), modifierFlags: [], timestamp: 0,
+                                       windowNumber: view.window?.windowNumber ?? 0, context: nil, eventNumber: 0, clickCount: 0, pressure: 0)
+        view.perform(#selector(NSView.cursorUpdate(with:)), with: moved)
+        guard NSCursor.current === PanePointer.cursor, PanePointer.cursor !== NSCursor.iBeam else {
+            print("DOJO_SMOKE failed: the pointer over a pane is not Dojo's I-beam")
+            exit(1)
+        }
+        guard let file = ProcessInfo.processInfo.environment["DOJO_SMOKE_POINTER"], !file.isEmpty else { return }
+        let cursor = PanePointer.cursor
+        guard let rep = cursor.image.representations.compactMap({ $0 as? NSBitmapImageRep })
+                .first(where: { $0.pixelsWide == Int(cursor.image.size.width) * 2 }),
+              let png = rep.representation(using: .png, properties: [:]),
+              (try? png.write(to: URL(fileURLWithPath: file))) != nil else {
+            print("DOJO_SMOKE pointer failed: no 2x picture for \(file)")
+            exit(1)
+        }
+        print("DOJO_SMOKE pointer: \(file) \(rep.pixelsWide)x\(rep.pixelsHigh), hot spot \(cursor.hotSpot.x),\(cursor.hotSpot.y)")
+    }
+
     private func write(shot: String, of window: NSWindow?) {
         guard let window else {
             print("DOJO_SMOKE shot failed: no window for \(shot)")

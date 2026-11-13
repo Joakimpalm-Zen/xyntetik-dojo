@@ -37,8 +37,12 @@ final class TerminalPane: TerminalView, PaneIO {
     var onLanded: (() -> Void)?
     private var process: LocalProcess!
 
+    /// D19: the pane's own pointer methods, added once for the class (see `PanePointer`).
+    private static let pointer: Void = PanePointer.install(on: TerminalPane.self)
+
     init(name: String) {
         paneName = name
+        _ = TerminalPane.pointer
         super.init(frame: NSRect(x: 0, y: 0, width: 640, height: 400))
         // With font smoothing, as in the cell the owner picked: see `defaultFont`.
         fontSmoothing = true
