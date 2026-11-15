@@ -44,12 +44,10 @@ import Testing
         let ssh = shellArgs(plan.args[3], home: home)
         #expect(Array(ssh.prefix(9)) == ["ssh", "-t", "-R", "7788:127.0.0.1:7788", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=3", "user@box"])
         #expect(ssh.count == 10)
-        // On the remote host: the login shell, which has sh decode and run the line (D32): env with the
-        // pane's variables, then the harness.
+        // On the remote host: the login shell, then env with the pane's variables, then the harness.
         let remote = shellArgs(ssh[9], home: "/remote/home")
         #expect(Array(remote.prefix(4)) == ["/bin/remote-shell", "-l", "-i", "-c"])
-        #expect(remote.count == 5 && remote[4].hasPrefix("exec sh -c '"))
-        let harness = shellArgs(try #require(Launcher.posixInnerCommand(ssh[9])), home: "/remote/home")
+        let harness = shellArgs(remote[4], home: "/remote/home")
         #expect(Array(harness.prefix(6)) == ["env", "DOJO_PANE=codex-2", "DOJO_PORT=7788", "DOJO_TOKEN=tok",
                                              "PATH=/remote/home/.dojo/bin:/usr/bin:/bin", "codex"])
         #expect(Array(harness[6...7]) == ["--dangerously-bypass-hook-trust", "-c"])
@@ -57,7 +55,8 @@ import Testing
         // the tick reaches a host the same way
         let ticked = Launcher.plan(kind: .codex, paneName: "codex-2", host: "user@box", port: 7788, token: "tok",
                                    runnerModel: nil, loginShell: "/bin/zsh", unrestricted: true)
-        let tickedHarness = shellArgs(try #require(Launcher.posixInnerCommand(ticked.args[3])), home: "/remote/home")
+        let tickedHarness = shellArgs(shellArgs(shellArgs(ticked.args[3], home: home)[9], home: "/remote/home")[4],
+                                      home: "/remote/home")
         #expect(Array(tickedHarness[6...8]) == ["--yolo", "--dangerously-bypass-hook-trust", "-c"])
     }
 
@@ -101,9 +100,10 @@ import Testing
         let payload = remote.dropFirst(head.count).dropLast(tail.count)
         #expect(!payload.isEmpty)
         #expect(payload.allSatisfy { $0.isLetter || $0.isNumber || "+/=".contains($0) })
-        // bash.exe then runs exactly the line a POSIX host's login shell gets.
-        let posixInner = try #require(Launcher.posixInnerCommand(posix.args[3]))
-        #expect(Launcher.windowsInnerCommand(remote) == posixInner)
+        // bash.exe then runs the line a POSIX host's login shell gets: the same words, quoted the POSIX way
+        // here and the way fish also reads there (D32).
+        let posixInner = shellArgs(shellArgs(posix.args[3], home: home)[9], home: "/remote/home")[4]
+        #expect(shellArgs(try #require(Launcher.windowsInnerCommand(remote)), home: "/c/Users/me") == shellArgs(posixInner, home: "/c/Users/me"))
         let harness = shellArgs(try #require(Launcher.windowsInnerCommand(remote)), home: "/c/Users/me")
         #expect(Array(harness.prefix(6)) == ["env", "DOJO_PANE=claude-3", "DOJO_PORT=7788", "DOJO_TOKEN=tok",
                                              "PATH=/c/Users/me/.dojo/bin:/usr/bin:/bin", "claude"])
@@ -126,7 +126,7 @@ import Testing
         #expect(plan.executable == "/bin/zsh")
         let ssh = shellArgs(plan.args[3], home: home)
         #expect(Array(ssh.prefix(2)) == ["ssh", "-t"])
-        #expect(shellArgs(Launcher.posixInnerCommand(ssh[9]) ?? "", home: "/remote/home").suffix(3) == ["/bin/sh", "-c", "echo ok"])
+        #expect(shellArgs(shellArgs(ssh[9], home: "/remote/home")[4], home: "/remote/home").suffix(3) == ["/bin/sh", "-c", "echo ok"])
     }
 
     @Test func panesStartInTheChosenFolder() {
@@ -138,8 +138,9 @@ import Testing
         let remote = Launcher.plan(kind: .codex, paneName: "codex-1", host: "box", port: 7788, token: "t",
                                    runnerModel: nil, loginShell: "/bin/zsh", directory: "/srv/it's here")
         #expect(remote.directory == nil)
-        let inner = Launcher.posixInnerCommand(remote.args[3]) ?? ""
-        #expect(inner.hasPrefix("cd '/srv/it'\\''s here' && exec env "))
+        let inner = shellArgs(shellArgs(remote.args[3], home: home)[9], home: "/remote/home")[4]
+        // quoted so that fish reads it as sh does (D32): the apostrophe stands in double quotes
+        #expect(inner.hasPrefix(#"cd '/srv/it'"'"'s here' && exec env "#))
         let windows = Launcher.plan(kind: .codex, paneName: "codex-1", host: "me@box", port: 7788, token: "t",
                                     runnerModel: nil, loginShell: "/bin/zsh", remoteShell: .windows, directory: #"C:\Users\me\repo"#)
         #expect(Launcher.windowsInnerCommand(shellArgs(windows.args[3], home: home)[9])?.hasPrefix(#"cd 'C:\Users\me\repo' && exec env "#) == true)
@@ -260,7 +261,7 @@ import Testing
         #expect(Shell.homeQuoted("/srv/x") == Shell.quote("/srv/x"))
         let plan = Launcher.plan(kind: .claude, paneName: "claude-1", host: "me@box", port: 7788, token: "t",
                                  runnerModel: nil, loginShell: "/bin/zsh", directory: "~/repo")
-        #expect(Launcher.posixInnerCommand(plan.args.last ?? "")?.hasPrefix("cd ~/" + Shell.quote("repo") + " && ") == true)
+        #expect(plan.args.last?.contains("cd ~/" + Shell.quote("repo") + " && ") == true)
         #expect(Launcher.probeNote(error: "ssh: connect to host box port 22: No route to host\n").hasPrefix("The host did not answer the shell probe (ssh: connect to host box port 22: No route to host); assuming a POSIX shell."))
     }
 

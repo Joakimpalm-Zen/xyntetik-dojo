@@ -107,25 +107,16 @@ import Testing
         }
 
         /// The command this Mac's login shell is given for a pane on the host: as the code under test builds
-        /// it, or as main builds it. Main's is put together here from the parts main's `Launcher.plan` uses
-        /// (`harnessWords`, `Shell.line`, `Shell.quote`, `Shell.homeQuoted`, `sshWords`), in main's order.
+        /// it, or as main builds it (`mainsCommand`: from `harnessWords`, `Shell.line`, `Shell.quote`,
+        /// `Shell.homeQuoted` and `sshWords`, which the change leaves as they are).
         func command(kind: HarnessKind, folder: String?, main: Bool) -> String {
             let directory = folder.map { path(of: $0) }
-            let forward: Int? = kind == .runner ? 18081 : nil
             guard main else {
                 return Launcher.plan(kind: kind, paneName: "\(kind)-1", host: "user@box", port: 7788, token: "tok",
                                      runnerModel: nil, loginShell: "/bin/zsh", directory: directory, remotePort: 50001,
-                                     runnerForward: forward).args[3]
+                                     runnerForward: kind == .runner ? 18081 : nil).args[3]
             }
-            var assignments = ["DOJO_PANE=\(kind)-1", "DOJO_PORT=50001", "DOJO_TOKEN=tok"]
-            if kind == .runner { assignments += ["DOJO_RUNNER_PORT=\(Launcher.remoteRunnerPort)", "DOJO_RUNNER_TRAY=off"] }
-            let harness = Launcher.harnessWords(kind: kind, paneName: "\(kind)-1", port: 50001, runnerModel: nil)
-            let words: [ShellWord] = [.literal("env")] + assignments.map { ShellWord.literal($0) }
-                + [.raw(#"PATH="$HOME/.dojo/bin:$PATH""#)] + harness
-            let inner = (directory.map { "cd " + Shell.homeQuoted($0) + " && " } ?? "") + "exec " + Shell.line(words)
-            let remote = #"exec "$SHELL" -l -i -c "# + Shell.quote(inner)
-            return "exec " + Shell.line(Launcher.sshWords(host: "user@box", port: 7788, remotePort: 50001,
-                                                          remoteCommand: remote, runnerForward: forward))
+            return RemoteLoginShellTests.mainsCommand(kind: kind, directory: directory)
         }
 
         /// Runs the command as the app does: `local` reads it as a login shell, the stand-in ssh hands the
@@ -162,6 +153,32 @@ import Testing
 
         func same(_ a: String, _ b: String) -> Bool {
             URL(fileURLWithPath: a).resolvingSymlinksInPath().path == URL(fileURLWithPath: b).resolvingSymlinksInPath().path
+        }
+    }
+
+    /// Main's command for a remote pane, put together from the parts main's `Launcher.plan` uses, in its order.
+    static func mainsCommand(kind: HarnessKind, directory: String?, windows: Bool = false) -> String {
+        var assignments = ["DOJO_PANE=\(kind)-1", "DOJO_PORT=50001", "DOJO_TOKEN=tok"]
+        if kind == .runner { assignments += ["DOJO_RUNNER_PORT=\(Launcher.remoteRunnerPort)", "DOJO_RUNNER_TRAY=off"] }
+        let harness = Launcher.harnessWords(kind: kind, paneName: "\(kind)-1", port: 50001, runnerModel: nil)
+        let words: [ShellWord] = [.literal("env")] + assignments.map { ShellWord.literal($0) }
+            + [.raw(#"PATH="$HOME/.dojo/bin:$PATH""#)] + harness
+        let inner = (directory.map { "cd " + Shell.homeQuoted($0) + " && " } ?? "") + "exec " + Shell.line(words)
+        let remote = windows ? Launcher.windowsRemoteCommand(inner: inner) : #"exec "$SHELL" -l -i -c "# + Shell.quote(inner)
+        return "exec " + Shell.line(Launcher.sshWords(host: "user@box", port: 7788, remotePort: 50001, remoteCommand: remote,
+                                                      runnerForward: kind == .runner ? 18081 : nil))
+    }
+
+    /// A Windows host's command is read by cmd.exe and MSYS2 bash, never by fish, and is not touched: it is
+    /// main's, character for character.
+    @Test func aWindowsHostsCommandIsMainsToTheLetter() {
+        for kind in [HarnessKind.claude, .codex, .pi, .runner, .shell] {
+            for folder in [nil, #"C:\Users\me\it's here"#] as [String?] {
+                let now = Launcher.plan(kind: kind, paneName: "\(kind)-1", host: "user@box", port: 7788, token: "tok",
+                                        runnerModel: nil, loginShell: "/bin/zsh", remoteShell: .windows, directory: folder,
+                                        remotePort: 50001, runnerForward: kind == .runner ? 18081 : nil).args[3]
+                #expect(now == Self.mainsCommand(kind: kind, directory: folder, windows: true), "\(kind), folder \(folder ?? "none")")
+            }
         }
     }
 
@@ -272,6 +289,47 @@ import Testing
                 let third = try #require(Fish.words(inner), "\(what): fish cannot read the command the login shell is started with")
                 #expect(third == Posix.words(inner), "\(what)")
             }
+        }
+    }
+
+    /// The quoting on its own: every shell here reads each word back as it was, quoted once and quoted
+    /// again, as a command that crosses two shells is.
+    @Test func everyShellHereReadsAQuotedWordBackAsItWas() throws {
+        let words = ["", "plain", "two words", "it's", "end\\", "a\\\\b", "\\'", "'\\", "''", "\\\\'\\", "$HOME \"q\" `x` $(y)",
+                     "répo ☺", "line one\nline two", "~/x", "*?[a]{b,c}", "%OS%", "#c", "a;b|c&d<e>f(g)", "=cmd", "!bang", "-n", " lead and trail "]
+        let line = "/usr/bin/printf '%s\\0' " + words.map(Shell.quoteAnyShell).joined(separator: " ")
+        var ran: [String] = []
+        for shell in Self.shellsHere {
+            for command in [line, "exec " + shell + " -c " + Shell.quoteAnyShell(line)] {
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: shell)
+                process.arguments = ["-c", command]
+                process.environment = ["PATH": "/usr/bin:/bin", "HOME": NSTemporaryDirectory(), "LANG": "en_US.UTF-8"]
+                process.standardInput = FileHandle.nullDevice
+                process.standardError = FileHandle.nullDevice
+                let out = Pipe()
+                process.standardOutput = out
+                try process.run()
+                let data = out.fileHandleForReading.readDataToEndOfFile()
+                process.waitUntilExit()
+                var read = String(decoding: data, as: UTF8.self).components(separatedBy: "\0")
+                if read.last == "" { read.removeLast() }
+                // printf prints nothing for no words at all, never for an empty one among others
+                #expect(read == words, "\(shell), \(command == line ? "quoted once" : "quoted twice")")
+            }
+            ran.append(shell)
+        }
+        print("D32 quoting: read back by \(ran.joined(separator: " "))")
+        // a plain word stays as it is, as with the POSIX quoting
+        #expect(Shell.quoteAnyShell("DOJO_PANE=claude-1") == "DOJO_PANE=claude-1")
+        #expect(Shell.quoteAnyShell("it's") == #"'it'"'"'s'"#)
+        #expect(Shell.quoteAnyShell(#"end\"#) == #"'end'\\"#)
+        // and is made of nothing but plain text in single quotes, an apostrophe in double quotes, and a
+        // backslash before a backslash
+        let pieces = try NSRegularExpression(pattern: #"^(?:'[^'\\]*'|"'"|\\\\)+$"#)
+        for word in words {
+            let quoted = Shell.quoteAnyShell(word)
+            #expect(quoted == word || pieces.firstMatch(in: quoted, range: NSRange(quoted.startIndex..., in: quoted)) != nil, "\(word)")
         }
     }
 
