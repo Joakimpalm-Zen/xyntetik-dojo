@@ -100,9 +100,10 @@ import Testing
         let payload = remote.dropFirst(head.count).dropLast(tail.count)
         #expect(!payload.isEmpty)
         #expect(payload.allSatisfy { $0.isLetter || $0.isNumber || "+/=".contains($0) })
-        // bash.exe then runs exactly the line a POSIX host's login shell gets.
+        // bash.exe then runs the line a POSIX host's login shell gets: the same words, quoted the POSIX way
+        // here and the way fish also reads there (D32).
         let posixInner = shellArgs(shellArgs(posix.args[3], home: home)[9], home: "/remote/home")[4]
-        #expect(Launcher.windowsInnerCommand(remote) == posixInner)
+        #expect(shellArgs(try #require(Launcher.windowsInnerCommand(remote)), home: "/c/Users/me") == shellArgs(posixInner, home: "/c/Users/me"))
         let harness = shellArgs(try #require(Launcher.windowsInnerCommand(remote)), home: "/c/Users/me")
         #expect(Array(harness.prefix(6)) == ["env", "DOJO_PANE=claude-3", "DOJO_PORT=7788", "DOJO_TOKEN=tok",
                                              "PATH=/c/Users/me/.dojo/bin:/usr/bin:/bin", "claude"])
@@ -138,7 +139,8 @@ import Testing
                                    runnerModel: nil, loginShell: "/bin/zsh", directory: "/srv/it's here")
         #expect(remote.directory == nil)
         let inner = shellArgs(shellArgs(remote.args[3], home: home)[9], home: "/remote/home")[4]
-        #expect(inner.hasPrefix("cd '/srv/it'\\''s here' && exec env "))
+        // quoted so that fish reads it as sh does (D32): the apostrophe stands in double quotes
+        #expect(inner.hasPrefix(#"cd '/srv/it'"'"'s here' && exec env "#))
         let windows = Launcher.plan(kind: .codex, paneName: "codex-1", host: "me@box", port: 7788, token: "t",
                                     runnerModel: nil, loginShell: "/bin/zsh", remoteShell: .windows, directory: #"C:\Users\me\repo"#)
         #expect(Launcher.windowsInnerCommand(shellArgs(windows.args[3], home: home)[9])?.hasPrefix(#"cd 'C:\Users\me\repo' && exec env "#) == true)
