@@ -17,10 +17,10 @@ import Testing
         }
     }
 
-    /// What the host runs: on Windows the line travels as base64, past cmd.exe.
+    /// What the host runs: the line travels as base64, past cmd.exe on Windows and past the login shell elsewhere.
     private func onTheHost(_ shell: RemoteShell, remotePort: Int) throws -> String {
         let line = plan(shell: shell, remotePort: remotePort)
-        guard shell == .windows else { return line }
+        guard shell == .windows else { return try #require(Launcher.posixLoginLine(line)) }
         let head = "$^(echo ", tail = " ^| base64 -d^)"
         let start = try #require(line.range(of: head)).upperBound
         let end = try #require(line.range(of: tail)).lowerBound

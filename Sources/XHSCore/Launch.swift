@@ -192,7 +192,7 @@ public enum Launcher {
 
     /// The plan for a pane. Local panes run in the owner's login shell so PATH matches their terminal.
     /// Remote panes run `ssh -t -R remotePort:127.0.0.1:port host` with the same harness command in the remote
-    /// login shell. Each has its own `remotePort`, so closing one leaves the others on the bus.
+    /// login shell, handed over so that any login shell can read it (`posixRemoteCommand`). Each has its own `remotePort`, so closing one leaves the others on the bus.
     /// A Windows host (cmd.exe over OpenSSH) runs the same inner command in MSYS2 bash; see `windowsRemoteCommand`.
     ///
     /// `runnerForward` (D12): a Runner pane on a host also forwards that host's Runner port to this port on
@@ -233,7 +233,7 @@ public enum Launcher {
         let inner = cd + "exec " + Shell.line([.literal("env")] + assignments + [path] + harness)
         let remote: String
         switch remoteShell {
-        case .posix: remote = #"exec "$SHELL" -l -i -c "# + Shell.quote(inner)
+        case .posix: remote = posixRemoteCommand(line: #"exec "$SHELL" -l -i -c "# + Shell.quote(inner))
         case .windows: remote = windowsRemoteCommand(inner: inner, bash: msysBash)
         }
         let ssh = sshWords(host: host, port: port, remotePort: busPort, remoteCommand: remote,
@@ -260,6 +260,25 @@ public enum Launcher {
     /// The inner command a Windows remote command carries, for tests and troubleshooting.
     public static func windowsInnerCommand(_ remote: String) -> String? {
         guard let start = remote.range(of: "echo "), let end = remote.range(of: " ^|", range: start.upperBound..<remote.endIndex),
+              let data = Data(base64Encoded: String(remote[start.upperBound..<end.lowerBound])) else { return nil }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// The remote command for a POSIX host, read first by the account's login shell, whatever that is (D32).
+    /// A POSIX line quoted once more comes apart in fish, which reads a backslash before an apostrophe inside
+    /// single quotes as an escape. So the login shell gets one single-quoted word with no apostrophe and no
+    /// backslash in it, which sh, bash, zsh, fish, csh and tcsh read alike: a short script for `sh` that
+    /// decodes `line` from base64 and runs it. `-d` is asked for first; a base64 that knows only `-D`
+    /// (macOS before 13) gets that. What `line` then starts is still the login shell with `-l -i -c`, which
+    /// sh, bash, zsh and fish take and a csh does not.
+    public static func posixRemoteCommand(line: String) -> String {
+        "exec sh -c 'd=-d; echo QQ== | base64 -d >/dev/null 2>&1 || d=-D; eval \"$(echo "
+            + Data(line.utf8).base64EncodedString() + " | base64 $d)\"'"
+    }
+
+    /// The line a POSIX remote command carries, for tests and troubleshooting.
+    public static func posixLoginLine(_ remote: String) -> String? {
+        guard let start = remote.range(of: "$(echo "), let end = remote.range(of: " | base64 $d)", range: start.upperBound..<remote.endIndex),
               let data = Data(base64Encoded: String(remote[start.upperBound..<end.lowerBound])) else { return nil }
         return String(decoding: data, as: UTF8.self)
     }

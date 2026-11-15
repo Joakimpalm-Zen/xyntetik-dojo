@@ -23,9 +23,10 @@ fail() { echo "$1"; cat "$tmp/log"; [ -f "$tmp/remote" ] && cat "$tmp/remote"; e
 # the POSIX line inside a Windows command: base64 between "echo " and " ^|"
 inner() { sed 's/.*\$^(echo \([A-Za-z0-9+/=]*\) ^|.*/\1/' "$tmp/remote" | base64 -d; }
 
-# A POSIX host echoes the words as written.
+# A POSIX host echoes the words as written. Its login shell, which may be fish or a csh (D32), gets one
+# quoted word and sh runs the line.
 run '%OS% %DOJO_MSYS2_BASH%'
-case $(cat "$tmp/remote") in "mkdir -p ~/.dojo && tar -C ~/.dojo -xf - && python3 ~/.dojo/dojo-mcp.py install") ;; *) fail "posix line" ;; esac
+case $(cat "$tmp/remote") in "exec sh -c 'mkdir -p ~/.dojo && tar -C ~/.dojo -xf - && python3 ~/.dojo/dojo-mcp.py install'") ;; *) fail "posix line" ;; esac
 [ "$(sort "$tmp/files" | tr '\n' ' ')" = "dojo-mcp.py dojo-pi.ts runner-start.sh " ] || fail "the three files go over"
 
 # A Windows host whose session names no bash: C:\msys64's.

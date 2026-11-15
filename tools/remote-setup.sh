@@ -31,7 +31,9 @@ case $probe in
         remote="set MSYS2_PATH_TYPE=inherit&& $bash_cmd -lc \"eval \\\"\$^(echo $encoded ^| base64 -d^)\\\"\""
         ;;
     *)
-        remote='mkdir -p ~/.dojo && tar -C ~/.dojo -xf - && python3 ~/.dojo/dojo-mcp.py install'
+        # The host's login shell may be fish or a csh (D32): it gets one quoted word, with no apostrophe and
+        # no backslash in it, and sh runs the line.
+        remote="exec sh -c 'mkdir -p ~/.dojo && tar -C ~/.dojo -xf - && python3 ~/.dojo/dojo-mcp.py install'"
         ;;
 esac
 # runner-start.sh is what a Runner pane on the host runs (D12): the same script as on this Mac.

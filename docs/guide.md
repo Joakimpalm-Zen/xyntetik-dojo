@@ -83,7 +83,7 @@ Then press plus and enter `user@box` as the host (or pick it from the clock at t
 ssh -t -R <the pane's port>:127.0.0.1:7788 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 user@box '<harness in the remote login shell>'
 ```
 
-The harness runs in the remote login shell (`$SHELL -l -i`), so it needs to be on the PATH that shell sets. The reverse tunnel lets the shim on the remote host reach the bus at that port of `127.0.0.1` there. The remote host's own keys, logins and tokens are used; the app stores none. Use key-based SSH; a password prompt shows up in the pane. A remote pi uses the Runner on that host, which a Runner pane there can start (see Runner on a host above).
+The harness runs in the remote login shell (`$SHELL -l -i`), so it needs to be on the PATH that shell sets. That shell can be sh, bash, zsh or fish: it is handed one plain quoted word, and `sh` on the host decodes the harness line from base64 and starts the login shell with it, so the host needs `sh` and `base64`. A csh or tcsh login shell does not work: it takes no `-l` together with a command. The reverse tunnel lets the shim on the remote host reach the bus at that port of `127.0.0.1` there. The remote host's own keys, logins and tokens are used; the app stores none. Use key-based SSH; a password prompt shows up in the pane. A remote pi uses the Runner on that host, which a Runner pane there can start (see Runner on a host above).
 
 ### Windows hosts
 
