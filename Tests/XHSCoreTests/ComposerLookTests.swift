@@ -134,7 +134,15 @@ import Testing
         #expect(Composer.hasKeyHint("(enter select)"))
         #expect(Composer.hasKeyHint("Do you want this? [press enter]"))
         #expect(Composer.hasKeyHint("Enter to select · Tab/Arrow keys to navigate · Esc to cancel"))
-        // the owner's status
+        // a slash in a hint row does not make it a path
+        #expect(Composer.hasKeyHint("Use ↑/↓ and Enter to select"))
+        #expect(Composer.hasKeyHint("Press Enter to confirm, Esc/Ctrl+C to cancel"))
+        #expect(Composer.hasKeyHint("(y/n) press enter to confirm"))
+        // the owner's status: a path begins at a word that starts with a tilde or a slash, and runs to the
+        // end of its part; what stands before it is read as any other text
+        #expect(!Composer.hasKeyHint("cwd: ~/please press enter"))
+        #expect(!Composer.hasKeyHint("in /Users/me/press enter · main"))
+        #expect(Composer.hasKeyHint("press enter to open ~/notes"))
         #expect(!Composer.hasKeyHint("GPT-6.1-Sol high · ~/press enter · GPT-6.1-Sol"))
         #expect(!Composer.hasKeyHint("GPT-6.1-Sol high · ~/please press enter · GPT-6.1-Sol"))
         #expect(!Composer.hasKeyHint("branch fix/esc back · main"))
