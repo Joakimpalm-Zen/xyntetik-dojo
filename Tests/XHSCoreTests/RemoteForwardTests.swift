@@ -85,14 +85,14 @@ import Testing
             }
             for kind in [HarnessKind.shell, .runner] {
                 let inner = try hostsLine(kind, shell)
-                #expect(!inner.contains("dojo state"), "\(kind) \(shell)")
+                #expect(!inner.contains("command -v dojo"), "\(kind) \(shell)")
                 #expect(!inner.contains(" && exec "), "\(kind) \(shell): one command, as on main")
             }
         }
         // a pane on this Mac has no tunnel to check
         let local = Launcher.plan(kind: .claude, paneName: "claude-1", host: nil, port: 7788, token: "tok", runnerModel: nil,
                                   loginShell: "/bin/zsh").args.joined(separator: " ")
-        #expect(!local.contains("dojo state"))
+        #expect(!local.contains("command -v dojo"))
     }
 
     /// The line the host's login shell is started with, for a pane of this kind.
