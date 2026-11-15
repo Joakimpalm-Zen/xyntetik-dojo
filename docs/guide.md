@@ -83,7 +83,7 @@ Then press plus and enter `user@box` as the host (or pick it from the clock at t
 ssh -t -R <the pane's port>:127.0.0.1:7788 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 user@box '<harness in the remote login shell>'
 ```
 
-The harness runs in the remote login shell (`$SHELL -l -i`), so it needs to be on the PATH that shell sets. That shell can be sh, bash, zsh or fish: it is handed one plain quoted word, and `sh` on the host decodes the harness line from base64 and starts the login shell with it, so the host needs `sh` and `base64`. A csh or tcsh login shell does not work: it takes no `-l` together with a command. The reverse tunnel lets the shim on the remote host reach the bus at that port of `127.0.0.1` there. The remote host's own keys, logins and tokens are used; the app stores none. Use key-based SSH; a password prompt shows up in the pane. A remote pi uses the Runner on that host, which a Runner pane there can start (see Runner on a host above).
+The harness runs in the remote login shell (`$SHELL -l -i`), so it needs to be on the PATH that shell sets. That shell can be sh, bash, zsh or fish. It is started as a login shell and given one plain command, a call of `sh`; `sh` then decodes the harness line from base64 and runs it, so the harness line is read by `sh` whatever the login shell is. The host needs `sh` and one of `base64` or `python3` on the PATH its login shell sets. A csh or tcsh login shell does not work: it takes no `-l` together with a command. The reverse tunnel lets the shim on the remote host reach the bus at that port of `127.0.0.1` there. The remote host's own keys, logins and tokens are used; the app stores none. Use key-based SSH; a password prompt shows up in the pane. A remote pi uses the Runner on that host, which a Runner pane there can start (see Runner on a host above).
 
 ### Windows hosts
 
@@ -255,6 +255,8 @@ For a manual close check, use a disposable app session with a running pane. Clic
 - A pane stays `starting`: a startup dialog waits for you, or the harness has not reported its session start yet. Your first prompt in that pane clears it (its Stop makes it `idle`).
 - `/resume` in a pane lists other sessions than your terminal does: Claude Code lists sessions per folder, so give the pane the same start folder.
 - A pane turns red at once: the harness is not on your login shell's PATH (the pane shows the error), or the ssh connection failed.
+- A remote pane ends with `Dojo: this host cannot decode the pane command`: the host has neither `base64` nor `python3` on the PATH its login shell sets. Install one, or fix the PATH in the login profile.
+- A remote pane ends with `Argument list too long`: the harness line travels as base64, a third longer than it is, in one argument, and a Linux host takes about 128,000 characters in one. Only a folder or model name of tens of thousands of characters gets there.
 - A remote pane says `ssh: connect to host ... No route to host` while the host is up: macOS Local Network privacy. Allow the app under System Settings, Privacy & Security, Local Network (the app asks the first time it connects; a rebuilt app may ask again).
 - A Windows pane shows `bash.exe is not recognized`: MSYS2 is not at `C:\msys64` and the ssh session does not name it in `DOJO_MSYS2_BASH`.
 - Claude Code on a Windows host draws its prompt near the top of the pane rather than at the bottom. That is how it renders on a Windows console; the pane passes the right size (`make smoke HOST=...` prints it) and resizes reach the host.

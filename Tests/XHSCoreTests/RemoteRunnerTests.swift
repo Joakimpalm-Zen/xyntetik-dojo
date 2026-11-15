@@ -30,7 +30,7 @@ import Testing
     }
 
     @Test func theHostRunsTheSameStartScript() {
-        #expect(Launcher.posixLoginLine(line(.runner, host: "user@box", runnerForward: 18081))?.contains("runner-start.sh") == true)
+        #expect(Launcher.posixInnerCommand(line(.runner, host: "user@box", runnerForward: 18081))?.contains("runner-start.sh") == true)
     }
 
     @Test func aPiPaneOnThisMacIsToldWhichRunnerToUse() {
@@ -62,7 +62,7 @@ import Testing
                                  runnerModel: nil, loginShell: "/bin/zsh", remoteShell: shell, remotePort: 50001,
                                  runnerForward: kind == .runner ? 18081 : nil, msysBash: msysBash)
         let remote = plan.args[3]
-        return (shell == .windows ? Launcher.windowsInnerCommand(remote) : Launcher.posixLoginLine(remote)) ?? ""
+        return (shell == .windows ? Launcher.windowsInnerCommand(remote) : Launcher.posixInnerCommand(remote)) ?? ""
     }
 
     @Test func aRemoteRunnerServesOnDojosPortAndRaisesNoTray() {
@@ -85,7 +85,7 @@ import Testing
         let pi = Launcher.plan(kind: .pi, paneName: "pi-1", host: "user@box", port: 7788, token: "tok",
                                runnerModel: nil, loginShell: "/bin/zsh", remotePort: 50002,
                                runnerURL: Launcher.hostRunnerURL)
-        #expect(Launcher.posixLoginLine(pi.args[3])?.contains("DOJO_RUNNER_URL=http://127.0.0.1:18080/v1") == true)
+        #expect(Launcher.posixInnerCommand(pi.args[3])?.contains("DOJO_RUNNER_URL=http://127.0.0.1:18080/v1") == true)
         // a pi pane on a host has no -L: it is on the Runner's machine (the ssh words, before the host)
         let sshWords = pi.args[3].components(separatedBy: " user@box ").first ?? ""
         #expect(sshWords.hasPrefix("exec ssh -t -R 50002:127.0.0.1:7788"))

@@ -58,7 +58,7 @@ public enum Shell {    /// A folder as the remote shell should see it: a leading
 
 /// The shell an ssh host hands a remote command to.
 public enum RemoteShell: Equatable, Sendable {
-    /// A POSIX login shell: the harness runs in `"$SHELL" -l -i -c`.
+    /// A POSIX host: the login shell is started with `-l -i` and has sh run the harness line (`posixRemoteCommand`).
     case posix
     /// Windows OpenSSH with cmd.exe as its shell: the harness runs in MSYS2 bash, at C:\msys64 unless the
     /// host's ssh session names another (`msysBash(probeOutput:)`).
@@ -233,7 +233,7 @@ public enum Launcher {
         let inner = cd + "exec " + Shell.line([.literal("env")] + assignments + [path] + harness)
         let remote: String
         switch remoteShell {
-        case .posix: remote = posixRemoteCommand(line: #"exec "$SHELL" -l -i -c "# + Shell.quote(inner))
+        case .posix: remote = posixRemoteCommand(line: inner)
         case .windows: remote = windowsRemoteCommand(inner: inner, bash: msysBash)
         }
         let ssh = sshWords(host: host, port: port, remotePort: busPort, remoteCommand: remote,
@@ -264,21 +264,40 @@ public enum Launcher {
         return String(decoding: data, as: UTF8.self)
     }
 
-    /// The remote command for a POSIX host, read first by the account's login shell, whatever that is (D32).
-    /// A POSIX line quoted once more comes apart in fish, which reads a backslash before an apostrophe inside
-    /// single quotes as an escape. So the login shell gets one single-quoted word with no apostrophe and no
-    /// backslash in it, which sh, bash, zsh, fish, csh and tcsh read alike: a short script for `sh` that
-    /// decodes `line` from base64 and runs it. `-d` is asked for first; a base64 that knows only `-D`
-    /// (macOS before 13) gets that. What `line` then starts is still the login shell with `-l -i -c`, which
-    /// sh, bash, zsh and fish take and a csh does not.
+    /// The remote command for a POSIX host (D32). sshd hands it to the account's login shell, whatever that
+    /// is, and `line`, the harness line, is quoted for sh. fish reads a backslash before an apostrophe inside
+    /// single quotes as an escape, and two backslashes there as one, so it cannot be trusted with a line
+    /// quoted for sh, or with one quoted twice. So neither thing a login shell reads holds a backslash inside
+    /// single quotes:
+    ///
+    /// - the command ssh carries starts the login shell again as a login shell (`-l -i`, so its profile sets
+    ///   the PATH), with one command for it to run;
+    /// - that command is `exec sh -c '<script>'`, and the script has no apostrophe and no backslash in it.
+    ///
+    /// The script, run by sh with the login shell's environment, decodes `line` from base64 and runs it, so
+    /// the harness line is read by sh and by nothing else. It decodes with `base64 -d`, with `base64 -D` (all
+    /// a macOS before 13 has), or with the python3 every harness host has; where none of them works the pane
+    /// ends with a line that says so, and with a failure, not with a silent success.
     public static func posixRemoteCommand(line: String) -> String {
-        "exec sh -c 'd=-d; echo QQ== | base64 -d >/dev/null 2>&1 || d=-D; eval \"$(echo "
-            + Data(line.utf8).base64EncodedString() + " | base64 $d)\"'"
+        #"exec "$SHELL" -l -i -c "# + Shell.quote("exec sh -c '" + posixDecodeScript(line: line) + "'")
     }
 
-    /// The line a POSIX remote command carries, for tests and troubleshooting.
-    public static func posixLoginLine(_ remote: String) -> String? {
-        guard let start = remote.range(of: "$(echo "), let end = remote.range(of: " | base64 $d)", range: start.upperBound..<remote.endIndex),
+    /// What `posixRemoteCommand` has sh run. No apostrophe and no backslash may stand in it.
+    static func posixDecodeScript(line: String) -> String {
+        [
+            "DOJO_LINE=" + Data(line.utf8).base64EncodedString(),
+            "l=$(echo $DOJO_LINE | base64 -d 2>/dev/null) || l=",
+            #"[ -n "$l" ] || l=$(echo $DOJO_LINE | base64 -D 2>/dev/null) || l="#,
+            #"[ -n "$l" ] || l=$(python3 -c "import base64, sys; sys.stdout.write(base64.b64decode(sys.argv[1]).decode())" $DOJO_LINE 2>/dev/null) || l="#,
+            #"[ -n "$l" ] || { echo "Dojo: this host cannot decode the pane command: it needs base64 or python3 on the PATH its login shell sets." >&2; exit 127; }"#,
+            #"eval "$l""#,
+        ].joined(separator: "; ")
+    }
+
+    /// The harness line a POSIX remote command carries, for tests and troubleshooting.
+    public static func posixInnerCommand(_ remote: String) -> String? {
+        guard let end = remote.range(of: "; l=$(echo $DOJO_LINE | base64 -d"),
+              let start = remote.range(of: "DOJO_LINE=", options: .backwards, range: remote.startIndex..<end.lowerBound),
               let data = Data(base64Encoded: String(remote[start.upperBound..<end.lowerBound])) else { return nil }
         return String(decoding: data, as: UTF8.self)
     }
