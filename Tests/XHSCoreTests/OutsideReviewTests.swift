@@ -113,30 +113,38 @@ import Testing
         return rows.joined(separator: "\n")
     }
 
-    @Test func aKeyTheTerminalWrappedAcrossTwoRowsGoesWhole() {
+    @Test func aKeyTheScreenWrappedAcrossRowsGoesWhole() {
+        func read(_ text: String, width: Int) -> Redact.Outcome { Redact.apply(text, tokens: [RedactTests.token], width: width) }
         let github = "gh" + "p_" + Self.chars("a1B2", 60)
         // the first row holds enough of the key for the rule that reads row by row, which took that part
         // and left the rest on the next row
-        let wide = redact("$ ls\n" + Self.wrapped("echo " + github + " done", width: 60) + "\nnext")
+        let wide = read("$ ls\n" + Self.wrapped("echo " + github + " done", width: 60) + "\nnext", width: 60)
         #expect(wide.text == "$ ls\necho [redacted: github token]\n done\nnext")
         #expect(wide.count == 1)
-        // the first row holds too little of it for any rule
-        let narrow = redact(Self.wrapped("echo " + github + " done", width: 20) + "\nnext")
+        // the first row holds too little of it for any rule, and the key runs over four rows
+        let narrow = read(Self.wrapped("echo " + github + " done", width: 20) + "\nnext", width: 20)
         #expect(narrow.text == "echo [redacted: github token]\n\n\n done\nnext")
         #expect(narrow.count == 1)
         let stripe = "sk" + "_live_" + Self.chars("a1B2", 24)
-        #expect(redact(Self.wrapped("key " + stripe, width: 16)).text == "key [redacted: stripe key]\n\n")
+        #expect(read(Self.wrapped("key " + stripe, width: 16), width: 16).text == "key [redacted: stripe key]\n\n")
+        // a harness wraps its own text a little inside the edge and sets the next row in
+        let indented = "  ⎿  export KEY=" + github.prefix(40) + "\n     " + github.dropFirst(40) + " ok\n  next"
+        #expect(read(indented, width: 60).text == "  ⎿  export KEY=[redacted: github token]\n      ok\n  next")
         // one of the bus's own tokens, wrapped, is still the bus's to name
-        #expect(redact(Self.wrapped("echo " + RedactTests.token, width: 30)).text == "echo [dojo token]\n")
+        #expect(read(Self.wrapped("echo " + RedactTests.token, width: 30), width: 30).text == "echo [dojo token]\n")
     }
 
-    @Test func twoRowsThatOnlyLookJoinedAreLeftAlone() {
-        // the first row is not as wide as the widest: the terminal did not wrap it
+    @Test func rowsThatOnlyFollowEachOtherAreNotJoined() {
+        let github = "gh" + "p_" + Self.chars("a1B2", 40)
+        // a key that ends its row, in a pane much wider than the row: the next row is not part of it
+        let text = "export GITHUB_TOKEN=" + github + "\nok"
+        #expect(Redact.apply(text, tokens: [], width: 120).text == "export GITHUB_TOKEN=[redacted: github token]\nok")
+        // with no width known, nothing is joined
         let stripe = "sk" + "_live_" + Self.chars("a1B2", 24)
-        let text = "a much longer row than the one that follows it\nkey " + stripe.prefix(12) + "\n" + stripe.dropFirst(12) + " and more"
-        #expect(redact(text).text == text)
+        let cut = "key " + stripe.prefix(12) + "\n" + stripe.dropFirst(12) + " and more"
+        #expect(redact(cut).text == cut)
         let prose = "the task-\nlist is long and has many words in it\ncommit 1234567890abcdef\n1234567890abcdef12345678"
-        #expect(redact(prose).text == prose)
+        #expect(Redact.apply(prose, tokens: [], width: 13).text == prose)
     }
 
     @Test func ordinaryTextAndCodeAreLeftAlone() {
@@ -144,7 +152,7 @@ import Testing
             "max_tokens=4096", "MAX_TOKENS=4096", "TOKEN_COUNT=12", "PASSWORD=", "the password is in the vault",
             "max tokens: 4096", "tokens: 12", "password:", "the token: is here", "port: 7788, token: 12",
             "func add(name: String, token: String) -> String", "let token: String", "docker run -u 1000:1000 image",
-            "git push -u origin main", "sort -u a:b", "sk_live_short", "AIzaShort", "npm_install", "SG.one.two", "glpat-short",
+            "git push -u origin main", "sort -u a:b", "sk" + "_live_short", "AIzaShort", "npm_install", "SG.one.two", "glpat-short",
         ].joined(separator: "\n")
         let r = redact(text)
         #expect(r.text == text)

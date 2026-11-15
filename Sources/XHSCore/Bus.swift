@@ -17,6 +17,9 @@ public protocol PaneIO: AnyObject {
     /// step, and which of the terminal's two buffers is showing. A pane that cannot say gives its screen
     /// text row by row, no cursor and no buffer.
     func liveScreen() -> PaneScreen
+    /// How many columns wide the pane is, 0 when that is not known. `read` uses it to find a key that ran
+    /// past the right edge into the next row (D35.4).
+    var columns: Int { get }
 }
 
 public struct PaneScreen: Equatable, Sendable {
@@ -36,6 +39,7 @@ public struct PaneScreen: Equatable, Sendable {
 
 public extension PaneIO {
     func liveScreen() -> PaneScreen { PaneScreen(lines: screenText().components(separatedBy: "\n")) }
+    var columns: Int { 0 }
 }
 
 /// The message bus: pane registry, per-pane state, queued messages and the four operations.
@@ -773,7 +777,7 @@ public final class Bus {
         let lines = min(max(requested, 1), Bus.maxReadLines)
         let screen = Bus.lastLines(target.io?.screenText() ?? "", lines)
         // D21.2: secrets are taken out of what leaves the bus, always; the pane's own screen is untouched.
-        let clean = Redact.apply(screen, tokens: panes.map(\.token))
+        let clean = Redact.apply(screen, tokens: panes.map(\.token), width: target.io?.columns ?? 0)
         line["lines"] = screen.isEmpty ? 0 : screen.components(separatedBy: "\n").count
         line["redacted"] = clean.count
         return ok(["pane": target.name, "state": target.state.rawValue, "text": clean.text, "redacted": clean.count])

@@ -4,8 +4,8 @@ import Foundation
 /// switch. The owner's own view of a pane is never changed; only the text that leaves the bus is.
 ///
 /// Three passes. Every live bus token is replaced exactly, even when the terminal wrapped it across two rows:
-/// the bus knows them all, so that one is a guarantee. Then the keys with a fixed shape that the terminal
-/// wrapped over a row break (D35.4), and then the known secret shapes in `rules`, the short list below, after
+/// the bus knows them all, so that one is a guarantee. Then the keys with a fixed shape that the screen
+/// wrapped at the pane's width (D35.4), and then the known secret shapes in `rules`, the short list below, after
 /// the rule sets of gitleaks and detect-secrets. A pattern list misses things, so this is a backstop; who may
 /// read at all is the primary control (step 3, roles).
 ///
@@ -20,10 +20,12 @@ public enum Redact {
 
     public static let tokenMarker = "[dojo token]"
 
-    public static func apply(_ text: String, tokens: [String]) -> Outcome {
+    /// `width`: the columns of the pane the text was read off, for keys the screen wrapped; 0 for text that
+    /// was never on a screen.
+    public static func apply(_ text: String, tokens: [String], width: Int = 0) -> Outcome {
         var count = 0
         var out = tokensOut(text, tokens, &count)
-        out = wrappedOut(out, &count)
+        out = wrappedOut(out, width: width, &count)
         for rule in rules { out = rule.apply(out, &count) }
         return Outcome(text: out, count: count)
     }
@@ -76,58 +78,66 @@ public enum Redact {
 
     // MARK: keys the terminal wrapped
 
-    /// A key with a fixed shape that runs past the right edge of the terminal goes on in the next row, and no
-    /// rule that reads row by row sees it whole (D35.4). The rules marked `wraps` are tried on the text with
-    /// its row breaks taken out; a hit that crosses a break is replaced by its marker where it starts, and the
-    /// break stays where it was. Hits inside one row are left to the rules below.
+    /// How far short of the pane's width a row may end and still be one the screen wrapped: a harness wraps
+    /// its own text a little inside the edge.
+    static let wrapMargin = 4
+
+    /// A key with a fixed shape that runs past the right edge goes on in the next row, and no rule that reads
+    /// row by row sees it whole (D35.4). Where a row reaches the pane's width, it and the rows after it are
+    /// read as one line, each later row without its indent, and the rules marked `wraps` are tried on that. A
+    /// hit that crosses a row break is replaced by its marker where it starts; the rows it ran over stay as
+    /// rows, emptied of it. Hits inside one row are left to the rules below.
     ///
-    /// Two rows that only look joined must not count: a row the terminal wrapped is as wide as the terminal,
-    /// so it is as long as the longest row of the text, and a hit is taken only when every row it runs out of
-    /// is that long.
-    static func wrappedOut(_ text: String, _ count: inout Int) -> String {
-        let units = Array(text.utf16)
-        var flat: [UInt16] = []
-        var at: [Int] = []
-        for (i, u) in units.enumerated() where u != 0x0A {
-            flat.append(u)
-            at.append(i)
-        }
-        guard flat.count < units.count else { return text }
-        // which row each unit is in, and how long each row is
-        var rowOf = [Int](repeating: 0, count: units.count)
-        var rowLength = [0]
-        for (i, u) in units.enumerated() {
-            rowOf[i] = rowLength.count - 1
-            if u == 0x0A { rowLength.append(0) } else { rowLength[rowLength.count - 1] += 1 }
-        }
-        let widest = rowLength.max() ?? 0
-        let joined = String(utf16CodeUnits: flat, count: flat.count)
-        var hits: [(start: Int, end: Int, kind: String)] = []
-        for rule in rules where rule.wraps {
-            for m in rule.regex.matches(in: joined, range: NSRange(location: 0, length: flat.count)) where m.range.length > 0 {
-                let start = m.range.location, end = m.range.location + m.range.length
-                let firstRow = rowOf[at[start]], lastRow = rowOf[at[end - 1]]
-                guard lastRow > firstRow else { continue }                           // within one row
-                guard (firstRow..<lastRow).allSatisfy({ rowLength[$0] == widest }) else { continue }
-                guard !hits.contains(where: { start < $0.end && $0.start < end }) else { continue }
-                hits.append((start, end, rule.kind))
+    /// Only a row as wide as the pane counts, so two rows that merely follow each other are never joined; with
+    /// no width given nothing is.
+    static func wrappedOut(_ text: String, width: Int, _ count: inout Int) -> String {
+        var rows = text.components(separatedBy: "\n")
+        let full = width - wrapMargin
+        guard full > 8, rows.count > 1 else { return text }
+        var first = 0
+        while first < rows.count - 1 {
+            guard rows[first].count >= full else { first += 1; continue }
+            var last = first
+            while last < rows.count - 1, rows[last].count >= full { last += 1 }
+            // rows first...last as one line; where each row's part starts in it, and how much indent it lost
+            var joined = ""
+            var starts: [Int] = []
+            var indents: [Int] = []
+            for r in first...last {
+                let row = rows[r] as NSString
+                var indent = 0
+                if r > first { while indent < row.length, row.character(at: indent) == 0x20 { indent += 1 } }
+                starts.append((joined as NSString).length)
+                indents.append(indent)
+                joined += row.substring(from: indent)
             }
+            let line = joined as NSString
+            var hits: [(range: NSRange, kind: String)] = []
+            for rule in rules where rule.wraps {
+                for m in rule.regex.matches(in: joined, range: NSRange(location: 0, length: line.length)) {
+                    let end = m.range.location + m.range.length
+                    guard starts.dropFirst().contains(where: { m.range.location < $0 && $0 < end }) else { continue }
+                    guard !hits.contains(where: { NSIntersectionRange($0.range, m.range).length > 0 }) else { continue }
+                    hits.append((m.range, rule.kind))
+                }
+            }
+            // from the last hit back, so the places of the earlier ones hold
+            for hit in hits.sorted(by: { $0.range.location > $1.range.location }) {
+                let end = hit.range.location + hit.range.length
+                let from = starts.lastIndex(where: { $0 <= hit.range.location })!
+                let to = starts.lastIndex(where: { $0 < end })!
+                for k in from...to {
+                    let row = rows[first + k] as NSString
+                    // this row's part of the hit, in the row's own places
+                    let lower = max(hit.range.location, starts[k]) - starts[k] + indents[k]
+                    let upper = min(end, k + 1 < starts.count ? starts[k + 1] : line.length) - starts[k] + indents[k]
+                    rows[first + k] = row.substring(to: lower) + (k == from ? "[redacted: \(hit.kind)]" : "") + row.substring(from: upper)
+                }
+                count += 1
+            }
+            first = last
         }
-        guard !hits.isEmpty else { return text }
-        var drop = [Bool](repeating: false, count: units.count)
-        var markAt: [Int: String] = [:]
-        for hit in hits {
-            for k in hit.start..<hit.end { drop[at[k]] = true }
-            markAt[at[hit.start]] = "[redacted: \(hit.kind)]"
-            count += 1
-        }
-        var out: [UInt16] = []
-        out.reserveCapacity(units.count)
-        for (i, u) in units.enumerated() {
-            if let mark = markAt[i] { out += Array(mark.utf16) }
-            if !drop[i] { out.append(u) }
-        }
-        return String(utf16CodeUnits: out, count: out.count)
+        return rows.joined(separator: "\n")
     }
 
     // MARK: known secret shapes

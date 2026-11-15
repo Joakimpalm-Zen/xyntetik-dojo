@@ -163,6 +163,8 @@ final class TerminalPane: TerminalView, PaneIO {
         terminalInputStateSnapshot()?.bracketedPasteMode ?? false
     }
 
+    var columns: Int { terminalDimensions.cols }
+
     /// The live screen in one step: the rows as the terminal holds them, with a row it wrapped joined to the
     /// one it continues, and the line the cursor is on. The bus reads this just before it types (D35.1).
     func liveScreen() -> PaneScreen {
