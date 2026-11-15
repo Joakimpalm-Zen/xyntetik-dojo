@@ -136,6 +136,7 @@ import Testing
             process.standardInput = FileHandle.nullDevice
             process.standardOutput = FileHandle.nullDevice
             process.standardError = FileHandle.nullDevice
+            process.qualityOfService = .utility
             try process.run()
             let stuck = DispatchWorkItem { process.terminate() }
             DispatchQueue.global().asyncAfter(deadline: .now() + 30, execute: stuck)
@@ -332,6 +333,7 @@ import Testing
                     process.standardError = FileHandle.nullDevice
                     let out = Pipe()
                     process.standardOutput = out
+                    process.qualityOfService = .utility
                     try process.run()
                     let data = out.fileHandleForReading.readDataToEndOfFile()
                     process.waitUntilExit()
@@ -384,16 +386,16 @@ import Testing
     }
 }
 
-/// At most two of these tests run their shells at a time, so that a machine with few cores is not filled by
-/// them while other tests wait on a clock.
-private let shellRuns = DispatchSemaphore(value: 2)
+/// One of these tests runs its shells at a time, and the shells run at a low priority (`Process`'s quality of
+/// service), so that a machine with few cores is not filled by them while other tests wait on a clock.
+private let shellRuns = DispatchSemaphore(value: 1)
 
 /// Runs work that waits on other programs away from the threads the tests share. A test that waits there
 /// for a shell to end holds up every test that awaits something; nine of them at once starved a timing
-/// test elsewhere in the suite.
+/// test elsewhere in the suite, and two at once still slowed another on a hosted runner with three cores.
 func awayFromTheTests<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
     try await withCheckedThrowingContinuation { continuation in
-        DispatchQueue.global().async {
+        DispatchQueue.global(qos: .utility).async {
             shellRuns.wait()
             defer { shellRuns.signal() }
             continuation.resume(with: Result { try work() })
