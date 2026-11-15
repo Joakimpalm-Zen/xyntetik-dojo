@@ -414,9 +414,13 @@ public enum Launcher {
         // D12: a Runner pane on a host brings that host's Runner to this Mac. ExitOnForwardFailure: a local port
         // someone took since it was picked ends the pane with ssh's own message, not a pane with no tunnel.
         if let runnerForward {
-            words += [.literal("-L"), .literal("\(runnerForward):127.0.0.1:\(remoteRunnerPort)"),
-                      .literal("-o"), .literal("ExitOnForwardFailure=yes")]
+            words += [.literal("-L"), .literal("\(runnerForward):127.0.0.1:\(remoteRunnerPort)")]
         }
+        // D35.2: every remote pane, not only a Runner pane. Without its reverse tunnel (the host's port was
+        // taken, or its sshd forwards nothing) a harness starts with no way to reach the bus: no hooks, so no
+        // `prompt` state for the bus to respect, and no way to send. ssh then only warned and went on. Now the
+        // pane ends with ssh's own message.
+        words += [.literal("-o"), .literal("ExitOnForwardFailure=yes")]
         return words + [.literal("-o"), .literal("ServerAliveInterval=30"), .literal("-o"), .literal("ServerAliveCountMax=3"),
                         .literal(host), .literal(remoteCommand)]
     }
