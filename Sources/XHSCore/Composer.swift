@@ -227,13 +227,16 @@ public enum Composer {
 
     /// Whether a row carries a dialog's key hint. A hint is whole words: it begins where a word begins (the
     /// start of a part of the row, after a space, or after an opening bracket) and ends where a word ends.
-    /// A part of the row that is a path (it holds a slash or starts with a tilde) is the owner's status and
-    /// never a hint, whatever the folder is called.
+    /// A path is the owner's status and never a hint, whatever the folder is called: it begins at a word
+    /// that starts with a tilde or a slash and runs to the end of its part. A slash inside a word ("↑/↓",
+    /// "Esc/Ctrl+C", "(y/n)") begins no path.
     static func hasKeyHint(_ row: String) -> Bool {
         let parts = row.lowercased().components(separatedBy: " · ").flatMap { $0.components(separatedBy: "  ") }
         return parts.contains { piece in
-            let part = Array(piece.trimmingCharacters(in: .whitespaces))
-            guard !part.contains("/"), part.first != "~" else { return false }
+            var part = Array(piece.trimmingCharacters(in: .whitespaces))
+            if let path = part.indices.first(where: { "~/".contains(part[$0]) && ($0 == 0 || part[$0 - 1] == " ") }) {
+                part = Array(part[..<path])
+            }
             return dialogKeyHints.contains { hint in
                 let words = Array(hint)
                 guard part.count >= words.count else { return false }
