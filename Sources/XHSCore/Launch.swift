@@ -45,9 +45,10 @@ public enum Shell {    /// A folder as the remote shell should see it: a leading
     ///
     /// A word of plain characters is left as it is, as `quote` leaves it, with two exceptions: one that
     /// starts with `=`, which zsh would take for a command to look up, and one with a percent sign in it,
-    /// since fish puts its own process id for a bare word that starts with `%self`. Of what fish expands in a
-    /// bare word (command substitution, braces, variables, a leading tilde, wildcards, `%self`), the percent
-    /// sign is the only one among the plain characters.
+    /// since fish puts its own process id for the bare word `%self` (fish 4.9.3 did so for that word alone;
+    /// any word with a percent sign is quoted, whatever another fish does with a longer one). Of what fish
+    /// expands in a bare word (command substitution, braces, variables, a leading tilde, wildcards, `%self`),
+    /// the percent sign is the only one among the plain characters.
     ///
     /// The price is length where a line is quoted more than once. Measured, for one between plain text: a
     /// backslash is 4 bytes after one quoting, 12 after two and 34 after three, against 1 at every level the
