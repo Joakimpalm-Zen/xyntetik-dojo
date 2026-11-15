@@ -351,6 +351,9 @@ struct PaneCell: View {
                     Text(info?.draft == true ? "\(q) queued, unsent text here"
                          : info?.noComposer == true ? "\(q) queued, no composer on screen" : "\(q) queued")
                         .font(.caption).foregroundStyle(Color(Theme.coralInk))
+                } else if info?.noComposer == true {
+                    // nothing queued: a message is in the composer and its Enter waits (D35.1)
+                    Text("Enter held, no composer on screen").font(.caption).foregroundStyle(Color(Theme.coralInk))
                 }
                 if model.finishedUnseen(item) { UnseenMark() }
                 Text(model.finishedUnseen(item) ? "finished" : info?.state.rawValue ?? "").font(.caption).foregroundStyle(Color(PaneCell.tone(info?.state)))
