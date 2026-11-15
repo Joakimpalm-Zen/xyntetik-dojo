@@ -255,6 +255,7 @@ For a manual close check, use a disposable app session with a running pane. Clic
 - A pane stays `starting`: a startup dialog waits for you, or the harness has not reported its session start yet. Your first prompt in that pane clears it (its Stop makes it `idle`).
 - `/resume` in a pane lists other sessions than your terminal does: Claude Code lists sessions per folder, so give the pane the same start folder.
 - A pane turns red at once: the harness is not on your login shell's PATH (the pane shows the error), or the ssh connection failed.
+- A remote pane ends with `Argument list too long`: its folder name holds thousands of backslashes or apostrophes. The command is quoted once for each of the three shells that read it, in a way fish also reads, and that costs 34 bytes of the command for each backslash and 53 for each apostrophe (1 and 40 before fish was supported).
 - A remote pane says `ssh: connect to host ... No route to host` while the host is up: macOS Local Network privacy. Allow the app under System Settings, Privacy & Security, Local Network (the app asks the first time it connects; a rebuilt app may ask again).
 - A Windows pane shows `bash.exe is not recognized`: MSYS2 is not at `C:\msys64` and the ssh session does not name it in `DOJO_MSYS2_BASH`.
 - Claude Code on a Windows host draws its prompt near the top of the pane rather than at the bottom. That is how it renders on a Windows console; the pane passes the right size (`make smoke HOST=...` prints it) and resizes reach the host.

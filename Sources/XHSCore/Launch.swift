@@ -43,10 +43,18 @@ public enum Shell {    /// A folder as the remote shell should see it: a leading
     /// outside them, which every one of those shells reads alike. So a line quoted this way can be quoted
     /// again, any number of times, for a chain of shells of which any may be fish.
     ///
-    /// A word of plain characters is left as it is, as `quote` leaves it, except one that starts with `=`,
-    /// which zsh would take for a command to look up.
+    /// A word of plain characters is left as it is, as `quote` leaves it, with two exceptions: one that
+    /// starts with `=`, which zsh would take for a command to look up, and one with a percent sign in it,
+    /// since fish puts its own process id for a bare word that starts with `%self`. Of what fish expands in a
+    /// bare word (command substitution, braces, variables, a leading tilde, wildcards, `%self`), the percent
+    /// sign is the only one among the plain characters.
+    ///
+    /// The price is length where a line is quoted more than once. Measured, for one between plain text: a
+    /// backslash is 4 bytes after one quoting, 12 after two and 34 after three, against 1 at every level the
+    /// POSIX way; an apostrophe is 5, 17 and 53, against 4, 13 and 40. A remote pane's folder is quoted three
+    /// times, so a folder name with thousands of backslashes makes a command the system will not pass.
     public static func quoteAnyShell(_ s: String) -> String {
-        if !s.isEmpty, !s.hasPrefix("="), s.unicodeScalars.allSatisfy(plain.contains) { return s }
+        if !s.isEmpty, !s.hasPrefix("="), !s.contains("%"), s.unicodeScalars.allSatisfy(plain.contains) { return s }
         var out = ""
         var run = String.UnicodeScalarView()
         func endRun() {
