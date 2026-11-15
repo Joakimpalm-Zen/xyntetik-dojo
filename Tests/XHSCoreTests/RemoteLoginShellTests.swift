@@ -39,7 +39,9 @@ import Testing
     /// A Mac and a host in one temporary folder: a home for each, folders to start in on the host, a stand-in
     /// for ssh and sshd, and stand-ins for the harness and for Runner's start script.
     final class Host: @unchecked Sendable {
-        static let folderNames = ["plain", "two words", "it's", "end\\", "répo"]
+        /// `%self` is given to the pane as a relative path, so that the word the shells read starts with it:
+        /// fish puts its own process id for a bare word that does.
+        static let folderNames = ["plain", "two words", "it's", "end\\", "répo", "%self"]
 
         let fm = FileManager.default
         let root: URL
@@ -110,7 +112,7 @@ import Testing
         /// it, or as main builds it (`mainsCommand`: from `harnessWords`, `Shell.line`, `Shell.quote`,
         /// `Shell.homeQuoted` and `sshWords`, which the change leaves as they are).
         func command(kind: HarnessKind, folder: String?, main: Bool) -> String {
-            let directory = folder.map { path(of: $0) }
+            let directory = folder.map { $0 == "%self" ? $0 : path(of: $0) }
             guard main else {
                 return Launcher.plan(kind: kind, paneName: "\(kind)-1", host: "user@box", port: 7788, token: "tok",
                                      runnerModel: nil, loginShell: "/bin/zsh", directory: directory, remotePort: 50001,
@@ -292,7 +294,8 @@ import Testing
     /// With no fish on the machine its reading rule stands in for it: the command at each of the three levels
     /// must split into the same words for fish as for sh, for every kind of pane and awkward folder names.
     @Test func everyLevelSplitsTheSameForFishAsForSh() throws {
-        let folders: [String?] = [nil, "/srv/plain", "/srv/two words", "/srv/it's", "/srv/end\\", "/srv/a\\\\b", "/srv/répo", "~/my repo"]
+        let folders: [String?] = [nil, "/srv/plain", "/srv/two words", "/srv/it's", "/srv/end\\", "/srv/a\\\\b", "/srv/répo", "~/my repo",
+                                  "%self", "%self/work", "50%"]
         for kind in [HarnessKind.claude, .codex, .pi, .runner, .shell] {
             for folder in folders {
                 let what = "\(kind), folder \(folder ?? "none")"
@@ -319,7 +322,8 @@ import Testing
     /// again, as a command that crosses two shells is.
     @Test func everyShellHereReadsAQuotedWordBackAsItWas() async throws {
         let words = ["", "plain", "two words", "it's", "end\\", "a\\\\b", "\\'", "'\\", "''", "\\\\'\\", "$HOME \"q\" `x` $(y)",
-                     "répo ☺", "line one\nline two", "~/x", "*?[a]{b,c}", "%OS%", "#c", "a;b|c&d<e>f(g)", "=cmd", "!bang", "-n", " lead and trail "]
+                     "répo ☺", "line one\nline two", "~/x", "*?[a]{b,c}", "%OS%", "#c", "a;b|c&d<e>f(g)", "=cmd", "!bang", "-n", " lead and trail ",
+                     "%self", "%self/x", "%", "50%", "a@b_c+d=e:f,g.h/i-j", "@home", "+x", ":x", ",x", ".x", "/x", "_x"]
         let line = "/usr/bin/printf '%s\\0' " + words.map(Shell.quoteAnyShell).joined(separator: " ")
         let readings: [(what: String, read: [String])] = try await awayFromTheTests {
             var readings: [(what: String, read: [String])] = []
@@ -349,6 +353,9 @@ import Testing
         print("D32 quoting: read back by \(Self.shellsHere.joined(separator: " "))")
         // a plain word stays as it is, as with the POSIX quoting
         #expect(Shell.quoteAnyShell("DOJO_PANE=claude-1") == "DOJO_PANE=claude-1")
+        // except one with a percent sign: fish puts its own process id for a bare %self
+        #expect(Shell.quoteAnyShell("%self") == "'%self'")
+        #expect(Shell.quoteAnyShell("50%") == "'50%'")
         #expect(Shell.quoteAnyShell("it's") == #"'it'"'"'s'"#)
         #expect(Shell.quoteAnyShell(#"end\"#) == #"'end'\\"#)
         // and is made of nothing but plain text in single quotes, an apostrophe in double quotes, and a
@@ -383,6 +390,20 @@ import Testing
         #expect(Fish.words(#"exec "$SHELL" -l -i -c "# + Shell.quote(Shell.quote(inner))) != Posix.words(#"exec "$SHELL" -l -i -c "# + Shell.quote(Shell.quote(inner))))
         #expect(Fish.words("a && b") == ["a", "&&", "b"])
         #expect(Posix.words("a < b") == nil)
+        // a backslash before a line break inside double quotes goes with the break, in both
+        #expect(Fish.words("echo \"a\\\nb\"") == ["echo", "ab"])
+        #expect(Posix.words("echo \"a\\\nb\"") == ["echo", "ab"])
+        // and stays, with the break, inside single quotes
+        #expect(Fish.words("echo 'a\\\nb'") == ["echo", "a\\\nb"])
+        // a combining mark right after a quote is text, not part of the quote
+        #expect(Fish.words("echo " + Shell.quoteAnyShell("\u{0301}")) == ["echo", "\u{0301}"])
+        #expect(Posix.words("echo '\u{0301}x' y") == ["echo", "\u{0301}x", "y"])
+        // a bare word that starts with %self is fish's own process id to fish, and itself to sh
+        #expect(Posix.words("cd %self") == ["cd", "%self"])
+        #expect(Fish.words("cd %self") == ["cd", Fish.ownProcessId])
+        #expect(Fish.words("cd %self/x") == ["cd", Fish.ownProcessId + "/x"])
+        #expect(Fish.words("cd '%self'") == ["cd", "%self"])
+        #expect(Fish.words("cd /srv/%self") == ["cd", "/srv/%self"])
     }
 }
 
@@ -406,41 +427,55 @@ func awayFromTheTests<T: Sendable>(_ work: @escaping @Sendable () throws -> T) a
 /// How a shell splits a command line into words, as far as quoting goes; variables are left as written. Nil
 /// when a quote is left open or a redirection, pipe, separator or lone `&` stands outside quotes, where the
 /// shell would stop with an error or run something other than one command line of words. `&&` is a word.
-private func splitWords(_ line: String, single: (Character) -> Bool, double: (Character) -> Bool) -> [String]? {
-    var words: [String] = []
-    var word = ""
+/// A backslash before a line break is a continuation and goes with the break, outside quotes and inside
+/// double quotes. The line is read scalar by scalar, as a shell reads it: a combining mark after a quote
+/// belongs to the text, not to the quote. Each word comes with whether any of it was quoted or escaped.
+private func splitWords(_ line: String, single: (Unicode.Scalar) -> Bool, double: (Unicode.Scalar) -> Bool) -> [(text: String, bare: Bool)]? {
+    var words: [(text: String, bare: Bool)] = []
+    var word = String.UnicodeScalarView()
     var inWord = false
-    var chars = Array(line)[...]
-    func end() { if inWord { words.append(word); word = ""; inWord = false } }
-    while let c = chars.popFirst() {
+    var bare = true
+    var scalars = Array(line.unicodeScalars)[...]
+    func end() {
+        if inWord { words.append((String(word), bare)) }
+        word = String.UnicodeScalarView()
+        inWord = false
+        bare = true
+    }
+    while let c = scalars.popFirst() {
         switch c {
         case " ", "\t":
             end()
         case "'":
             inWord = true
+            bare = false
             var closed = false
-            while let q = chars.popFirst() {
+            while let q = scalars.popFirst() {
                 if q == "'" { closed = true; break }
-                if q == "\\", let next = chars.first, single(next) { word.append(chars.removeFirst()) } else { word.append(q) }
+                if q == "\\", let next = scalars.first, single(next) { word.append(scalars.removeFirst()) } else { word.append(q) }
             }
             guard closed else { return nil }
         case "\"":
             inWord = true
+            bare = false
             var closed = false
-            while let q = chars.popFirst() {
+            while let q = scalars.popFirst() {
                 if q == "\"" { closed = true; break }
-                if q == "\\", let next = chars.first, double(next) { word.append(chars.removeFirst()) } else { word.append(q) }
+                if q == "\\", scalars.first == "\n" { scalars.removeFirst(); continue }
+                if q == "\\", let next = scalars.first, double(next) { word.append(scalars.removeFirst()) } else { word.append(q) }
             }
             guard closed else { return nil }
         case "\\":
-            guard let next = chars.popFirst() else { return nil }
+            guard let next = scalars.popFirst() else { return nil }
+            if next == "\n" { continue }
             inWord = true
+            bare = false
             word.append(next)
         case "&":
-            guard chars.first == "&" else { return nil }
-            chars.removeFirst()
+            guard scalars.first == "&" else { return nil }
+            scalars.removeFirst()
             end()
-            words.append("&&")
+            words.append(("&&", true))
         case "<", ">", "|", ";", "(", ")":
             return nil
         default:
@@ -453,10 +488,15 @@ private func splitWords(_ line: String, single: (Character) -> Bool, double: (Ch
 }
 
 /// fish: inside single quotes a backslash escapes a backslash or an apostrophe and nothing else; inside
-/// double quotes it escapes a backslash, a double quote or a dollar sign.
+/// double quotes it escapes a backslash, a double quote or a dollar sign. A bare word that starts with
+/// `%self` gets fish's own process id in its place, which no other shell here does.
 enum Fish {
+    static let ownProcessId = "<fish's own process id>"
+
     static func words(_ line: String) -> [String]? {
-        splitWords(line, single: { $0 == "'" || $0 == "\\" }, double: { $0 == "\"" || $0 == "\\" || $0 == "$" })
+        splitWords(line, single: { $0 == "'" || $0 == "\\" }, double: { $0 == "\"" || $0 == "\\" || $0 == "$" })?.map { word in
+            word.bare && word.text.hasPrefix("%self") ? ownProcessId + word.text.dropFirst("%self".count) : word.text
+        }
     }
 }
 
@@ -464,6 +504,6 @@ enum Fish {
 /// backslash, a double quote, a dollar sign or a backtick.
 enum Posix {
     static func words(_ line: String) -> [String]? {
-        splitWords(line, single: { _ in false }, double: { $0 == "\"" || $0 == "\\" || $0 == "$" || $0 == "`" })
+        splitWords(line, single: { _ in false }, double: { $0 == "\"" || $0 == "\\" || $0 == "$" || $0 == "`" })?.map(\.text)
     }
 }
