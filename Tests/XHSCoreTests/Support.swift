@@ -9,6 +9,9 @@ final class MockIO: PaneIO {
     var cursorLine: Int?
     /// Whether the terminal shows its alternate buffer; nil as for a pane that cannot say.
     var alternate: Bool?
+    /// The live screen's lines where they differ from the pane's text: a real pane's text can hold what a
+    /// wider pane once had beyond its right edge, which the live screen leaves out (D37).
+    var live: [String]?
     let kind: HarnessKind
     /// What the test set the screen to, if it did.
     private var set: String?
@@ -36,7 +39,7 @@ final class MockIO: PaneIO {
 
     func screenText() -> String { screen }
     func visibleText() -> String { screen }
-    func liveScreen() -> PaneScreen { PaneScreen(lines: screen.components(separatedBy: "\n"), cursorLine: cursorLine, alternate: alternate) }
+    func liveScreen() -> PaneScreen { PaneScreen(lines: live ?? screen.components(separatedBy: "\n"), cursorLine: cursorLine, alternate: alternate) }
 
     /// Everything typed so far as one string.
     var typed: String { String(decoding: written.flatMap { $0 }, as: UTF8.self) }
