@@ -124,9 +124,9 @@ import Testing
         #expect(Composer.arrived("new", rows: ["[Pasted text #8]"], standIn: "[Pasted text #", before: before))
     }
 
-    /// A key hint stands where a part of a row begins and ends where a word ends; a part that is a path is
-    /// never one.
-    @Test func aKeyHintBeginsAPartOfARow() {
+    /// A key hint is whole words, wherever in a row they stand; a part of the row that is a path is never
+    /// one.
+    @Test func aKeyHintIsWholeWordsOutsideAPath() {
         #expect(Composer.hasKeyHint("enter select · esc back"))
         #expect(Composer.hasKeyHint("Press enter to confirm or esc to go back"))
         #expect(Composer.hasKeyHint("↑↓ to move      Enter to select"))
@@ -138,9 +138,11 @@ import Testing
         #expect(!Composer.hasKeyHint("GPT-6.1-Sol high · ~/press enter · GPT-6.1-Sol"))
         #expect(!Composer.hasKeyHint("GPT-6.1-Sol high · ~/please press enter · GPT-6.1-Sol"))
         #expect(!Composer.hasKeyHint("branch fix/esc back · main"))
-        // not where a part begins, and not a longer word
-        #expect(!Composer.hasKeyHint("please press enter"))
+        #expect(Composer.hasKeyHint("abcd enter select"))
+        #expect(Composer.hasKeyHint("界 enter select"))
+        // not whole words
         #expect(!Composer.hasKeyHint("enter selection mode"))
+        #expect(!Composer.hasKeyHint("center select"))
         #expect(!Composer.hasKeyHint("tab to queue message"))
         #expect(!Composer.hasKeyHint("⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt"))
     }

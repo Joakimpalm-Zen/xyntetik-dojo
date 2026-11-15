@@ -87,7 +87,7 @@ public enum Composer {
     ///   pressed Enter on: the text has not arrived there, or something else has.
     /// - Under the composer stand at most `footerRows` rows, every one set in as both harnesses set their
     ///   status and hint rows, none a numbered choice, none the frame of a dialog, none with a dialog's key
-    ///   hint where a part of the row begins. The rows themselves cannot be known word for word: the status line is the owner's own, and
+    ///   hint as whole words outside a path. The rows themselves cannot be known word for word: the status line is the owner's own, and
     ///   the hint row changes.
     /// - After the paste, no row under the composer may be new since `before`: a dialog can open under a
     ///   composer that stays on the screen. A row is not new when it is one that was there, each run of
@@ -225,18 +225,22 @@ public enum Composer {
         return matched == now.count
     }
 
-    /// Whether a row carries a dialog's key hint. A hint is looked for where a part of the row begins: at
-    /// the row's start, after a middle dot or a gap, or after an opening bracket, and it must end where a
-    /// word ends. A part that is a path (it holds a slash or starts with a tilde) is the owner's status and
+    /// Whether a row carries a dialog's key hint. A hint is whole words: it begins where a word begins (the
+    /// start of a part of the row, after a space, or after an opening bracket) and ends where a word ends.
+    /// A part of the row that is a path (it holds a slash or starts with a tilde) is the owner's status and
     /// never a hint, whatever the folder is called.
     static func hasKeyHint(_ row: String) -> Bool {
-        let pieces = row.lowercased().components(separatedBy: " · ").flatMap { $0.components(separatedBy: "  ") }
-            .flatMap { $0.split(whereSeparator: { "([{".contains($0) }).map(String.init) }
-        return pieces.contains { piece in
-            let part = piece.trimmingCharacters(in: .whitespaces)
-            guard !part.contains("/"), !part.hasPrefix("~") else { return false }
+        let parts = row.lowercased().components(separatedBy: " · ").flatMap { $0.components(separatedBy: "  ") }
+        return parts.contains { piece in
+            let part = Array(piece.trimmingCharacters(in: .whitespaces))
+            guard !part.contains("/"), part.first != "~" else { return false }
             return dialogKeyHints.contains { hint in
-                part.hasPrefix(hint) && !(part.dropFirst(hint.count).first?.isLetter ?? false)
+                let words = Array(hint)
+                guard part.count >= words.count else { return false }
+                return (0...(part.count - words.count)).contains { at in
+                    (at == 0 || " ([{".contains(part[at - 1])) && Array(part[at..<(at + words.count)]) == words
+                        && !(at + words.count < part.count && part[at + words.count].isLetter)
+                }
             }
         }
     }

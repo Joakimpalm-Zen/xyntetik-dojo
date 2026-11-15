@@ -159,6 +159,9 @@ import Testing
         // The owner sees the text waiting and presses Enter before the bus would.
         rig.wait(1)
         rig.key("\r")
+        // Their Enter sent it: the composer no longer holds the text. (D35.1: Enter alone is not taken for a
+        // submission, since in a harness it can also accept a completion or answer a dialog.)
+        rig.io.screen = MockIO.screen(.claude, holding: "")
         rig.wait(30)
         #expect(rig.enters == 0)    // the owner's Enter went to the pane itself, not through the bus
         #expect(rig.outcomes == ["owed", "dropped"])
