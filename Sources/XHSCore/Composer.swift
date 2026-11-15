@@ -30,7 +30,9 @@ public enum Composer {
     /// The composer sits at the foot of the screen, under the transcript.
     static let footRows = 12
 
-    /// How far up from the foot `shown` looks: a message the bus pasted can fill many rows of the composer.
+    /// How far up from the foot `shown` looks once the bus has pasted: a message can fill many rows of the
+    /// composer. Before that the composer is within `footRows`, and looking no further keeps a ruled line
+    /// in the transcript above a dialog from passing for the one over a composer.
     static let shownFootRows = 40
     /// How many rows a Codex composer has under it before the bus has typed anything: its status and hint lines,
     /// with room to spare. More than that under the lowest mark is a transcript, not a composer.
@@ -46,14 +48,14 @@ public enum Composer {
     /// the composer, in both harnesses, and can stand under a rule or after an empty row too, so a row that
     /// reads as a numbered choice ("1. Yes") is never a composer.
     ///
-    /// `afterPaste`: the bus's own text is in the composer and may fill rows under the mark, so the rows under
-    /// a Codex composer are not counted.
+    /// `afterPaste`: the bus's own text is in the composer and may fill rows under the mark, so the search
+    /// reaches further up and the rows under a Codex composer are not counted.
     public static func shown(kind: HarnessKind, screen: String, afterPaste: Bool = false) -> Bool? {
         guard let rule = rule(for: kind) else { return nil }
         let blank = CharacterSet.whitespaces.union(CharacterSet(charactersIn: "\u{a0}"))
         var rows = screen.components(separatedBy: "\n").map { $0.trimmingCharacters(in: blank.union(.newlines)) }
         while rows.last?.isEmpty == true { rows.removeLast() }
-        let foot = Array(rows.suffix(shownFootRows))
+        let foot = Array(rows.suffix(afterPaste ? shownFootRows : footRows))
         func rest(_ at: Int) -> String? {
             guard let mark = rule.marks.first(where: { foot[at].hasPrefix($0) }) else { return nil }
             return String(foot[at].dropFirst(mark.count)).trimmingCharacters(in: blank)

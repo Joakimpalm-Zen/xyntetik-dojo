@@ -124,6 +124,15 @@ import Testing
         #expect(Composer.shown(kind: .claude, screen: screen) == false)
     }
 
+    @Test func aRuledLineFarUpTheTranscriptIsNotTheComposers() {
+        // a ruled line and a quoted row in an answer, then a dialog: before the bus has typed anything the
+        // composer is at the foot of the screen, and nothing further up is taken for it
+        let answer = "──────────────────────────────\n> a quoted line in the answer\n" + (1...6).map { "line \($0) of the answer" }.joined(separator: "\n")
+        #expect(Composer.shown(kind: .claude, screen: answer + "\n" + Self.claudePermission(cursorOn: 1)) == false)
+        // the composer itself, with the same answer above it, is seen
+        #expect(Composer.shown(kind: .claude, screen: answer + "\n" + Self.claude("❯")) == true)
+    }
+
     @Test func codexsComposerIsSeenEmptyOrNot() {
         for composer in ["› Ask Codex to do anything", "›", "› Ask Codex to do anything" + String(repeating: " ", count: 60) + "4 on 17 Nov · /status",
                          "› [from: fable] status?"] {
