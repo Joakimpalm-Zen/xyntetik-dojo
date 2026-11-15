@@ -6,7 +6,7 @@ import Testing
 @Suite struct BusTests {
     let bus = Bus()
     let senderIO = MockIO()
-    let targetIO = MockIO()
+    let targetIO = MockIO(kind: .codex)
     let senderToken: String
     let targetToken: String
 
@@ -314,7 +314,8 @@ import Testing
         targetIO.screen = ">_ OpenAI Codex (v0.165.0)\nloading"
         for _ in 1...5 { clock = clock.addingTimeInterval(1); bus.tick() }
         #expect(bus.info("codex-1")?.state == .starting)
-        targetIO.screen = ">_ OpenAI Codex (v0.165.0)\n\n› Ask Codex to do anything\n? for shortcuts"
+        // as Codex draws it: an empty row under the composer, and its hint row set in
+        targetIO.screen = ">_ OpenAI Codex (v0.165.0)\n\n› Ask Codex to do anything\n\n  ? for shortcuts"
         for _ in 1...2 { clock = clock.addingTimeInterval(1); bus.tick() }
         #expect(bus.info("codex-1")?.state == .starting)
         for _ in 1...3 { clock = clock.addingTimeInterval(1); bus.tick() }

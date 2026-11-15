@@ -9,7 +9,7 @@ import Testing
 @Suite struct PromptHookLostTests {
     @MainActor final class Rig {
         let bus = Bus()
-        let io = MockIO()
+        let io: MockIO
         var pending: [() -> Void] = []
         var clock = Date(timeIntervalSince1970: 1_000_000)
         var target = ""
@@ -17,6 +17,7 @@ import Testing
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("hook-lost-\(UUID().uuidString)")
 
         init(kind: HarnessKind = .claude, submitDelay: TimeInterval = 0) {
+            io = MockIO(kind: kind)
             bus.submitDelay = submitDelay
             bus.schedule = { [unowned self] _, work in self.pending.append(work) }
             bus.now = { [unowned self] in self.clock }
@@ -109,6 +110,67 @@ import Testing
         rig.wait(1)
         #expect(rig.enters == 1)
         #expect(rig.recorded("enter").last?["outcome"] as? String == "sent")
+    }
+
+    /// The Enter is pressed only once the composer holds what the bus pasted: until the harness has drawn
+    /// the text, nobody knows where an Enter would land.
+    @Test func theEnterWaitsUntilThePasteIsInTheComposer() {
+        for (kind, empty, holding) in [(HarnessKind.claude, Self.claudeComposer, ComposerShownTests.claude("❯ [from: fable] status?")),
+                                       (.codex, Self.codexComposer, ComposerShownTests.codex("› [from: fable] status?"))] {
+            let rig = Rig(kind: kind, submitDelay: 0.15)
+            rig.io.screen = empty
+            rig.send("status?")
+            #expect(rig.io.typed == "[from: fable] status?", "\(kind)")
+            // the Enter comes due and the screen still shows the composer as it was
+            rig.fire()
+            #expect(rig.enters == 0, "\(kind)")
+            #expect(rig.bus.info("worker")?.noComposer == true, "\(kind): the header says an Enter is held")
+            rig.wait(3)
+            #expect(rig.enters == 0, "\(kind)")
+            // the harness has drawn the text
+            rig.io.screen = holding
+            rig.wait(1)
+            #expect(rig.enters == 1, "\(kind)")
+            #expect(rig.bus.info("worker")?.noComposer == false, "\(kind)")
+            // and a second message is typed as any other
+            rig.io.screen = empty
+            rig.send("again?")
+            #expect(rig.io.typed.hasSuffix("[from: fable] again?"), "\(kind)")
+        }
+    }
+
+    /// With a harness that draws what is typed, as the test pane does when no screen is set, nothing waits.
+    @Test func aPaneThatDrawsThePasteGetsItsEnterOnTime() {
+        for kind in [HarnessKind.claude, .codex] {
+            let rig = Rig(kind: kind, submitDelay: 0.15)
+            rig.send("status?")
+            rig.fire()
+            #expect(rig.enters == 1, "\(kind)")
+            #expect(rig.recorded("enter").last?["outcome"] as? String == "sent", "\(kind)")
+            // several lines, with bracketed paste on: Claude Code shows a stand-in, Codex the rows
+            rig.io.bracketedPasteEnabled = true
+            rig.send("one\n› 1. Yes\n\nfour")
+            rig.fire()
+            #expect(rig.enters == 2, "\(kind)")
+        }
+    }
+
+    /// Where the terminal says which line its cursor is on, and the bus is told that harness keeps its
+    /// cursor on its composer, the cursor is part of the evidence.
+    @Test func theCursorIsEvidenceForAHarnessTheBusIsToldAbout() {
+        let lines = Self.claudeComposer.components(separatedBy: "\n")
+        let composer = lines.firstIndex { $0.hasPrefix("❯") }!
+        let rig = Rig()
+        rig.io.screen = Self.claudeComposer
+        rig.io.cursorLine = 0
+        // not told: the cursor is not asked about
+        #expect(rig.send("one")["delivered"] as? Bool == true)
+        rig.bus.cursorEvidence = [.claude]
+        #expect(rig.send("two")["delivered"] as? Bool == false)
+        #expect(rig.bus.info("worker")?.noComposer == true)
+        rig.io.cursorLine = composer
+        rig.wait(1)
+        #expect(rig.io.typed.hasSuffix("[from: fable] two\r"))
     }
 
     @Test func aRunningPaneThatShowsItsComposerIsTypedIntoAtOnce() {
