@@ -87,13 +87,13 @@ public enum Composer {
     ///   pressed Enter on: the text has not arrived there, or something else has.
     /// - Under the composer stand at most `footerRows` rows, every one set in as both harnesses set their
     ///   status and hint rows, none a numbered choice, none the frame of a dialog, none with a dialog's key
-    ///   hints. The rows themselves cannot be known word for word: the status line is the owner's own, and
+    ///   hint where a part of the row begins. The rows themselves cannot be known word for word: the status line is the owner's own, and
     ///   the hint row changes.
     /// - After the paste, no row under the composer may be new since `before`: a dialog can open under a
-    ///   composer that stays on the screen. A row is not new when, its digits apart, it is one that was
-    ///   there, or the start or the end of one, or one that was there is the start or the end of it (a status
-    ///   line counts on, and a hint row loses or gains a part when text arrives), or when it is the harness's
-    ///   own hint after a paste.
+    ///   composer that stays on the screen. A row is not new when it is one that was there, each run of
+    ///   digits read as one sign (a status line counts on), or that row with whole parts taken away (a hint
+    ///   row loses a part when text arrives), or one of the harness's own hint rows after a paste, word for
+    ///   word. A row that has gained anything is new.
     /// - Where the terminal says which line its cursor is on (`cursorLine`), the cursor must be on the
     ///   composer: a dialog moves it. Whether a harness keeps its cursor there has to be seen in a real pane
     ///   first, so the bus passes it only for the harnesses it is told to (`Bus.cursorEvidence`).
@@ -195,23 +195,50 @@ public enum Composer {
 
     static func isStandIn(_ row: String, _ standIn: String) -> Bool { row.hasPrefix(standIn) && row.hasSuffix("]") }
 
-    /// Whether a row under the composer is one that was there before the paste, or a part of one. Digits are
-    /// taken as alike. A part is the start or the end of the longer row, and at least eight characters, so
-    /// that a short word in a dialog is not found in the middle of a status line.
-    static func wasThere(_ row: String, _ before: String) -> Bool {
-        func alike(_ text: String) -> String { String(text.map { $0.isASCII && $0.isNumber ? "#" : $0 }) }
-        let now = alike(row), then = alike(before)
-        if now == then { return true }
-        let (short, long) = now.count < then.count ? (now, then) : (then, now)
-        return short.count >= 8 && (long.hasPrefix(short) || long.hasSuffix(short))
+    /// The parts of a footer row, as both harnesses lay one out: side by side, parted by a middle dot between
+    /// spaces or by a gap of two or more spaces (Codex sets a left part and a right part of its hint row that
+    /// far apart). Each run of digits is read as one sign whatever its length, so a counter that goes from 9
+    /// to 10 is the same part.
+    static func parts(_ row: String) -> [String] {
+        var out: [String] = []
+        for piece in row.components(separatedBy: " · ").flatMap({ $0.components(separatedBy: "  ") }) {
+            var part = "", inDigits = false
+            for character in piece.trimmingCharacters(in: .whitespaces) {
+                let digit = character.isASCII && character.isNumber
+                if !digit { part.append(character) } else if !inDigits { part.append("#") }
+                inDigits = digit
+            }
+            if !part.isEmpty { out.append(part) }
+        }
+        return out
     }
 
-    /// Whether a row carries a dialog's key hint. A hint row is hints side by side, parted by a middle dot or
-    /// by a run of spaces, each a few whole words; a hint counts where it starts a word of such a part. A
-    /// folder named "press enter" in a status line, shown as "~/press enter", starts no word.
+    /// Whether a row under the composer was there before the paste. It was when, part for part, it is a row
+    /// that was there, or that row with whole parts taken away, the rest in their order. A row that has
+    /// gained a part, or any text inside one, is new: a dialog's question put after an old hint is not the
+    /// old hint.
+    static func wasThere(_ row: String, _ before: String) -> Bool {
+        let now = parts(row), then = parts(before)
+        guard !now.isEmpty else { return false }
+        var matched = 0
+        for part in then where matched < now.count && part == now[matched] { matched += 1 }
+        return matched == now.count
+    }
+
+    /// Whether a row carries a dialog's key hint. A hint is looked for where a part of the row begins: at
+    /// the row's start, after a middle dot or a gap, or after an opening bracket, and it must end where a
+    /// word ends. A part that is a path (it holds a slash or starts with a tilde) is the owner's status and
+    /// never a hint, whatever the folder is called.
     static func hasKeyHint(_ row: String) -> Bool {
-        let parts = row.lowercased().components(separatedBy: " · ").flatMap { $0.components(separatedBy: "  ") }
-        return parts.contains { part in dialogKeyHints.contains { (" " + part).contains(" " + $0) } }
+        let pieces = row.lowercased().components(separatedBy: " · ").flatMap { $0.components(separatedBy: "  ") }
+            .flatMap { $0.split(whereSeparator: { "([{".contains($0) }).map(String.init) }
+        return pieces.contains { piece in
+            let part = piece.trimmingCharacters(in: .whitespaces)
+            guard !part.contains("/"), !part.hasPrefix("~") else { return false }
+            return dialogKeyHints.contains { hint in
+                part.hasPrefix(hint) && !(part.dropFirst(hint.count).first?.isLetter ?? false)
+            }
+        }
     }
 
     /// A row that starts with a run of box-drawing characters, as the lines around Claude Code's composer

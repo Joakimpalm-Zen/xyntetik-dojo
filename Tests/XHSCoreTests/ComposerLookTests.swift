@@ -89,14 +89,28 @@ import Testing
         }
     }
 
-    @Test func aStatusLineThatCountsOnIsTheSameRow() {
+    /// What counts as a row that was there: the row itself with its numbers moved on, or that row with whole
+    /// parts taken away. A row that has gained anything is new.
+    @Test func aRowWasThereOnlyAsItWasOrWithWholePartsTakenAway() {
+        // numbers move on, also across a digit boundary
         #expect(Composer.wasThere("Ctx: 694k / 1000k | 5h 59% left", "Ctx: 693k / 1000k | 5h 60% left"))
+        #expect(Composer.wasThere("Context: 10% used", "Context: 9% used"))
+        #expect(Composer.wasThere("Context: 9% used", "Context: 100% used"))
+        // whole parts taken away: at the middle dot, and at the gap Codex leaves between left and right
         #expect(Composer.wasThere("⏵⏵ bypass permissions on · 1 shell", "⏵⏵ bypass permissions on · 1 shell · ← 4 agents"))
         #expect(Composer.wasThere("⚠ 4 warnings · f2 to view", "← for agents · ? for shortcuts      ⚠ 4 warnings · f2 to view"))
-        // a short word is not looked for inside a row, and the middle of a row is not a part of it
+        #expect(Composer.wasThere("⏵⏵ bypass permissions on · ← 4 agents", "⏵⏵ bypass permissions on · 1 shell · ← 4 agents"))
+        // gained a part, or text inside a part: new
+        #expect(!Composer.wasThere("⏵⏵ bypass permissions on · Allow this action?", "⏵⏵ bypass permissions on"))
+        #expect(!Composer.wasThere("⏵⏵ bypass permissions on · 1 shell · ← 4 agents", "⏵⏵ bypass permissions on · 1 shell"))
+        #expect(!Composer.wasThere("⏵⏵ bypass permissions on? Yes", "⏵⏵ bypass permissions on"))
+        #expect(!Composer.wasThere("Allow    ⚠ 4 warnings", "⚠ 4 warnings"))
+        // a piece of a part is not a part, and the order of the parts is kept
         #expect(!Composer.wasThere("Yes", "Yes, and do not ask again for this folder"))
         #expect(!Composer.wasThere("permissions on", "⏵⏵ bypass permissions on · 1 shell"))
+        #expect(!Composer.wasThere("1 shell · ⏵⏵ bypass permissions on", "⏵⏵ bypass permissions on · 1 shell"))
         #expect(!Composer.wasThere("Allow this action?", "⏵⏵ bypass permissions on · 1 shell"))
+        #expect(!Composer.wasThere("", "⏵⏵ bypass permissions on"))
     }
 
     /// A composer that already shows a stand-in holds a paste that is not the bus's: typing there would add
@@ -110,13 +124,23 @@ import Testing
         #expect(Composer.arrived("new", rows: ["[Pasted text #8]"], standIn: "[Pasted text #", before: before))
     }
 
-    /// A key hint is a few words of a hint row, not letters inside a path or a longer word.
-    @Test func aKeyHintStartsAWordOfAHintRow() {
+    /// A key hint stands where a part of a row begins and ends where a word ends; a part that is a path is
+    /// never one.
+    @Test func aKeyHintBeginsAPartOfARow() {
         #expect(Composer.hasKeyHint("enter select · esc back"))
         #expect(Composer.hasKeyHint("Press enter to confirm or esc to go back"))
         #expect(Composer.hasKeyHint("↑↓ to move      Enter to select"))
+        #expect(Composer.hasKeyHint("Tab to switch · Enter Select · more"))
+        #expect(Composer.hasKeyHint("(enter select)"))
+        #expect(Composer.hasKeyHint("Do you want this? [press enter]"))
+        #expect(Composer.hasKeyHint("Enter to select · Tab/Arrow keys to navigate · Esc to cancel"))
+        // the owner's status
         #expect(!Composer.hasKeyHint("GPT-6.1-Sol high · ~/press enter · GPT-6.1-Sol"))
+        #expect(!Composer.hasKeyHint("GPT-6.1-Sol high · ~/please press enter · GPT-6.1-Sol"))
         #expect(!Composer.hasKeyHint("branch fix/esc back · main"))
+        // not where a part begins, and not a longer word
+        #expect(!Composer.hasKeyHint("please press enter"))
+        #expect(!Composer.hasKeyHint("enter selection mode"))
         #expect(!Composer.hasKeyHint("tab to queue message"))
         #expect(!Composer.hasKeyHint("⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt"))
     }
@@ -185,21 +209,85 @@ import Testing
         #expect(sent.io.typed.contains("status?"))
     }
 
-    /// The owner sends or empties the composer in the moment before the bus's Enter: the record says the
-    /// Enter was dropped, and none is owed.
+    /// The owner empties the composer in the moment before the bus's Enter, or presses Enter there and the
+    /// text is gone from a composer that is on the screen: the bus's Enter is dropped, and none is owed.
     @Test func anEnterTheOwnerMadeNeedlessIsDroppedAndRecorded() {
         for key in [Bus.OwnerKey.submit, .clear] {
             let rig = Rig(kind: .claude, submitDelay: 0.15)
             rig.send("first")
             rig.clock += 0.05
             rig.bus.noteOwnerInput("worker", key)
+            if key == .submit { rig.io.screen = MockIO.screen(.claude, holding: "") }   // the owner's Enter sent it
             rig.fire()
-            #expect(rig.enters == 0, "the text is the owner's to send, or gone")
+            #expect(rig.enters == 0, "the text is gone")
             let enter = rig.recorded("enter")
             #expect(enter.count == 1)
             #expect(enter.first?["outcome"] as? String == "dropped")
+            #expect(enter.first?["why"] as? String == (key == .submit ? "the owner pressed Enter" : "the owner emptied the composer"))
             #expect(rig.bus.info("worker")?.noComposer == false)
         }
+    }
+
+    /// The owner's Enter over the bus's text sent it when a hook says so, whatever the screen still shows.
+    @Test func aSubmitHookAfterThePasteIsEvidenceThatTheOwnersEnterSentIt() {
+        let rig = Rig(kind: .claude, submitDelay: 0.15)
+        rig.send("first")
+        rig.clock += 0.05
+        rig.bus.noteOwnerInput("worker", .submit)
+        rig.clock += 0.01
+        rig.hook("UserPromptSubmit")
+        rig.fire()
+        #expect(rig.enters == 0)
+        #expect(rig.recorded("enter").first?["why"] as? String == "the owner pressed Enter")
+        // and without the owner's Enter the same hook drops nothing: it is for an earlier prompt
+        let other = Rig(kind: .claude, submitDelay: 0.15)
+        other.send("first")
+        other.clock += 0.06
+        other.hook("UserPromptSubmit")
+        other.fire()
+        #expect(other.enters == 1)
+    }
+
+    /// Enter in a harness can accept a completion and leave the text where it is. With no evidence that the
+    /// owner's Enter sent the bus's text, the bus's own Enter stays owed and goes out once the owner is
+    /// quiet; and since theirs did not send it, the pane keeps its draft hold until a hook reports the
+    /// submission, so nothing more is typed onto text that may still be there.
+    @Test func anOwnersEnterThatSentNothingLeavesTheBussEnterOwedAndTheDraftHoldOn() {
+        let rig = Rig(kind: .claude, submitDelay: 0.15)
+        rig.send("first")
+        rig.clock += 0.05
+        rig.bus.noteOwnerInput("worker", .submit)   // the pane still shows the pasted text
+        rig.fire()
+        #expect(rig.enters == 0)
+        #expect(rig.recorded("enter").last?["outcome"] as? String == "owed")
+        rig.wait(4)
+        #expect(rig.enters == 1, "pressed once the owner had been quiet")
+        #expect(rig.bus.info("worker")?.draft == true)
+        rig.send("second")
+        rig.wait(10)
+        #expect(!rig.io.typed.contains("second"))
+        #expect(rig.bus.info("worker")?.queued == 1)
+        rig.hook("UserPromptSubmit")
+        rig.wait(2)
+        #expect(rig.io.typed.contains("second"), "the hook reported the submission")
+    }
+
+    /// The bus's Enter is owed because a dialog opened, and the owner answers the dialog with Enter. That
+    /// Enter went to the dialog; the bus's text is still in the composer and still gets its Enter. (Before,
+    /// the owner's Enter dropped it, and the text stayed in the composer for good.)
+    @Test func anOwnersEnterThatAnsweredADialogDoesNotDropTheBussEnter() {
+        let rig = Rig(kind: .claude, submitDelay: 0.15)
+        rig.io.screen = ComposerShownTests.claude("❯")
+        rig.send("status?")
+        rig.io.screen = ComposerShownTests.claudePermission(cursorOn: 1)
+        rig.fire()
+        #expect(rig.enters == 0)
+        rig.clock += 1
+        rig.bus.noteOwnerInput("worker", .submit)
+        rig.io.screen = ComposerShownTests.claude("❯ [from: fable] status?")
+        rig.wait(5)
+        #expect(rig.enters == 1)
+        #expect(rig.bus.info("worker")?.noComposer == false)
     }
 
     /// A dialog under the bus's own paste, through the bus, with rows that a footer could have: held by the

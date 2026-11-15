@@ -37,7 +37,8 @@ import XHSCore
             let reply=bus.handle(path:path,token:token,body:try! JSONSerialization.data(withJSONObject:fields))
             return (try? JSONSerialization.jsonObject(with:reply.body)) as? [String:Any] ?? [:]
         }
-        pane.show(Array("\u{1b}[?1049l".utf8))
+        // the harness at its composer, in the buffer it draws itself in: only then is the buffer learned
+        pane.show(Array("\u{1b}[?1049l\u{1b}[2J\u{1b}[H\r\n› Ask Codex to do anything\r\n\r\n  status".utf8))
         _=call("/hook",token,["hook_event_name":"Stop"])
         pane.show(Array("\u{1b}[?1049h\r\n› file contents\r\n\r\n  status".utf8))
         #expect(Composer.shown(kind:.codex,lines:pane.liveScreen().lines,cursorLine:nil) == true,"by its rows alone this is a composer")
