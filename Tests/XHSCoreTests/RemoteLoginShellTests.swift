@@ -30,7 +30,7 @@ import Testing
         + shellsHere.dropFirst().map { Stage(local: "/bin/sh", remote: $0) }
 
     /// What the stand-in harness saw.
-    struct Seen: Equatable {
+    struct Seen: Equatable, Sendable {
         let folder: String
         let argv: [String]
         let environment: [String]
@@ -38,7 +38,7 @@ import Testing
 
     /// A Mac and a host in one temporary folder: a home for each, folders to start in on the host, a stand-in
     /// for ssh and sshd, and stand-ins for the harness and for Runner's start script.
-    final class Host {
+    final class Host: @unchecked Sendable {
         static let folderNames = ["plain", "two words", "it's", "end\\", "répo"]
 
         let fm = FileManager.default
@@ -185,84 +185,106 @@ import Testing
     static let kinds: [HarnessKind] = [.claude, .runner]
     static let folders: [String?] = [nil] + Host.folderNames.map { Optional($0) }
 
+    /// One case of the differential: what the stand-in harness saw with main's command and with the new one.
+    struct Case: Sendable {
+        let kind: HarnessKind
+        let folder: String?
+        let before: Seen?
+        let after: Seen?
+    }
+
     /// The differential. For each shell as this Mac's login shell and as the host's, each kind of pane and
     /// each folder: what main's command reaches, the new command reaches the same way.
     @Test(arguments: stages)
-    func whatReachesTheHarnessOnMainReachesItTheSameWay(stage: Stage) throws {
+    func whatReachesTheHarnessOnMainReachesItTheSameWay(stage: Stage) async throws {
         let host = try Host()
-        var onMain = 0
-        for kind in Self.kinds {
-            for folder in Self.folders {
-                let what = "\(kind), folder \(folder ?? "none"), \(stage)"
-                let before = try host.run(host.command(kind: kind, folder: folder, main: true), local: stage.local, remote: stage.remote)
-                let after = try host.run(host.command(kind: kind, folder: folder, main: false), local: stage.local, remote: stage.remote)
-                if let before {
-                    onMain += 1
-                    #expect(after?.folder == before.folder, "\(what)")
-                    #expect(after?.argv == before.argv, "\(what)")
-                    #expect(after?.environment == before.environment, "\(what)")
-                    // the host's zsh ran its directory hook on main, so the comparison covers it
-                    if stage.remote == "/bin/zsh", folder != nil {
-                        #expect(before.environment.contains { $0.hasPrefix("DOJO_TEST_HOOK=") }, "\(what)")
-                    }
-                }
-                // And the new command on its own terms, which is all there is to go by where main fails:
-                // the harness starts, in the folder asked for (the home when none is), with what it is given.
-                let seen = try #require(after, "\(what): the harness did not start")
-                #expect(host.same(seen.folder, host.path(of: folder)), "\(what)")
-                if kind == .claude {
-                    let prompt = seen.argv.firstIndex(of: "--append-system-prompt").map { seen.argv[$0 + 1] }
-                    #expect(prompt == PeerRule.launchPrompt(paneName: "claude-1"), "\(what)")
-                    #expect(seen.environment.contains("DOJO_TOKEN=tok") && seen.environment.contains("DOJO_PORT=50001"), "\(what)")
-                } else {
-                    #expect(seen.argv.isEmpty && seen.environment.contains("DOJO_RUNNER_TRAY=off"), "\(what)")
+        let cases = try await awayFromTheTests {
+            try Self.kinds.flatMap { kind in
+                try Self.folders.map { folder in
+                    Case(kind: kind, folder: folder,
+                         before: try host.run(host.command(kind: kind, folder: folder, main: true), local: stage.local, remote: stage.remote),
+                         after: try host.run(host.command(kind: kind, folder: folder, main: false), local: stage.local, remote: stage.remote))
                 }
             }
         }
-        print("D32 differential, \(stage): main's command reached the harness in \(onMain) of \(Self.kinds.count * Self.folders.count) cases")
+        var onMain = 0
+        for run in cases {
+            let what = "\(run.kind), folder \(run.folder ?? "none"), \(stage)"
+            if let before = run.before {
+                onMain += 1
+                #expect(run.after?.folder == before.folder, "\(what)")
+                #expect(run.after?.argv == before.argv, "\(what)")
+                #expect(run.after?.environment == before.environment, "\(what)")
+                // the host's zsh ran its directory hook on main, so the comparison covers it
+                if stage.remote == "/bin/zsh", run.folder != nil {
+                    #expect(before.environment.contains { $0.hasPrefix("DOJO_TEST_HOOK=") }, "\(what)")
+                }
+            }
+            // And the new command on its own terms, which is all there is to go by where main fails:
+            // the harness starts, in the folder asked for (the home when none is), with what it is given.
+            let seen = try #require(run.after, "\(what): the harness did not start")
+            #expect(host.same(seen.folder, host.path(of: run.folder)), "\(what)")
+            if run.kind == .claude {
+                let prompt = seen.argv.firstIndex(of: "--append-system-prompt").map { seen.argv[$0 + 1] }
+                #expect(prompt == PeerRule.launchPrompt(paneName: "claude-1"), "\(what)")
+                #expect(seen.environment.contains("DOJO_TOKEN=tok") && seen.environment.contains("DOJO_PORT=50001"), "\(what)")
+            } else {
+                #expect(seen.argv.isEmpty && seen.environment.contains("DOJO_RUNNER_TRAY=off"), "\(what)")
+            }
+        }
+        print("D32 differential, \(stage): main's command reached the harness in \(onMain) of \(cases.count) cases")
         // Without a case that works on main the comparison would say nothing.
         if !stage.hasFish { #expect(onMain > 0, "\(stage)") }
     }
 
     /// A directory hook of the login shell (zsh's chpwd) runs when the pane changes into its folder, and
     /// what it exports reaches the harness: here the harness is found only through the PATH the hook sets.
-    @Test func aDirectoryHookOfTheLoginShellStillRuns() throws {
+    @Test func aDirectoryHookOfTheLoginShellStillRuns() async throws {
         guard FileManager.default.isExecutableFile(atPath: "/bin/zsh") else { return }
         let host = try Host(harnessInToolsOf: "plain")
         try Data("chpwd() { export DOJO_TEST_HOOK=\"$PWD\"; export PATH=\"$PWD/tools:$PATH\" }\n".utf8)
             .write(to: host.remoteHome.appendingPathComponent(".zshrc"))
-        let before = try #require(try host.run(host.command(kind: .claude, folder: "plain", main: true), local: "/bin/sh", remote: "/bin/zsh"),
-                                  "main's command must reach the harness through the hook for this test to say anything")
+        let (main, new) = try await awayFromTheTests {
+            (try host.run(host.command(kind: .claude, folder: "plain", main: true), local: "/bin/sh", remote: "/bin/zsh"),
+             try host.run(host.command(kind: .claude, folder: "plain", main: false), local: "/bin/sh", remote: "/bin/zsh"))
+        }
+        let before = try #require(main, "main's command must reach the harness through the hook for this test to say anything")
         #expect(before.environment.contains { $0.hasPrefix("DOJO_TEST_HOOK=") })
-        let after = try host.run(host.command(kind: .claude, folder: "plain", main: false), local: "/bin/sh", remote: "/bin/zsh")
-        #expect(after == before)
+        #expect(new == before)
     }
 
     /// A host with nothing on its PATH but sh and env, and one that also has a python3 whose output is ASCII
     /// only: main's command needs no tool to get the harness line across, so neither may the new one.
-    @Test func aHostWithNoToolsBesideShAndEnvStartsAsOnMain() throws {
+    @Test func aHostWithNoToolsBesideShAndEnvStartsAsOnMain() async throws {
         let host = try Host()
         let bin = host.root.appendingPathComponent("bare-bin")
         try host.fm.createDirectory(at: bin, withIntermediateDirectories: true)
         try host.fm.createSymbolicLink(atPath: bin.appendingPathComponent("sh").path, withDestinationPath: "/bin/sh")
         try host.fm.createSymbolicLink(atPath: bin.appendingPathComponent("env").path, withDestinationPath: "/usr/bin/env")
         let python = ["/usr/bin/python3", "/opt/homebrew/bin/python3", "/usr/local/bin/python3"].first { host.fm.isExecutableFile(atPath: $0) }
-        for withPython in [false, true] {
-            var extra: [String: String] = [:]
-            if withPython {
-                guard let python else { continue }
-                try host.script(bin.appendingPathComponent("python3"), "exec \(python) \"$@\"")
-                extra["PYTHONIOENCODING"] = "ascii"
+        let runs: [(what: String, before: Seen?, after: Seen?)] = try await awayFromTheTests {
+            var runs: [(what: String, before: Seen?, after: Seen?)] = []
+            for withPython in [false, true] {
+                var extra: [String: String] = [:]
+                if withPython {
+                    guard let python else { continue }
+                    try host.script(bin.appendingPathComponent("python3"), "exec \(python) \"$@\"")
+                    extra["PYTHONIOENCODING"] = "ascii"
+                }
+                for folder in ["plain", "répo"] {
+                    runs.append(("folder \(folder), python3 \(withPython ? "with ASCII output" : "absent")",
+                                 try host.run(host.command(kind: .claude, folder: folder, main: true), local: "/bin/sh",
+                                              remote: host.plainLogin.path, remotePath: bin.path, extra: extra),
+                                 try host.run(host.command(kind: .claude, folder: folder, main: false), local: "/bin/sh",
+                                              remote: host.plainLogin.path, remotePath: bin.path, extra: extra)))
+                }
             }
-            for folder in ["plain", "répo"] {
-                let what = "folder \(folder), python3 \(withPython ? "with ASCII output" : "absent")"
-                let before = try #require(try host.run(host.command(kind: .claude, folder: folder, main: true), local: "/bin/sh",
-                                                       remote: host.plainLogin.path, remotePath: bin.path, extra: extra),
-                                          "\(what): main's command must reach the harness for this test to say anything")
-                let after = try host.run(host.command(kind: .claude, folder: folder, main: false), local: "/bin/sh",
-                                         remote: host.plainLogin.path, remotePath: bin.path, extra: extra)
-                #expect(after == before, "\(what)")
-            }
+            return runs
+        }
+        #expect(runs.count >= 2)
+        for run in runs {
+            let before = try #require(run.before, "\(run.what): main's command must reach the harness for this test to say anything")
+            #expect(run.after == before, "\(run.what)")
         }
     }
 
@@ -294,32 +316,35 @@ import Testing
 
     /// The quoting on its own: every shell here reads each word back as it was, quoted once and quoted
     /// again, as a command that crosses two shells is.
-    @Test func everyShellHereReadsAQuotedWordBackAsItWas() throws {
+    @Test func everyShellHereReadsAQuotedWordBackAsItWas() async throws {
         let words = ["", "plain", "two words", "it's", "end\\", "a\\\\b", "\\'", "'\\", "''", "\\\\'\\", "$HOME \"q\" `x` $(y)",
                      "répo ☺", "line one\nline two", "~/x", "*?[a]{b,c}", "%OS%", "#c", "a;b|c&d<e>f(g)", "=cmd", "!bang", "-n", " lead and trail "]
         let line = "/usr/bin/printf '%s\\0' " + words.map(Shell.quoteAnyShell).joined(separator: " ")
-        var ran: [String] = []
-        for shell in Self.shellsHere {
-            for command in [line, "exec " + shell + " -c " + Shell.quoteAnyShell(line)] {
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: shell)
-                process.arguments = ["-c", command]
-                process.environment = ["PATH": "/usr/bin:/bin", "HOME": NSTemporaryDirectory(), "LANG": "en_US.UTF-8"]
-                process.standardInput = FileHandle.nullDevice
-                process.standardError = FileHandle.nullDevice
-                let out = Pipe()
-                process.standardOutput = out
-                try process.run()
-                let data = out.fileHandleForReading.readDataToEndOfFile()
-                process.waitUntilExit()
-                var read = String(decoding: data, as: UTF8.self).components(separatedBy: "\0")
-                if read.last == "" { read.removeLast() }
-                // printf prints nothing for no words at all, never for an empty one among others
-                #expect(read == words, "\(shell), \(command == line ? "quoted once" : "quoted twice")")
+        let readings: [(what: String, read: [String])] = try await awayFromTheTests {
+            var readings: [(what: String, read: [String])] = []
+            for shell in Self.shellsHere {
+                for command in [line, "exec " + shell + " -c " + Shell.quoteAnyShell(line)] {
+                    let process = Process()
+                    process.executableURL = URL(fileURLWithPath: shell)
+                    process.arguments = ["-c", command]
+                    process.environment = ["PATH": "/usr/bin:/bin", "HOME": NSTemporaryDirectory(), "LANG": "en_US.UTF-8"]
+                    process.standardInput = FileHandle.nullDevice
+                    process.standardError = FileHandle.nullDevice
+                    let out = Pipe()
+                    process.standardOutput = out
+                    try process.run()
+                    let data = out.fileHandleForReading.readDataToEndOfFile()
+                    process.waitUntilExit()
+                    var read = String(decoding: data, as: UTF8.self).components(separatedBy: "\0")
+                    if read.last == "" { read.removeLast() }
+                    readings.append(("\(shell), \(command == line ? "quoted once" : "quoted twice")", read))
+                }
             }
-            ran.append(shell)
+            return readings
         }
-        print("D32 quoting: read back by \(ran.joined(separator: " "))")
+        for reading in readings { #expect(reading.read == words, "\(reading.what)") }
+        #expect(readings.count == 2 * Self.shellsHere.count)
+        print("D32 quoting: read back by \(Self.shellsHere.joined(separator: " "))")
         // a plain word stays as it is, as with the POSIX quoting
         #expect(Shell.quoteAnyShell("DOJO_PANE=claude-1") == "DOJO_PANE=claude-1")
         #expect(Shell.quoteAnyShell("it's") == #"'it'"'"'s'"#)
@@ -356,6 +381,23 @@ import Testing
         #expect(Fish.words(#"exec "$SHELL" -l -i -c "# + Shell.quote(Shell.quote(inner))) != Posix.words(#"exec "$SHELL" -l -i -c "# + Shell.quote(Shell.quote(inner))))
         #expect(Fish.words("a && b") == ["a", "&&", "b"])
         #expect(Posix.words("a < b") == nil)
+    }
+}
+
+/// At most two of these tests run their shells at a time, so that a machine with few cores is not filled by
+/// them while other tests wait on a clock.
+private let shellRuns = DispatchSemaphore(value: 2)
+
+/// Runs work that waits on other programs away from the threads the tests share. A test that waits there
+/// for a shell to end holds up every test that awaits something; nine of them at once starved a timing
+/// test elsewhere in the suite.
+func awayFromTheTests<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
+    try await withCheckedThrowingContinuation { continuation in
+        DispatchQueue.global().async {
+            shellRuns.wait()
+            defer { shellRuns.signal() }
+            continuation.resume(with: Result { try work() })
+        }
     }
 }
 
