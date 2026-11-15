@@ -41,7 +41,10 @@ import Testing
     final class Host: @unchecked Sendable {
         /// `%self` is given to the pane as a relative path, so that the word the shells read starts with it:
         /// fish puts its own process id for a bare word that does.
-        static let folderNames = ["plain", "two words", "it's", "end\\", "répo", "%self"]
+        static let folderNames = ["plain", "two words", "it's", "end\\", "répo", "%self", "x==sh"]
+        /// `x==sh` is given the same way: a zsh with MAGIC_EQUAL_SUBST on reads the bare word as x= and the
+        /// path of sh.
+        static let relative: Set<String> = ["%self", "x==sh"]
 
         let fm = FileManager.default
         let root: URL
@@ -112,7 +115,7 @@ import Testing
         /// it, or as main builds it (`mainsCommand`: from `harnessWords`, `Shell.line`, `Shell.quote`,
         /// `Shell.homeQuoted` and `sshWords`, which the change leaves as they are).
         func command(kind: HarnessKind, folder: String?, main: Bool) -> String {
-            let directory = folder.map { $0 == "%self" ? $0 : path(of: $0) }
+            let directory = folder.map { Host.relative.contains($0) ? $0 : path(of: $0) }
             guard main else {
                 return Launcher.plan(kind: kind, paneName: "\(kind)-1", host: "user@box", port: 7788, token: "tok",
                                      runnerModel: nil, loginShell: "/bin/zsh", directory: directory, remotePort: 50001,
@@ -352,7 +355,7 @@ import Testing
         #expect(readings.count == 2 * Self.shellsHere.count)
         print("D32 quoting: read back by \(Self.shellsHere.joined(separator: " "))")
         // a plain word stays as it is, as with the POSIX quoting
-        #expect(Shell.quoteAnyShell("DOJO_PANE=claude-1") == "DOJO_PANE=claude-1")
+        #expect(Shell.quoteAnyShell("plain-word_1.2/x:y,z@h+i") == "plain-word_1.2/x:y,z@h+i")
         // except one with a percent sign: fish puts its own process id for a bare %self
         #expect(Shell.quoteAnyShell("%self") == "'%self'")
         #expect(Shell.quoteAnyShell("50%") == "'50%'")
@@ -364,6 +367,60 @@ import Testing
         for word in words {
             let quoted = Shell.quoteAnyShell(word)
             #expect(quoted == word || pieces.firstMatch(in: quoted, range: NSRange(quoted.startIndex..., in: quoted)) != nil, "\(word)")
+        }
+    }
+
+    /// zsh with MAGIC_EQUAL_SUBST on expands what follows an equals sign in a bare word, as it does in an
+    /// assignment: x==sh becomes x= and the path of sh. Through one, two and three levels of quoting the
+    /// word must come back as it was, and a pane must start in a folder of that name on a host whose login
+    /// shell is such a zsh.
+    @Test func aZshThatExpandsAfterAnEqualsSignReadsTheWordsBack() async throws {
+        guard FileManager.default.isExecutableFile(atPath: "/bin/zsh") else { return }
+        let words = ["x==sh", "a=b", "k==", "DOJO_PANE=claude-1", "=sh", "plain"]
+        let line = "/usr/bin/printf '%s\\0' " + words.map(Shell.quoteAnyShell).joined(separator: " ")
+        let zsh = "exec /bin/zsh -f -o MAGIC_EQUAL_SUBST -c "
+        let levels = [line, zsh + Shell.quoteAnyShell(line), zsh + Shell.quoteAnyShell(zsh + Shell.quoteAnyShell(line))]
+        let readings: [[String]] = try await awayFromTheTests {
+            try levels.map { command in
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+                process.arguments = ["-f", "-o", "MAGIC_EQUAL_SUBST", "-c", command]
+                process.environment = ["PATH": "/usr/bin:/bin", "HOME": NSTemporaryDirectory()]
+                process.standardInput = FileHandle.nullDevice
+                process.standardError = FileHandle.nullDevice
+                let out = Pipe()
+                process.standardOutput = out
+                process.qualityOfService = .utility
+                try process.run()
+                let data = out.fileHandleForReading.readDataToEndOfFile()
+                process.waitUntilExit()
+                var read = String(decoding: data, as: UTF8.self).components(separatedBy: "\0")
+                if read.last == "" { read.removeLast() }
+                return read
+            }
+        }
+        for (level, read) in readings.enumerated() { #expect(read == words, "quoted \(level + 1) times") }
+        // an equals sign anywhere and the word is quoted
+        #expect(Shell.quoteAnyShell("x==sh") == "'x==sh'")
+        #expect(Shell.quoteAnyShell("DOJO_PANE=claude-1") == "'DOJO_PANE=claude-1'")
+
+        // the whole way: such a zsh as the host's login shell and as this Mac's, a folder named x==sh
+        let host = try Host()
+        let magic = host.root.appendingPathComponent("zsh-magic-equal")
+        try host.script(magic, "exec /bin/zsh -o MAGIC_EQUAL_SUBST \"$@\"")
+        let runs: [(what: String, before: Seen?, after: Seen?)] = try await awayFromTheTests {
+            try [(magic.path, "/bin/sh"), ("/bin/sh", magic.path)].flatMap { local, remote in
+                try Self.kinds.map { kind in
+                    ("\(kind), local \(local.hasSuffix("equal") ? "zsh with the option" : local), remote \(remote.hasSuffix("equal") ? "zsh with the option" : remote)",
+                     try host.run(host.command(kind: kind, folder: "x==sh", main: true), local: local, remote: remote),
+                     try host.run(host.command(kind: kind, folder: "x==sh", main: false), local: local, remote: remote))
+                }
+            }
+        }
+        for run in runs {
+            let seen = try #require(run.after, "\(run.what): the harness did not start")
+            #expect(host.same(seen.folder, host.path(of: "x==sh")), "\(run.what)")
+            if let before = run.before { #expect(run.after == before, "\(run.what)") }
         }
     }
 
