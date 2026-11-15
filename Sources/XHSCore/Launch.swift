@@ -5,9 +5,12 @@ public enum ShellWord: Equatable, Sendable {
     case literal(String)
     case raw(String)
 
-    public var rendered: String {
+    public var rendered: String { rendered(anyShell: false) }
+
+    /// `anyShell`: quoted so that fish reads the word as sh does (`Shell.quoteAnyShell`).
+    public func rendered(anyShell: Bool) -> String {
         switch self {
-        case .literal(let s): return Shell.quote(s)
+        case .literal(let s): return anyShell ? Shell.quoteAnyShell(s) : Shell.quote(s)
         case .raw(let s): return s
         }
     }
@@ -15,23 +18,68 @@ public enum ShellWord: Equatable, Sendable {
 
 public enum Shell {    /// A folder as the remote shell should see it: a leading `~` or `~/` is left to the shell to expand,
     /// the rest is quoted; anything else is quoted whole.
-    public static func homeQuoted(_ path: String) -> String {
+    public static func homeQuoted(_ path: String, anyShell: Bool = false) -> String {
+        let quoted: (String) -> String = anyShell ? quoteAnyShell : quote
         if path == "~" { return "~" }
-        if path.hasPrefix("~/") { return "~/" + quote(String(path.dropFirst(2))) }
-        return quote(path)
+        if path.hasPrefix("~/") { return "~/" + quoted(String(path.dropFirst(2))) }
+        return quoted(path)
     }
 
 
     /// POSIX single-quote quoting.
     public static func quote(_ s: String) -> String {
-        if !s.isEmpty, s.unicodeScalars.allSatisfy({ CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@%_+=:,./-").contains($0) }) {
+        if !s.isEmpty, s.unicodeScalars.allSatisfy(plain.contains) {
             return s
         }
         return "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
-    public static func line(_ words: [ShellWord]) -> String {
-        words.map(\.rendered).joined(separator: " ")
+    private static let plain = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@%_+=:,./-")
+
+    /// Quoting that sh, bash, zsh, dash, ksh and fish all read as the same word (D32). POSIX quoting writes an
+    /// apostrophe as `'\''`, and quoting that once more puts a backslash inside single quotes, where fish
+    /// reads `\'` as an apostrophe and `\\` as one backslash while sh reads both as written. Here nothing but
+    /// plain text stands inside single quotes: an apostrophe is written `"'"` and a backslash `\\`, both
+    /// outside them, which every one of those shells reads alike. So a line quoted this way can be quoted
+    /// again, any number of times, for a chain of shells of which any may be fish.
+    ///
+    /// A word of plain characters is left as it is, as `quote` leaves it, with two exceptions. One with an
+    /// equals sign in it is quoted: zsh takes a bare word that starts with one for a command to look up,
+    /// and with MAGIC_EQUAL_SUBST on it expands what follows an equals sign anywhere in a bare word. One
+    /// with a percent sign in it is quoted: fish puts its own process id for the bare word `%self` (fish
+    /// 4.9.3 did so for that word alone; any word with a percent sign is quoted, whatever another fish does
+    /// with a longer one). Of what fish expands in a bare word (command substitution, braces, variables, a
+    /// leading tilde, wildcards, `%self`), the percent sign is the only one among the plain characters.
+    ///
+    /// So `KEY=value` comes out quoted. That is right for an argument, to `env` or to `ssh -o`, which is all
+    /// this is used for. It is not for an assignment the shell itself must see in front of a command: a
+    /// quoted one is a command name to the shell.
+    ///
+    /// The price is length where a line is quoted more than once. Measured, for one between plain text: a
+    /// backslash is 4 bytes after one quoting, 12 after two and 34 after three, against 1 at every level the
+    /// POSIX way; an apostrophe is 5, 17 and 53, against 4, 13 and 40. A remote pane's folder is quoted three
+    /// times, so a folder name with thousands of backslashes makes a command the system will not pass.
+    public static func quoteAnyShell(_ s: String) -> String {
+        if !s.isEmpty, !s.contains("="), !s.contains("%"), s.unicodeScalars.allSatisfy(plain.contains) { return s }
+        var out = ""
+        var run = String.UnicodeScalarView()
+        func endRun() {
+            if !run.isEmpty { out += "'" + String(run) + "'" }
+            run = String.UnicodeScalarView()
+        }
+        for scalar in s.unicodeScalars {
+            switch scalar {
+            case "'": endRun(); out += "\"'\""
+            case "\\": endRun(); out += "\\\\"
+            default: run.append(scalar)
+            }
+        }
+        endRun()
+        return out.isEmpty ? "''" : out
+    }
+
+    public static func line(_ words: [ShellWord], anyShell: Bool = false) -> String {
+        words.map { $0.rendered(anyShell: anyShell) }.joined(separator: " ")
     }
 
     /// A TOML basic string.
@@ -192,7 +240,10 @@ public enum Launcher {
 
     /// The plan for a pane. Local panes run in the owner's login shell so PATH matches their terminal.
     /// Remote panes run `ssh -t -R remotePort:127.0.0.1:port host` with the same harness command in the remote
-    /// login shell. Each has its own `remotePort`, so closing one leaves the others on the bus.
+    /// login shell. For a POSIX host the whole command is quoted with `Shell.quoteAnyShell` at each of its
+    /// three levels (this Mac's login shell, the host's login shell that sshd hands the command, and that
+    /// login shell started again with `-l -i`), since any of the three may be fish (D32). What each level
+    /// runs is what it always ran: the login shell changes folder and starts the harness itself. Each has its own `remotePort`, so closing one leaves the others on the bus.
     /// A Windows host (cmd.exe over OpenSSH) runs the same inner command in MSYS2 bash; see `windowsRemoteCommand`.
     ///
     /// `runnerForward` (D12): a Runner pane on a host also forwards that host's Runner port to this port on
@@ -229,16 +280,18 @@ public enum Launcher {
                                         "DOJO_RUNNER_PORT", "DOJO_RUNNER_TRAY"].compactMap { key in
             env[key].map { .literal("\(key)=\($0)") }
         }
-        let cd = directory.map { "cd " + Shell.homeQuoted($0) + " && " } ?? ""
-        let inner = cd + "exec " + Shell.line([.literal("env")] + assignments + [path] + harness)
+        // A Windows host's command is built as before: cmd.exe and MSYS2 bash read it, never fish.
+        let anyShell = remoteShell == .posix
+        let cd = directory.map { "cd " + Shell.homeQuoted($0, anyShell: anyShell) + " && " } ?? ""
+        let inner = cd + "exec " + Shell.line([.literal("env")] + assignments + [path] + harness, anyShell: anyShell)
         let remote: String
         switch remoteShell {
-        case .posix: remote = #"exec "$SHELL" -l -i -c "# + Shell.quote(inner)
+        case .posix: remote = #"exec "$SHELL" -l -i -c "# + Shell.quoteAnyShell(inner)
         case .windows: remote = windowsRemoteCommand(inner: inner, bash: msysBash)
         }
         let ssh = sshWords(host: host, port: port, remotePort: busPort, remoteCommand: remote,
                            runnerForward: kind == .runner ? runnerForward : nil)
-        return LaunchPlan(executable: loginShell, args: ["-l", "-i", "-c", "exec " + Shell.line(ssh)], environment: env)
+        return LaunchPlan(executable: loginShell, args: ["-l", "-i", "-c", "exec " + Shell.line(ssh, anyShell: anyShell)], environment: env)
     }
 
     /// MSYS2's bash on a Windows host. The standard MSYS2 install location.

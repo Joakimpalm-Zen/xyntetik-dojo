@@ -4,8 +4,10 @@ name: ci
 # bundle, on macOS. It runs on pull requests (where it gates the merge) and once a week on main, not on
 # every push: a merged pull request was just checked. The SwiftPM build directory is cached on the
 # dependency lock, so SwiftTerm compiles once per lock change rather than twice per run. The smoke (two
-# panes, a click, typed keys echoed back) runs too but does not block until it has proved itself on
-# the hosted runners.
+# panes, a click, typed keys echoed back) gates the merge like the tests. Its record on the hosted runners
+# before it did, counted from the logs: 61 of the 62 runs that reached it from 2026-11-10 to 2026-11-15
+# passed; the one that did not said "a click did not focus the pane", in a change that was not about that.
+# A smoke that is red on its own: run the job again once, and file it if it is red a second time.
 on:
   pull_request:
   schedule:
@@ -30,6 +32,5 @@ jobs:
         run: make test
       - name: app bundle
         run: make app
-      - name: smoke (not blocking yet)
-        continue-on-error: true
+      - name: smoke
         run: make smoke
