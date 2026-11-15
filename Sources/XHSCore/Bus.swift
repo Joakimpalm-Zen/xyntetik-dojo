@@ -176,8 +176,8 @@ public final class Bus {
     public var onAttention: ((String, Attention) -> Void)?
     /// The harnesses whose cursor is known to sit on the composer while it takes input. For those the cursor's
     /// line is part of the evidence the bus wants before it types (D35.1). Empty until a real pane of each
-    /// harness has been looked at: a harness that draws its own cursor and parks the terminal's elsewhere
-    /// would otherwise never be typed into.
+    /// harness has been looked at, by hand, at a restart of the app: a harness that draws its own cursor and
+    /// parks the terminal's elsewhere would otherwise never be typed into.
     public var cursorEvidence: Set<HarnessKind> = []
     /// Delay between typing a message and pressing Enter, so the harness sees the paste end first.
     public var submitDelay: TimeInterval = 0.15
@@ -697,13 +697,7 @@ public final class Bus {
         let clean = Redact.apply(screen, tokens: panes.map(\.token))
         line["lines"] = screen.isEmpty ? 0 : screen.components(separatedBy: "\n").count
         line["redacted"] = clean.count
-        var reply: [String: Any] = ["pane": target.name, "state": target.state.rawValue, "text": clean.text, "redacted": clean.count]
-        // The line the terminal's cursor is on, where the terminal says: it is on the screen already, and it
-        // is how to learn whether a harness keeps its cursor on its composer (`cursorEvidence`).
-        if let live = target.io?.liveScreen(), let at = live.cursorLine, live.lines.indices.contains(at) {
-            reply["cursor_line"] = Redact.apply(live.lines[at], tokens: panes.map(\.token)).text
-        }
-        return ok(reply)
+        return ok(["pane": target.name, "state": target.state.rawValue, "text": clean.text, "redacted": clean.count])
     }
 
     private func applyHook(_ pane: Pane, _ event: [String: Any]) {
