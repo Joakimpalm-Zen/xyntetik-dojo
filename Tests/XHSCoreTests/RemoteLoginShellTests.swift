@@ -398,10 +398,10 @@ import Testing
         // a combining mark right after a quote is text, not part of the quote
         #expect(Fish.words("echo " + Shell.quoteAnyShell("\u{0301}")) == ["echo", "\u{0301}"])
         #expect(Posix.words("echo '\u{0301}x' y") == ["echo", "\u{0301}x", "y"])
-        // a bare word that starts with %self is fish's own process id to fish, and itself to sh
+        // the bare word %self is fish's own process id to fish, and itself to sh
         #expect(Posix.words("cd %self") == ["cd", "%self"])
         #expect(Fish.words("cd %self") == ["cd", Fish.ownProcessId])
-        #expect(Fish.words("cd %self/x") == ["cd", Fish.ownProcessId + "/x"])
+        #expect(Fish.words("cd %self/x") == ["cd", "%self/x"])
         #expect(Fish.words("cd '%self'") == ["cd", "%self"])
         #expect(Fish.words("cd /srv/%self") == ["cd", "/srv/%self"])
     }
@@ -488,14 +488,15 @@ private func splitWords(_ line: String, single: (Unicode.Scalar) -> Bool, double
 }
 
 /// fish: inside single quotes a backslash escapes a backslash or an apostrophe and nothing else; inside
-/// double quotes it escapes a backslash, a double quote or a dollar sign. A bare word that starts with
-/// `%self` gets fish's own process id in its place, which no other shell here does.
+/// double quotes it escapes a backslash, a double quote or a dollar sign. The bare word `%self` gets fish's
+/// own process id in its place, which no other shell here does. Seen with fish 4.9.3 on the hosted runner:
+/// `%self` came back as a number, `%self/x` as itself.
 enum Fish {
     static let ownProcessId = "<fish's own process id>"
 
     static func words(_ line: String) -> [String]? {
         splitWords(line, single: { $0 == "'" || $0 == "\\" }, double: { $0 == "\"" || $0 == "\\" || $0 == "$" })?.map { word in
-            word.bare && word.text.hasPrefix("%self") ? ownProcessId + word.text.dropFirst("%self".count) : word.text
+            word.bare && word.text == "%self" ? ownProcessId : word.text
         }
     }
 }
