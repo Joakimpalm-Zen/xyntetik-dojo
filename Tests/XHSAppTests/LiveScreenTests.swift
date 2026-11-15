@@ -25,6 +25,33 @@ import XHSCore
         #expect(pane.liveScreen().cursorLine == 0)
     }
 
+    /// What the rule cannot close is the moment between the bus's look at the screen and its keystroke
+    /// reaching the harness: a dialog the harness draws in that moment is not seen. This measures how long
+    /// that moment can be, with a real program in a real pane: a key is written, the terminal driver echoes
+    /// it, and the time until it is back on the pane's screen is one trip there and one back. It is printed,
+    /// not held to a tight bound, since a busy machine stretches it.
+    @Test func aKeystrokeIsBackOnTheScreenInMilliseconds() async throws {
+        _ = NSApplication.shared
+        let pane = TerminalPane(name: "p")
+        pane.startProcess(executable: "/bin/cat", args: [], environment: ["TERM=xterm-256color"], execName: nil, currentDirectory: nil)
+        defer { pane.terminate() }
+        try await Task.sleep(nanoseconds: 300_000_000)
+        var times: [Double] = []
+        for round in 0..<20 {
+            let key = "k\(round)z"
+            let written = Date()
+            pane.write(Array(key.utf8))
+            while !pane.liveScreen().lines.joined().contains(key), Date().timeIntervalSince(written) < 5 {
+                try await Task.sleep(nanoseconds: 200_000)
+            }
+            times.append(Date().timeIntervalSince(written) * 1000)
+        }
+        times.sort()
+        let median = times[times.count / 2], slowest = times[times.count - 1]
+        print(String(format: "D35.1 window: a key written to a pane was back on its screen after %.1f ms (median of 20, slowest %.1f ms)", median, slowest))
+        #expect(median < 1000, "the pane's own echo took \(median) ms")
+    }
+
     @Test func theBusReadsTheSameScreen() {
         _ = NSApplication.shared
         let pane = TerminalPane(name: "p")
