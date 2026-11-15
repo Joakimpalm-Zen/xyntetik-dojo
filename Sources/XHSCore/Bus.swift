@@ -847,7 +847,7 @@ public final class Bus {
                     let stateOK = p.state == .idle || p.state == .running
                     self.note(["op": "enter", "pane": p.name, "outcome": "owed",
                                "why": keysAfter ? "owner keys after the paste"
-                                   : stateOK && !p.hasDraft ? "the message is not in a free composer on the screen" : "the pane is \(p.state.rawValue)"])
+                                   : stateOK && !p.hasDraft ? "no composer on the screen" : "the pane is \(p.state.rawValue)"])
                 }
                 self.flush(p)
             }
