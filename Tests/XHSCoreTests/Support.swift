@@ -26,6 +26,20 @@ func body(_ object: [String: Any]) -> Data {
 let repoRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
 
 /// The argv a POSIX shell builds from a command line (without a leading "exec").
+/// The words of the harness command in the line a host's login shell reads: what follows the last `exec`,
+/// after the folder change and, for a pane that reports hooks, its check of the way to the bus (D35.2).
+func harnessArgs(_ inner: String, home: String = "/home/tester") -> [String] {
+    shellArgs(inner.components(separatedBy: " && exec ").last ?? inner, home: home)
+}
+
+/// The words of that check, nil when the line has none.
+func reachArgs(_ inner: String, home: String = "/home/tester") -> [String]? {
+    // what stands before the harness: the folder change, if any, and the check
+    let head = inner.components(separatedBy: " && exec ").dropLast().joined(separator: " && exec ")
+    if head.hasPrefix("env ") { return shellArgs(head, home: home) }
+    return head.range(of: " && env ").map { shellArgs("env " + String(head[$0.upperBound...]), home: home) }
+}
+
 func shellArgs(_ line: String, home: String = "/home/tester") -> [String] {
     var command = line
     if command.hasPrefix("exec ") { command.removeFirst(5) }

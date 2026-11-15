@@ -37,28 +37,77 @@ import Testing
         }
     }
 
-    /// D35.2: ssh only warns when it cannot make a forward, and goes on. A pane without its tunnel has no
-    /// hooks, so the bus would never learn of a prompt there; it ends with ssh's message instead.
-    @Test func everyRemotePaneEndsWhenItsTunnelCannotBeMade() {
+    /// D35.2: with no address ssh asks for the loopback listeners of both families and is content when
+    /// either binds. A port taken on IPv4 alone then passed for a tunnel, while the hooks call 127.0.0.1.
+    @Test func theForwardAsksForTheListenerOnIPv4ByName() {
         for kind in [HarnessKind.claude, .codex, .pi, .shell, .runner] {
             for shell in [RemoteShell.posix, .windows] {
                 let words = shellArgs(Launcher.plan(kind: kind, paneName: "\(kind)-1", host: "user@box", port: 7788, token: "tok",
                                                     runnerModel: nil, loginShell: "/bin/zsh", remoteShell: shell, remotePort: 50001,
                                                     runnerForward: kind == .runner ? 18081 : nil).args[3])
-                let option = words.firstIndex(of: "ExitOnForwardFailure=yes")
-                #expect(option != nil && words[(option ?? 1) - 1] == "-o", "\(kind) \(shell)")
-                #expect(words.filter { $0 == "ExitOnForwardFailure=yes" }.count == 1, "\(kind) \(shell)")
-                // an option of ssh's, so before the host
-                #expect((option ?? .max) < (words.firstIndex(of: "user@box") ?? 0), "\(kind) \(shell)")
-                // the tunnel and the keepalive are as they were
-                #expect(words.contains("50001:127.0.0.1:7788") && words.contains("ServerAliveInterval=30")
-                        && words.contains("ServerAliveCountMax=3"), "\(kind) \(shell)")
+                let forward = words.firstIndex(of: "-R").map { words[$0 + 1] }
+                #expect(forward == "127.0.0.1:50001:127.0.0.1:7788", "\(kind) \(shell)")
+                #expect(words.filter { $0 == "-R" }.count == 1, "\(kind) \(shell)")
+                #expect(words.contains("ServerAliveInterval=30") && words.contains("ServerAliveCountMax=3"), "\(kind) \(shell)")
             }
         }
-        // a pane on this Mac has no ssh at all
+    }
+
+    /// The option that ends ssh on any forward that fails is for a Runner pane's own -L, as on main. On an
+    /// agent pane it would also end the pane for a forward of the user's own in ~/.ssh/config: a second pane
+    /// on a host alias with a LocalForward would never start.
+    @Test func onlyARunnerPanesOwnForwardEndsThePaneWhenItFails() {
+        for shell in [RemoteShell.posix, .windows] {
+            for kind in [HarnessKind.claude, .codex, .pi, .shell] {
+                let line = plan(kind: kind, shell: shell, remotePort: 50001)
+                #expect(!line.contains("ExitOnForwardFailure"), "\(kind) \(shell)")
+            }
+            let runner = shellArgs(Launcher.plan(kind: .runner, paneName: "runner-1", host: "user@box", port: 7788, token: "tok",
+                                                 runnerModel: nil, loginShell: "/bin/zsh", remoteShell: shell, remotePort: 50001,
+                                                 runnerForward: 18081).args[3])
+            #expect(runner.filter { $0 == "ExitOnForwardFailure=yes" }.count == 1, "\(shell)")
+            // without a forward of its own a Runner pane has no such option either
+            #expect(!plan(kind: .runner, shell: shell, remotePort: 50001).contains("ExitOnForwardFailure"), "\(shell)")
+        }
+    }
+
+    /// A pane that reports hooks asks the bus for its own state through the tunnel before its harness starts,
+    /// with its own port and token; a shell pane and a Runner pane, which report none, start as on main.
+    @Test func aPaneThatReportsHooksChecksItsWayToTheBusFirst() throws {
+        for shell in [RemoteShell.posix, .windows] {
+            for kind in [HarnessKind.claude, .codex, .pi] {
+                let inner = try hostsLine(kind, shell)
+                let check = try #require(reachArgs(inner, home: "/remote/home"), "\(kind) \(shell)")
+                #expect(check == ["env", "DOJO_PANE=\(kind)-1", "DOJO_PORT=50001", "DOJO_TOKEN=tok",
+                                  "PATH=/remote/home/.dojo/bin:/usr/bin:/bin", "sh", "-c", Launcher.reachCheck], "\(kind) \(shell)")
+                // the harness after it is given the same three and the same PATH
+                #expect(Array(harnessArgs(inner, home: "/remote/home").prefix(5)) == Array(check.prefix(5)), "\(kind) \(shell)")
+            }
+            for kind in [HarnessKind.shell, .runner] {
+                let inner = try hostsLine(kind, shell)
+                #expect(!inner.contains("dojo state"), "\(kind) \(shell)")
+                #expect(!inner.contains(" && exec "), "\(kind) \(shell): one command, as on main")
+            }
+        }
+        // a pane on this Mac has no tunnel to check
         let local = Launcher.plan(kind: .claude, paneName: "claude-1", host: nil, port: 7788, token: "tok", runnerModel: nil,
                                   loginShell: "/bin/zsh").args.joined(separator: " ")
-        #expect(!local.contains("ExitOnForwardFailure"))
+        #expect(!local.contains("dojo state"))
+    }
+
+    /// The line the host's login shell is started with, for a pane of this kind.
+    private func hostsLine(_ kind: HarnessKind, _ shell: RemoteShell) throws -> String {
+        let ssh = shellArgs(Launcher.plan(kind: kind, paneName: "\(kind)-1", host: "user@box", port: 7788, token: "tok",
+                                          runnerModel: nil, loginShell: "/bin/zsh", remoteShell: shell, remotePort: 50001).args[3])
+        let remote = try #require(ssh.last)
+        if shell == .windows { return try #require(Launcher.windowsInnerCommand(remote)) }
+        return try #require(shellArgs(remote, home: "/remote/home").last)
+    }
+
+    /// The check has no apostrophe and no backslash, which the quoting a fish login shell needs pays for
+    /// dearly, and it is one line.
+    @Test func theCheckIsCheapToQuote() {
+        #expect(!Launcher.reachCheck.contains("'") && !Launcher.reachCheck.contains("\\") && !Launcher.reachCheck.contains("\n"))
     }
 
     @Test func aLocalPaneKeepsTheBusPort() {

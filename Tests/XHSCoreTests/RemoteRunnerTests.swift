@@ -19,7 +19,7 @@ import Testing
             #expect(words.contains("-L 18081:127.0.0.1:18080"), "\(shell)")
             #expect(!words.contains("127.0.0.1:8080"), "\(shell)")
             // the bus forward is still there beside it
-            #expect(words.contains("-R 50001:127.0.0.1:7788"), "\(shell)")
+            #expect(words.contains("-R 127.0.0.1:50001:127.0.0.1:7788"), "\(shell)")
         }
     }
 
@@ -88,7 +88,7 @@ import Testing
         #expect(pi.args[3].contains("DOJO_RUNNER_URL=http://127.0.0.1:18080/v1"))
         // a pi pane on a host has no -L: it is on the Runner's machine (the ssh words, before the host)
         let sshWords = pi.args[3].components(separatedBy: " user@box ").first ?? ""
-        #expect(sshWords.hasPrefix("exec ssh -t -R 50002:127.0.0.1:7788"))
+        #expect(sshWords.hasPrefix("exec ssh -t -R 127.0.0.1:50002:127.0.0.1:7788"))
         #expect(!sshWords.contains("-L "))
     }
 
