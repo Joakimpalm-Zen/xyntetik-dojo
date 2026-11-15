@@ -26,10 +26,7 @@ jobs:
         with:
           path: .build
           key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved', 'Package.swift') }}
-      - name: tests
-        run: make test
-      - name: app bundle
-        run: make app
-      - name: smoke (not blocking yet)
-        continue-on-error: true
-        run: make smoke
+      - name: fish, for this run only
+        run: HOMEBREW_NO_AUTO_UPDATE=1 brew install fish && fish --version
+      - name: the login shell tests, with a real fish on the machine
+        run: swift test --filter RemoteLoginShellTests
