@@ -377,6 +377,7 @@ public final class Bus {
     /// Delivers what can be delivered now and notices turns that ended without a Stop hook.
     /// The app calls this once a second.
     public func tick() {
+        noteUnknownCallersLeftOut()
         for p in panes {
             if p.state == .running || p.state == .starting { watchQuiet(p) }
             flush(p)
@@ -522,7 +523,9 @@ public final class Bus {
             return true
         }
         guard let token, let sender = panes.first(where: { $0.token == token }) else {
-            return refuse(error(401, "unknown or missing X-Dojo-Token"))
+            let result = unknownCaller(line, error(401, "unknown or missing X-Dojo-Token"))
+            reply(result.status, result.body)
+            return true
         }
         line["from"] = sender.name
         guard case .success(let path) = program else {
@@ -565,7 +568,7 @@ public final class Bus {
             return outside(op, token: token, expected: expected, body: body)
         }
         guard let token, let sender = panes.first(where: { $0.token == token }) else {
-            return recorded(["op": op], error(401, "unknown or missing X-Dojo-Token"))
+            return unknownCaller(["op": op], error(401, "unknown or missing X-Dojo-Token"))
         }
         let args: [String: Any]
         if body.isEmpty {
@@ -606,9 +609,10 @@ public final class Bus {
 
     /// D15 (b): `/outside/send`, and nothing else. The sender is the route's, never the caller's.
     private func outside(_ op: String, token: String?, expected: String, body: Data) -> (status: Int, body: Data) {
-        var line: [String: Any] = ["op": op == "outside/send" ? "send" : op, "from": Outside.sender, "via": "outside"]
+        // The route has one operation; any other path is recorded as that, not in the caller's words (D35.6).
+        var line: [String: Any] = ["op": op == "outside/send" ? "send" : "outside/other", "from": Outside.sender, "via": "outside"]
         guard let token, Outside.same(token, expected) else {
-            return recorded(line, error(401, "unknown or missing X-Dojo-Outside-Token"))
+            return unknownCaller(line, error(401, "unknown or missing X-Dojo-Outside-Token"))
         }
         guard op == "outside/send" else { return recorded(line, error(404, "the outside route only sends: /outside/send")) }
         guard let args = (body.isEmpty ? [:] : (try? JSONSerialization.jsonObject(with: body))) as? [String: Any] else {
@@ -627,6 +631,47 @@ public final class Bus {
         let result = send(from: outsider, args, &line)
         if result.status == 200 { outsideSent.append(now()) }
         return recorded(line, result)
+    }
+
+    /// The operations a caller can name. A request that names anything else is recorded as `unknown`.
+    static let operations: Set<String> = ["panes", "send", "read", "state", "watch", "label", "hook", "relay", "outside/other"]
+    /// Lines a minute the record takes from callers with no valid token, all of them together.
+    public static let unknownCallerLinesPerMinute = 6
+    private var unknownCallerLines: [Date] = []
+    private var unknownCallersLeftOut = 0
+
+    /// Records a request that came with no valid token (D35.6). Any process on this Mac can make one, with a
+    /// path of its own choosing and as often as it likes, so the record takes the operation only when it is
+    /// one the bus has, and a few such lines a minute. What was left out is counted, and the count goes into
+    /// the record once there is room again. The caller gets the same answer either way.
+    private func unknownCaller(_ line: [String: Any], _ result: (status: Int, body: Data)) -> (status: Int, body: Data) {
+        let minute = now().addingTimeInterval(-60)
+        unknownCallerLines.removeAll { $0 < minute }
+        guard unknownCallerLines.count < Bus.unknownCallerLinesPerMinute else {
+            unknownCallersLeftOut += 1
+            return result
+        }
+        unknownCallerLines.append(now())
+        var line = line
+        if let op = line["op"] as? String, !Bus.operations.contains(op) { line["op"] = "unknown" }
+        if unknownCallersLeftOut > 0 {
+            line["left_out"] = unknownCallersLeftOut
+            unknownCallersLeftOut = 0
+        }
+        return recorded(line, result)
+    }
+
+    /// Once a minute has room again, the count of unknown callers the record left out, if no other such
+    /// line has carried it.
+    private func noteUnknownCallersLeftOut() {
+        guard unknownCallersLeftOut > 0 else { return }
+        let minute = now().addingTimeInterval(-60)
+        unknownCallerLines.removeAll { $0 < minute }
+        guard unknownCallerLines.count < Bus.unknownCallerLinesPerMinute else { return }
+        unknownCallerLines.append(now())
+        note(["op": "unknown", "outcome": "refused", "status": 401, "left_out": unknownCallersLeftOut,
+              "reason": "requests with no valid token that the record left out"])
+        unknownCallersLeftOut = 0
     }
 
     /// Records one operation with its outcome, and returns the result unchanged.
@@ -692,8 +737,10 @@ public final class Bus {
         }
         guard !text.isEmpty else { return error(400, "text is empty") }
         guard text.count <= Bus.maxMessageLength else { return error(413, "text is longer than \(Bus.maxMessageLength) characters") }
-        // The owner's choice (D21.2): the record keeps the text of each send.
-        line["text"] = text
+        // The owner's choice (D21.2): the record keeps the text of each send. With secrets taken out, as on
+        // any route out of the bus (D35.5): the record stays on disk for 30 days. What is typed into the
+        // target is the text as sent.
+        line["text"] = Redact.apply(text, tokens: panes.map(\.token)).text
         line["chars"] = text.count
         let before = target.queue.count
         target.queue.append((sender: sender, text: text))

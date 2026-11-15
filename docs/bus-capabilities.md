@@ -102,6 +102,9 @@ The bus removes secrets from what `read` returns, before it leaves the bus:
   Anthropic, OpenAI and Hugging Face keys, Slack tokens, JSON web tokens, `Authorization: Bearer` values,
   credentials inside URLs, and `NAME=value` lines whose name holds TOKEN, SECRET, PASSWORD or API_KEY. The
   list follows the rule sets of gitleaks and detect-secrets and stays a short file in the repository.
+  Added after an outside review (D35.4): GitLab, Stripe, Google, npm and SendGrid keys, a password after
+  `curl -u`, the same names as a YAML or JSON key, a name that is the word alone (`PASSWORD=`), and a key
+  the terminal wrapped onto the next row.
 - The reply says how many were taken out. Lines keep their place, so the text still reads.
 - The owner's own view of a pane is never changed; only what goes to another pane is.
 
@@ -112,7 +115,8 @@ Redaction is a backstop. A pattern list misses things, so the primary control is
 
 - One line per bus operation in `~/.dojo/audit/<date>.jsonl`, readable only by the owner: time, operation,
   caller, target, outcome (delivered, queued, refused and why), and sizes. The text of a `send` is kept
-  (choice 3). A `read` records who read whom and how many lines, never the screen. A hook is the pane
+  (choice 3). Since D35.5 it is kept with secrets taken out, as `read` does; since D35.6 a caller with no
+  valid token gets a line with the operation in the bus's words only, a few a minute. A `read` records who read whom and how many lines, never the screen. A hook is the pane
   reporting on itself, so the record keeps the change of state it causes, not the hook.
 - Each line carries the SHA-256 of the line before it, so a removed or edited line shows.
 - Kept for 30 days (choice 3).
