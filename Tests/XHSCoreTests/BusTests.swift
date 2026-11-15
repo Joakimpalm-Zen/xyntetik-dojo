@@ -284,7 +284,7 @@ import Testing
         bus.now = { clock }
         hook(targetToken, "SessionStart")
         hook(targetToken, "UserPromptSubmit")
-        targetIO.screen = "Working (1s)"
+        targetIO.screen = ComposerTests.codex("› resume the review").replacingOccurrences(of: "3m 24s", with: "1s")
         bus.noteOwnerInput("codex-1", .text)
         call("send", ["pane": "codex-1", "text": "hi"])
         #expect(bus.info("codex-1")?.state == .running)
@@ -292,7 +292,7 @@ import Testing
         bus.noteOwnerInput("codex-1", .clear)
         for s in 1...14 {
             clock = clock.addingTimeInterval(1)
-            if s < 6 { targetIO.screen = "Working (\(s)s)" }
+            if s < 6 { targetIO.screen = ComposerTests.codex("› resume the review").replacingOccurrences(of: "3m 24s", with: "\(s)s") }
             bus.tick()
             #expect(bus.info("codex-1")?.state == .running, "second \(s)")
         }

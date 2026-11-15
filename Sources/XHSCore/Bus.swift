@@ -40,6 +40,9 @@ public final class Bus {
         public let model: String
         /// The owner has unsent text in the pane; the bus holds its queue until that is sent or cleared.
         public let draft: Bool
+        /// The pane's screen shows no composer (a dialog is open there, or a screen the bus does not know):
+        /// the bus holds its queue, or the Enter it owes, until one is back (D35.1).
+        public let noComposer: Bool
         /// `coordinator` or `worker` once the owner has marked a coordinator (D21.2); empty before, and for
         /// panes that are not agents.
         public let role: String
@@ -54,7 +57,7 @@ public final class Bus {
 
         var json: [String: Any] {
             ["name": name, "kind": kind.rawValue, "host": host, "state": state.rawValue, "queued": queued, "model": model,
-             "draft": draft, "role": role, "reads": reads, "label": label]
+             "draft": draft, "no_composer": noComposer, "role": role, "reads": reads, "label": label]
         }
     }
 
@@ -96,6 +99,9 @@ public final class Bus {
         var hasDraft = false
         /// Text keys came after the last Enter: a submission hook arriving now is for an earlier prompt.
         var typedSinceSubmit = false
+        /// The bus looked for the harness's composer on the screen and did not see one, so it typed nothing,
+        /// or held back an Enter (D35.1). Cleared when it next types or presses.
+        var noComposer = false
         /// The screen as last seen by `tick`, and since when it has looked like that.
         var screenHash = 0
         var quietSince: Date?
@@ -642,6 +648,9 @@ public final class Bus {
             result["note"] = "\(target.name) is at a prompt; the bus never types into a prompt. Queued until it is idle."
         } else if target.hasDraft {
             result["note"] = "the owner has unsent text in \(target.name); queued until it is sent, cleared, or the composer shows empty."
+        } else if target.noComposer {
+            result["note"] = "\(target.name) shows no composer on its screen (a dialog may be open there); the bus types only "
+                + "into a composer it can see. Queued until one is back."
         } else {
             result["note"] = "\(target.name) is \(target.state.rawValue); queued until it is idle."
         }
@@ -728,6 +737,10 @@ public final class Bus {
             p.hasDraft = false
             p.typedSinceSubmit = false
         }
+        // The bus types only into a composer it can see (D35.1). A permission prompt is known from a hook, and
+        // a hook can be lost; any dialog takes the composer off the screen, hook or no hook. Unseen, the queue
+        // waits and the next tick looks again.
+        guard composerShown(p, io) else { return }
         let message = p.queue.map { Delivery.line(from: $0.sender.name, text: $0.text) }.joined(separator: "\n")
         var senders: [String] = []
         for entry in p.queue where !senders.contains(entry.sender.name) { senders.append(entry.sender.name) }
@@ -753,16 +766,20 @@ public final class Bus {
                 if textAfter {
                     // The owner's words are in that composer now: the bus never sends them (D26).
                     self.note(["op": "enter", "pane": p.name, "outcome": "dropped", "why": "the owner typed after the paste"])
-                } else if p.state == .idle || p.state == .running, !p.hasDraft, !keysAfter {
-                    io?.write(Delivery.enter)
+                } else if p.state == .idle || p.state == .running, !p.hasDraft, !keysAfter,
+                          let io, self.composerShown(p, io, afterPaste: true, record: false) {
+                    io.write(Delivery.enter)
                     self.note(["op": "enter", "pane": p.name, "outcome": "sent"])
                 } else {
-                    // A prompt opened, or the owner pressed a key that adds no text: the Enter waits for the guard
-                    // to clear (D26). Before, it was dropped, and the text stayed in the composer for good.
+                    // A prompt opened, the composer left the screen (a dialog with no hook, D35.1), or the owner
+                    // pressed a key that adds no text: the Enter waits for the guard to clear (D26). Before, it
+                    // was dropped, and the text stayed in the composer for good.
                     p.enterOwed = true
                     p.pastedAt = pasted
+                    let stateOK = p.state == .idle || p.state == .running
                     self.note(["op": "enter", "pane": p.name, "outcome": "owed",
-                               "why": keysAfter ? "owner keys after the paste" : "the pane is \(p.state.rawValue)"])
+                               "why": keysAfter ? "owner keys after the paste"
+                                   : stateOK && !p.hasDraft ? "no composer on the screen" : "the pane is \(p.state.rawValue)"])
                 }
                 self.flush(p)
             }
@@ -771,6 +788,20 @@ public final class Bus {
             note(["op": "enter", "pane": p.name, "outcome": "sent"])
         }
         onChange?()
+    }
+
+    /// D35.1: whether the bus may type into the pane, going by its screen. True for a harness the bus has no
+    /// composer rule for (pi, a shell), as before. The first miss of a hold goes into the record and the pane's
+    /// header says so, since a composer drawn in a way the bus does not know would otherwise hold a queue
+    /// without a word.
+    private func composerShown(_ p: Pane, _ io: PaneIO, afterPaste: Bool = false, record: Bool = true) -> Bool {
+        let shown = Composer.shown(kind: p.kind, screen: io.screenText(), afterPaste: afterPaste) ?? true
+        if shown == p.noComposer {
+            p.noComposer = !shown
+            if !shown, record { note(["op": "hold", "pane": p.name, "why": "no composer on the screen", "messages": p.queue.count]) }
+            onChange?()
+        }
+        return shown
     }
 
     /// D26: the Enter the guard held back, pressed once the pane is idle or running and the owner has been quiet.
@@ -784,6 +815,7 @@ public final class Bus {
         }
         guard p.state == .idle || p.state == .running, !p.hasDraft else { return }
         if let last = p.lastOwnerInput, now().timeIntervalSince(last) < ownerQuietInterval { return }
+        guard composerShown(p, io, afterPaste: true, record: false) else { return }
         p.enterOwed = false
         io.write(Delivery.enter)
         if p.kind != .shell { p.state = .running }
@@ -801,7 +833,7 @@ public final class Bus {
 
     private func info(_ p: Pane) -> Info {
         Info(name: p.name, kind: p.kind, host: p.host, state: p.state, queued: p.queue.count, model: p.model, draft: p.hasDraft,
-             role: role(of: p)?.rawValue ?? "",
+             noComposer: p.noComposer, role: role(of: p)?.rawValue ?? "",
              reads: panes.filter { p.mayRead.contains(ObjectIdentifier($0)) }.map(\.name),
              label: p.label, since: p.stateSince, idleFlag: idleFlag(of: p))
     }

@@ -4,7 +4,12 @@ import Foundation
 @MainActor
 final class MockIO: PaneIO {
     var written: [[UInt8]] = []
-    var screen = ""
+    /// What the pane shows. The bus types only into a composer it can see (D35.1), so a pane in a test shows
+    /// one unless the test says otherwise.
+    var screen = MockIO.composers
+    /// Claude Code's composer and Codex's on one screen, each holding a word: a place to type for either
+    /// harness, and not an empty composer, which would end a draft hold.
+    static let composers = "──────────────────────────────\n❯ word\n──────────────────────────────\n\n› word\n"
     var bracketedPasteEnabled = false
 
     func write(_ bytes: [UInt8]) { written.append(bytes) }

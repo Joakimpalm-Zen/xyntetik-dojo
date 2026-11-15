@@ -348,7 +348,8 @@ struct PaneCell: View {
                 }
                 Spacer(minLength: 4)
                 if let q = info?.queued, q > 0 {
-                    Text(info?.draft == true ? "\(q) queued, unsent text here" : "\(q) queued")
+                    Text(info?.draft == true ? "\(q) queued, unsent text here"
+                         : info?.noComposer == true ? "\(q) queued, no composer on screen" : "\(q) queued")
                         .font(.caption).foregroundStyle(Color(Theme.coralInk))
                 }
                 if model.finishedUnseen(item) { UnseenMark() }
