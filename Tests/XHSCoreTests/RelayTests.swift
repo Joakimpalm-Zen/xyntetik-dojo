@@ -120,14 +120,14 @@ private final class Rig {
         let started = Date()
         let out = await run(try Rig(script: "#!/bin/sh\nexec sleep 30\n"), ["x"], timeout: 0.3)
         #expect(out.timedOut && out.code != 0)
-        #expect(Date().timeIntervalSince(started) < 3)
+        #expect(Date().timeIntervalSince(started) < wellBeforeTheProgramWouldEnd)
     }
 
     @Test func aProgramThatIgnoresTerminationIsKilled() async throws {
         let started = Date()
         let out = await run(try Rig(script: "#!/bin/sh\ntrap '' TERM\nwhile :; do sleep 1; done\n"), ["x"], timeout: 0.3)
         #expect(out.timedOut)
-        #expect(Date().timeIntervalSince(started) < 4)
+        #expect(Date().timeIntervalSince(started) < wellBeforeTheProgramWouldEnd)
     }
 
     @Test func outputIsCapped() async throws {
@@ -228,13 +228,18 @@ private final class Rig {
     }
 
     @Test func oneRelayRunsAtATime() async throws {
-        let rig = try Rig(script: "#!/bin/sh\nsleep 0.4\n")
+        let gate = RelayGate()
+        defer { gate.remove() }
+        let rig = try Rig(script: gate.script)
         bus.relayConfig = rig.config
-        async let first = ask(["x"], token: token)
-        try await Task.sleep(nanoseconds: 100_000_000)
+        let first = Task { @MainActor in await ask(["x"], token: token).status }
+        // the first relay is running and stays so until the gate opens: no clock decides which comes first
+        #expect(await gate.running())
         let second = await ask(["y"], token: token)
         #expect(second.status == 429)
-        #expect(await first.status == 200)
+        #expect(!gate.gaveUp)
+        gate.open()
+        #expect(await first.value == 200)
     }
 
     @Test func nothingIsTypedIntoAnyPane() async throws {
@@ -245,6 +250,10 @@ private final class Rig {
         _ = await ask(["x"], token: token)
         #expect(io.written.isEmpty)
     }
+}
+
+@MainActor private final class Flag {
+    var isSet = false
 }
 
 /// The whole path, over loopback HTTP, as the app wires it.
@@ -279,18 +288,28 @@ private final class Rig {
     }
 
     @Test func aConfiguredRelayRunsAndTheBusStaysFreeMeanwhile() async throws {
-        let rig = try Rig(script: "#!/bin/sh\nsleep 0.5\necho \"$RELAY_PANE $1\"\n")
+        let gate = RelayGate()
+        defer { gate.remove() }
+        let rig = try Rig(script: gate.script)
         let bus = Bus()
         let token = bus.add(name: "a", kind: .claude, io: MockIO())
         bus.relayConfig = rig.config
         let server = try await served(bus)
         defer { server.stop() }
-        async let slow = post(server, "relay", ["args": ["hello"]], token: token)
-        try await Task.sleep(nanoseconds: 100_000_000)
-        let started = Date()
+        let relayAnswered = Flag()
+        let slow = Task { @MainActor in
+            let result = try await post(server, "relay", ["args": ["hello"]], token: token)
+            relayAnswered.isSet = true
+            return result
+        }
+        // The relay's program is running and cannot end before the gate opens. The bus answers another
+        // request all the same, and the relay has not answered by then: the bus did not wait for it. This
+        // was a clock before (an answer inside 0.3 seconds), which a slow runner missed at 0.33 (D36).
+        #expect(await gate.running())
         #expect(try await post(server, "panes", [:], token: token).0 == 200)
-        #expect(Date().timeIntervalSince(started) < 0.3, "the bus waited for the relay")
-        let result = try await slow
+        #expect(!gate.gaveUp && !relayAnswered.isSet, "the bus waited for the relay")
+        gate.open()
+        let result = try await slow.value
         #expect(result.0 == 200 && result.1.contains("a hello"))
     }
 }
