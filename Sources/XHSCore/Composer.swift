@@ -39,6 +39,30 @@ public enum Composer {
     /// ("enter select · esc back") and its approval, and off Claude Code's dialogs. Lowercase.
     static let dialogKeyHints = ["enter select", "enter to select", "enter to confirm", "press enter", "esc back",
                                  "esc to cancel", "esc to go back", "tab to amend", "to navigate"]
+    /// What each harness writes in its composer in place of a long paste, up to the part that changes.
+    static func standIn(for kind: HarnessKind) -> String { kind == .codex ? "[Pasted Content " : "[Pasted text #" }
+    /// A hint row a harness shows under its composer once text has been pasted, which was not there before:
+    /// read off panes of both on 2026-11-15. Codex shows its own only while it works; idle, its hint row just
+    /// loses a part.
+    static func hintsAfterAPaste(for kind: HarnessKind) -> [String] {
+        switch kind {
+        case .claude: return ["paste again to expand"]
+        case .codex: return ["tab to queue message"]
+        case .pi, .runner, .shell: return []
+        }
+    }
+
+    /// What the bus saw of a composer when it typed into it: what the composer's row said after its mark, and
+    /// the rows under it. The Enter is pressed against this.
+    public struct Look: Equatable, Sendable {
+        public var composer: String
+        public var under: [String]
+
+        public init(composer: String, under: [String]) {
+            self.composer = composer
+            self.under = under
+        }
+    }
 
     /// Whether the screen shows the harness's composer as the place typed text goes right now (D35.1). The
     /// bus types a message, and presses its Enter, only into a composer it can see: a permission prompt or
@@ -54,16 +78,22 @@ public enum Composer {
     ///   ("1. Yes", or "1." where a narrow pane cut it) is not a composer. Rows set in, such as the later
     ///   rows of a long message, are never taken for a mark.
     /// - Claude Code draws its composer between two ruled lines; Codex draws it after an empty row.
-    /// - Before the bus has typed anything, the composer is one row.
+    /// - Before the bus has typed anything, the composer is one row, and it does not already hold a paste.
     /// - After it has pasted (`afterPaste`), the composer must hold what it pasted: `pasted` itself, row by
     ///   row, or the harness's stand-in for a long paste ("[Pasted text #3 +4 lines]", "[Pasted Content 1200
-    ///   chars]"). A composer that holds anything else, or nothing yet, is not pressed Enter on: the text
-    ///   has not arrived there, or something else has.
+    ///   chars]"). A stand-in that was in the composer already says nothing about this paste: a composer
+    ///   that shows one is not typed into, and at the Enter the composer's row must not be what it was at the
+    ///   look before the paste (`before`). A composer that holds anything else, or nothing yet, is not
+    ///   pressed Enter on: the text has not arrived there, or something else has.
     /// - Under the composer stand at most `footerRows` rows, every one set in as both harnesses set their
-    ///   status and hint rows, none a numbered choice, none with a dialog's key hints. The rows themselves
-    ///   cannot be known word for word: the status line is the owner's own, and the hint row changes
-    ///   ("paste again to expand" after a paste).
-    ///
+    ///   status and hint rows, none a numbered choice, none the frame of a dialog, none with a dialog's key
+    ///   hints. The rows themselves cannot be known word for word: the status line is the owner's own, and
+    ///   the hint row changes.
+    /// - After the paste, no row under the composer may be new since `before`: a dialog can open under a
+    ///   composer that stays on the screen. A row is not new when, its digits apart, it is one that was
+    ///   there, or the start or the end of one, or one that was there is the start or the end of it (a status
+    ///   line counts on, and a hint row loses or gains a part when text arrives), or when it is the harness's
+    ///   own hint after a paste.
     /// - Where the terminal says which line its cursor is on (`cursorLine`), the cursor must be on the
     ///   composer: a dialog moves it. Whether a harness keeps its cursor there has to be seen in a real pane
     ///   first, so the bus passes it only for the harnesses it is told to (`Bus.cursorEvidence`).
@@ -75,7 +105,18 @@ public enum Composer {
     }
 
     public static func shown(kind: HarnessKind, lines: [String], cursorLine: Int?, afterPaste: Bool = false,
-                             pasted: String? = nil) -> Bool? {
+                             pasted: String? = nil, before: Look? = nil) -> Bool? {
+        guard rule(for: kind) != nil else { return nil }
+        return read(kind: kind, lines: lines, cursorLine: cursorLine, afterPaste: afterPaste, pasted: pasted, before: before) != nil
+    }
+
+    /// The composer as it stands before the bus types into it; nil when it may not type there.
+    public static func look(kind: HarnessKind, lines: [String], cursorLine: Int?) -> Look? {
+        read(kind: kind, lines: lines, cursorLine: cursorLine, afterPaste: false, pasted: nil, before: nil)
+    }
+
+    private static func read(kind: HarnessKind, lines: [String], cursorLine: Int?, afterPaste: Bool, pasted: String?,
+                             before: Look?) -> Look? {
         guard let rule = rule(for: kind) else { return nil }
         let blank = CharacterSet.whitespaces.union(CharacterSet(charactersIn: "\u{a0}")).union(.newlines)
         var lines = lines
@@ -90,33 +131,34 @@ public enum Composer {
             return String(foot[at].text.dropFirst(mark.count)).trimmingCharacters(in: blank)
         }
         guard let at = foot.indices.last(where: { afterMark($0) != nil }), let first = afterMark(at),
-              !isNumberedChoice(first) else { return false }
+              !isNumberedChoice(first) else { return nil }
+        let standIn = Composer.standIn(for: kind)
         /// The composer's rows from `at` to `end`, without the mark.
         func rows(to end: Int) -> [String] { [first] + foot[(at + 1)..<max(end, at + 1)].map(\.text) }
+        func arrived(_ rows: [String]) -> Bool { pasted.map { Composer.arrived($0, rows: rows, standIn: standIn, before: before) } ?? true }
         let end: Int        // the first row under the composer: its footer starts here
         var block: Int      // the first row that is not the composer's own text
         switch kind {
         case .claude:
             guard at > 0, isRuledLine(foot[at - 1].text),
-                  let closing = foot.indices.first(where: { $0 > at && isRuledLine(foot[$0].text) }) else { return false }
+                  let closing = foot.indices.first(where: { $0 > at && isRuledLine(foot[$0].text) }) else { return nil }
             if afterPaste {
-                if let pasted, !holds(pasted, rows: rows(to: closing), standIn: "[Pasted text #") { return false }
-            } else if closing != at + 1 {
-                return false
+                guard arrived(rows(to: closing)) else { return nil }
+            } else if closing != at + 1 || isStandIn(first, standIn) {
+                return nil
             }
             block = closing
             end = closing + 1
         case .codex:
-            guard at == 0 || foot[at - 1].text.isEmpty else { return false }
-            if afterPaste, let pasted {
+            guard at == 0 || foot[at - 1].text.isEmpty else { return nil }
+            if afterPaste, pasted != nil {
                 // the pasted text may have empty rows of its own: it ends where it has all been seen
-                guard let last = (at..<foot.count).first(where: { holds(pasted, rows: rows(to: $0 + 1), standIn: "[Pasted Content ") })
-                else { return false }
+                guard let last = (at..<foot.count).first(where: { arrived(rows(to: $0 + 1)) }) else { return nil }
                 end = last + 1
             } else if afterPaste {
                 end = foot.indices.first(where: { $0 > at && (foot[$0].text.isEmpty || !foot[$0].setIn) }) ?? foot.count
             } else {
-                guard at + 1 == foot.count || foot[at + 1].text.isEmpty else { return false }
+                guard at + 1 == foot.count || foot[at + 1].text.isEmpty, !isStandIn(first, standIn) else { return nil }
                 end = at + 1
             }
             block = end
@@ -124,28 +166,52 @@ public enum Composer {
             return nil
         }
         block = max(block, at + 1)
-        if let cursorLine, !(at..<block).contains(cursorLine - dropped) { return false }
+        if let cursorLine, !(at..<block).contains(cursorLine - dropped) { return nil }
         let under = foot[min(end, foot.count)...].filter { !$0.text.isEmpty }
-        return under.count <= footerRows && under.allSatisfy { row in
+        guard under.count <= footerRows, under.allSatisfy({ row in
             // set in as a footer is, not a choice, not the frame of a dialog, and without a dialog's key hints
-            row.setIn && !isNumberedChoice(row.text) && !startsWithBoxDrawing(row.text)
-                && !dialogKeyHints.contains { row.text.lowercased().contains($0) }
+            row.setIn && !isNumberedChoice(row.text) && !startsWithBoxDrawing(row.text) && !hasKeyHint(row.text)
+        }) else { return nil }
+        if afterPaste, let before {
+            let hints = hintsAfterAPaste(for: kind)
+            guard under.allSatisfy({ row in hints.contains(row.text) || before.under.contains { wasThere(row.text, $0) } }) else { return nil }
         }
-    }
-
-    /// A row that begins with a box-drawing character: a ruled line, or the edge of a frame a dialog draws.
-    /// Only the beginning counts. A status row can end in a few such characters that a wider line left
-    /// behind at the right edge; a pane showed that on 2026-11-15.
-    static func startsWithBoxDrawing(_ row: String) -> Bool {
-        row.unicodeScalars.first.map { (0x2500...0x257F).contains($0.value) } ?? false
+        return Look(composer: first, under: under.map(\.text))
     }
 
     /// Whether the composer's rows are what the bus pasted, or the harness's stand-in for it. Row breaks and
     /// spaces are not compared: the harness wraps a long line where it likes.
     static func holds(_ pasted: String, rows: [String], standIn: String) -> Bool {
-        if rows.count == 1, rows[0].hasPrefix(standIn), rows[0].hasSuffix("]") { return true }
+        arrived(pasted, rows: rows, standIn: standIn, before: nil)
+    }
+
+    /// `holds`, against the look before the paste: a stand-in that was in the composer already says nothing
+    /// about this paste, so it counts only when the composer's row has changed.
+    static func arrived(_ pasted: String, rows: [String], standIn: String, before: Look?) -> Bool {
+        if rows.count == 1, isStandIn(rows[0], standIn) { return rows[0] != before?.composer }
         func bare(_ text: String) -> [Unicode.Scalar] { text.unicodeScalars.filter { !$0.properties.isWhitespace } }
         return bare(rows.joined()) == bare(pasted)
+    }
+
+    static func isStandIn(_ row: String, _ standIn: String) -> Bool { row.hasPrefix(standIn) && row.hasSuffix("]") }
+
+    /// Whether a row under the composer is one that was there before the paste, or a part of one. Digits are
+    /// taken as alike. A part is the start or the end of the longer row, and at least eight characters, so
+    /// that a short word in a dialog is not found in the middle of a status line.
+    static func wasThere(_ row: String, _ before: String) -> Bool {
+        func alike(_ text: String) -> String { String(text.map { $0.isASCII && $0.isNumber ? "#" : $0 }) }
+        let now = alike(row), then = alike(before)
+        if now == then { return true }
+        let (short, long) = now.count < then.count ? (now, then) : (then, now)
+        return short.count >= 8 && (long.hasPrefix(short) || long.hasSuffix(short))
+    }
+
+    /// Whether a row carries a dialog's key hint. A hint row is hints side by side, parted by a middle dot or
+    /// by a run of spaces, each a few whole words; a hint counts where it starts a word of such a part. A
+    /// folder named "press enter" in a status line, shown as "~/press enter", starts no word.
+    static func hasKeyHint(_ row: String) -> Bool {
+        let parts = row.lowercased().components(separatedBy: " · ").flatMap { $0.components(separatedBy: "  ") }
+        return parts.contains { part in dialogKeyHints.contains { (" " + part).contains(" " + $0) } }
     }
 
     /// A row that starts with a run of box-drawing characters, as the lines around Claude Code's composer
@@ -161,6 +227,13 @@ public enum Composer {
         let digits = text.prefix { $0.isASCII && $0.isNumber }
         let rest = text.dropFirst(digits.count)
         return !digits.isEmpty && digits.count <= 2 && (rest == "." || rest.hasPrefix(". "))
+    }
+
+    /// A row that begins with a box-drawing character: a ruled line, or the edge of a frame a dialog draws.
+    /// Only the beginning counts. A status row can end in a few such characters that a wider line left
+    /// behind at the right edge; a pane showed that on 2026-11-15.
+    static func startsWithBoxDrawing(_ row: String) -> Bool {
+        row.unicodeScalars.first.map { (0x2500...0x257F).contains($0.value) } ?? false
     }
 
     public static func shownEmpty(kind: HarnessKind, screen: String) -> Bool {

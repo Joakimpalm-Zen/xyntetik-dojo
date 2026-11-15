@@ -172,18 +172,22 @@ final class TerminalPane: TerminalView, PaneIO {
         let columns = snapshot.inputState.dimensions.cols
         var lines: [String] = []
         var cursorLine: Int?
+        var open = 0   // the columns the row before left unwritten at its right edge
         for row in snapshot.rows {
-            if row.isWrapped, var line = lines.popLast() {
-                // the row before ran to the right edge: put back the blanks the copy trimmed off its end
-                let short = line.count % max(columns, 1)
-                if short != 0 { line += String(repeating: " ", count: columns - short) }
-                lines.append(line + row.text)
+            if row.isWrapped, let line = lines.popLast() {
+                // The row before ran to the right edge: put back the blanks the copy trimmed off its end.
+                // They are counted in columns, not in characters, since a wide character fills two. One
+                // column left open before a wide character is where that character did not fit, not a blank.
+                let blanks = open == 1 && row.cells.first?.width == 2 ? 0 : open
+                lines.append(line + String(repeating: " ", count: blanks) + row.text)
             } else {
                 lines.append(row.text)
             }
+            let written = row.cells.lastIndex { !$0.text.isEmpty && $0.text != "\u{0}" }.map { $0 + max(row.cells[$0].width, 1) } ?? 0
+            open = written == 0 ? 0 : max(columns - written, 0)
             if row.absoluteRow == snapshot.cursorRow { cursorLine = lines.count - 1 }
         }
-        return PaneScreen(lines: lines, cursorLine: cursorLine)
+        return PaneScreen(lines: lines, cursorLine: cursorLine, alternate: snapshot.inputState.isAlternateBuffer)
     }
 
     /// A click focuses the pane. With the Metal surface up the click lands on the GPU layer's view, which

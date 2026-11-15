@@ -7,6 +7,8 @@ final class MockIO: PaneIO {
     var bracketedPasteEnabled = false
     /// The line the terminal's cursor is on, for a test of that evidence; nil as for a pane that cannot say.
     var cursorLine: Int?
+    /// Whether the terminal shows its alternate buffer; nil as for a pane that cannot say.
+    var alternate: Bool?
     let kind: HarnessKind
     /// What the test set the screen to, if it did.
     private var set: String?
@@ -34,7 +36,7 @@ final class MockIO: PaneIO {
 
     func screenText() -> String { screen }
     func visibleText() -> String { screen }
-    func liveScreen() -> PaneScreen { PaneScreen(lines: screen.components(separatedBy: "\n"), cursorLine: cursorLine) }
+    func liveScreen() -> PaneScreen { PaneScreen(lines: screen.components(separatedBy: "\n"), cursorLine: cursorLine, alternate: alternate) }
 
     /// Everything typed so far as one string.
     var typed: String { String(decoding: written.flatMap { $0 }, as: UTF8.self) }
