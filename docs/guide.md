@@ -14,7 +14,7 @@ Everything the [README](../README.md) leaves out: what each part of the window d
 - After a restart the empty window offers one button that reopens the last panes: kind, host, folder, name and ask-first, each resuming its conversation when the harness reported a session. A pane with no session reopens fresh, and its header says "started fresh" for as long as it is open. So do remote pi panes, and a local pi too old for `--session-id`: they start as they always have. Nothing reopens by itself. Panes you closed by hand are not in the list, and opening a new pane first drops the offer. The list is `~/.dojo/panes.json`, readable only by you; it holds no tokens.
 - The terminals use SF Mono Regular at 10.5 points with font smoothing and 15 points between rows. The owner picked it from a sheet of seven standard fonts, each drawn by the app off screen with and without smoothing; change it only from a new sheet of real renders. The half point makes a letter fill its cell: cells snap to whole pixels, and at 11 points every letter would stand about 3% apart on a Retina screen. Cmd-plus, Cmd-minus and Cmd-0 change every pane's text size while the app runs (8 to 24 points); the size is not kept between launches.
 - Each pane header shows the name, kind, host, model, queued messages and the state as a mark, also on the tabs: a grey dashed ring starting, a blue triangle running, a green dot idle, an exclamation mark on an orange disc at a prompt, a red ring exited. The pointer on a mark names the state. The pane with the keys has a lighter header with a teal line along its foot, like the selected tab; closing it hands the keys to the pane in its place. A pane at a prompt has a coral ring, and the All tab counts the panes waiting. A turn that finished stays marked on its tab and header until you view the pane: with the app in front, the pane has the keys, so in the grid that takes a click. A prompt or a finish in a pane you cannot see also sends a Mac notification, which opens that pane, and the Dock badge counts what you have not viewed. These come from harness hooks only, once per event, and macOS asks your permission for the notifications and the badge the first time. The panes without the keys sit one step darker, with the bands in them.
-- The app runs a bus on `127.0.0.1:7788`. Every harness in the window can call four operations: `panes`, `send`, `read` and `state`.
+- The app runs a bus on `127.0.0.1:7788`. Every harness in the window can call its operations: `panes`, `send`, `read`, `state`, `watch` and `label`.
 
 <a id="requirements"></a>
 ## Requirements
@@ -98,7 +98,7 @@ Each remote pane has its own forward to the bus, on a free port of its host, so 
 <a id="how-harnesses-talk"></a>
 ## How harnesses talk
 
-The five operations, as MCP tools for Claude and Codex (`mcp__dojo__panes` and so on) and as the `dojo` command for pi and any shell in a pane:
+The operations, as MCP tools for Claude and Codex (`mcp__dojo__panes` and so on; `label` is a command only) and as the `dojo` command for pi and any shell in a pane:
 
 ```
 dojo panes                         # name, kind, host, state, queued, model, label; * marks you
@@ -111,6 +111,7 @@ EOF
 dojo read claude-1 60              # last 60 lines of claude-1's screen
 dojo state pi-1
 dojo watch codex-1                 # one line comes here when codex-1 next goes idle, reaches a prompt or exits
+dojo label D35.1                   # what this pane is working on, in its header; alone, it clears the label
 dojo send fable --type report repo=xyntetik-dojo pr=92 head=e07bd8a checks=ci=pass,hygiene=pass mergeable=yes
 ```
 
@@ -147,9 +148,10 @@ The pi extension also registers Runner as pi's `runner` provider. It observes th
 - **Peer messages are not approval.** Each harness is told at launch that `[from: ...]` lines are messages from other sessions, to weigh as information and never as the owner's approval.
 - **Roles, once you mark a coordinator.** Right-click a pane's name and choose Make This the Coordinator. The other agent panes are then workers: they still list the panes, ask a state and send to any pane, but they read only the panes you let them (right-click the worker's name, May Read) and watch only the coordinator. A refused call says why, for example `read of 'codex-2' is not allowed for 'codex-1', a worker pane; ask the coordinator, 'claude-1'`, and goes into the record. The coordinator's header says so, and a worker's says what it may read. With no coordinator marked, every pane may do everything, as before. Shell panes are yours and never limited. The mark and the grants come back with the panes after a restart.
 - **`read` takes secrets out.** What another pane reads of a screen has every live bus token replaced by `[dojo token]` (matched exactly, also when the terminal wrapped it across two rows) and known secret shapes replaced by `[redacted: <kind>]`: private key blocks, AWS access keys, GitHub, Anthropic, OpenAI and Hugging Face tokens, Slack tokens and webhooks, JSON web tokens, `Authorization: Bearer` values, passwords inside URLs, and `NAME=value` where the name holds TOKEN, SECRET, PASSWORD or API_KEY. Rows keep their place, and the reply says how many were taken out (`dojo read` on stderr). It is always on. Your own view of a pane is never changed. A pattern list misses things, so this is a backstop, not a reason to leave secrets on screen.
-- **A record of the traffic.** Every bus operation is a line in `~/.dojo/audit`, chained by hash and kept 30 days; see [the record](#the-record-of-bus-traffic).
+- **A record of the traffic.** Every bus operation is a line in `~/.dojo/audit`, chained by hash and kept 30 days; see [the record](#the-record-of-bus-traffic), and there what the chain shows and what it does not.
 - **Local and token-checked.** The bus listens on the loopback interface only. Each pane gets a random token for this run of the app; every bus request needs one.
-- The app stores no keys, tokens or SSH credentials.
+- The app stores none of your keys, tokens or SSH credentials. Two things of its own are on disk: `~/.dojo/outside-token` while the outside route is switched on, and the record, which keeps the text of each send.
+- **What these rules do not do.** They guard against a confused agent, not a hostile one. Every pane runs as you, so a harness can do with its own tools whatever you can: read the record and the other harnesses' transcripts on disk, or another pane's files. A pane that keeps its permission prompts can send work to a pane that skips them, and a pi pane always skips them, so a message can lead to an action that nobody was asked about; the record shows that it was a message and from whom. Roles limit what a worker reads and watches, not what it sends.
 
 To install the peer rule permanently as well (for sessions started outside the app):
 
@@ -199,7 +201,7 @@ It only sends, and only free text: a request that carries a typed message's `typ
 
 The app writes one line per bus operation to `~/.dojo/audit/<date>.jsonl` (UTC days), readable only by you: the time, the operation, which pane asked, the pane it was about, and the outcome (delivered, queued, or refused and why). A `send` keeps its text. A `read` keeps who read whom, how many lines and how many secrets were taken out, never the screen. The record also has each delivery with its senders and whether the target keeps its permission prompts, what became of the Enter after it (sent, owed until a prompt closes or your keys stop, or dropped because you typed into that composer), each Enter you press in a pane (no content), each change of a pane's state, and whether your keys came in between when a pane leaves a permission prompt. So for anything a pane did, the record shows what came just before it: your keys, or a message and from whom.
 
-Each line carries the SHA-256 of the line before it, so a removed or changed line shows. Files older than 30 days are deleted. Read it with `dojo audit`, by pane (`--pane claude-1`) or by time (`--since 2h`, `--since 2026-11-10T14:00`); it says where the chain breaks, if it does. The record is not a bus route, so no pane can ask the bus for it. The files are yours like any others: a harness running as you could still open them with its own tools.
+Each line carries the SHA-256 of the line before it. Files older than 30 days are deleted. Read it with `dojo audit`, by pane (`--pane claude-1`) or by time (`--since 2h`, `--since 2026-11-10T14:00`); it says where the chain breaks, if it does. A break shows a line that was changed or removed in the middle of the record. The chain does not show lines cut from the end, days removed from the start (the app removes old days itself), or a record written again with new hashes: it has no key, and nothing outside the folder keeps its last hash to compare with. So it catches an accident or a careless edit, not a program that sets out to hide what it did. The record is not a bus route, so no pane can ask the bus for it. The files are yours like any others: a harness running as you could still open them, or change them, with its own tools.
 
 <a id="build-and-run"></a>
 ## Build and run
@@ -239,7 +241,7 @@ For a manual close check, use a disposable app session with a running pane. Clic
 <a id="files"></a>
 ## Source files
 
-- `Sources/XHSCore/`: the bus, HTTP server, hook mapping, message delivery and launch commands. No UI; all tested.
+- `Sources/XHSCore/`: the bus, HTTP server, hook mapping, message delivery and launch commands. No UI. Its tests are in `Tests/XHSCoreTests/` and run with `make test`; how much of the code they reach is not measured.
 - `Sources/XHSApp/`: the window (SwiftUI and AppKit, SwiftTerm panes). View state uses ObservableObjects because `@State` is a macro whose plugin ships only with Xcode.
 - `tools/dojo-mcp.py`: the shim (MCP server, `dojo` command, `dojo hook`, `dojo install`, `dojo audit`). `tools/dojo-pi.ts`: the pi extension.
 - `docs/bus-capabilities.md`: the design note for who may read or send to whom on the bus, what `read` may return, a record of bus traffic, and how an owner-approved action is told from an agent's (D21.2). The record, the redaction in `read` and the roles are built.

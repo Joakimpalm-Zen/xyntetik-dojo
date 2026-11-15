@@ -114,7 +114,9 @@ Redaction is a backstop. A pattern list misses things, so the primary control is
   caller, target, outcome (delivered, queued, refused and why), and sizes. The text of a `send` is kept
   (choice 3). A `read` records who read whom and how many lines, never the screen. A hook is the pane
   reporting on itself, so the record keeps the change of state it causes, not the hook.
-- Each line carries the SHA-256 of the line before it, so a removed or edited line shows.
+- Each line carries the SHA-256 of the line before it, so a line removed or edited in the middle shows.
+  Lines cut from the end, days removed from the start and a record written again with new hashes do not:
+  the chain has no key and nothing outside the folder to compare with.
 - Kept for 30 days (choice 3).
 - The owner reads it with `dojo audit` (by pane, by time). It is not a bus route, so no pane can ask the bus
   for it; a harness running as the owner could still open the files with its own tools.

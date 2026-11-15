@@ -3,7 +3,9 @@ import Foundation
 
 /// The record of bus traffic (D21.2): one JSON line per bus operation, in a file per day under
 /// `~/.dojo/audit`, readable only by the owner. Each line carries the SHA-256 of the line before it, so
-/// a removed or edited line shows. Files older than `keepDays` are deleted. The owner reads it with
+/// a line removed or edited in the middle shows. Lines cut from the end, days removed from the start and a
+/// record written again with new hashes do not: the chain has no key and nothing outside the folder to
+/// compare with. Files older than `keepDays` are deleted. The owner reads it with
 /// `dojo audit`; it is not a bus route, so no pane can ask the bus for it.
 @MainActor
 public final class BusRecord {

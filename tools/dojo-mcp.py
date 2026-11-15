@@ -260,7 +260,7 @@ def serve(stdin=sys.stdin, stdout=sys.stdout):
         else:
             try:
                 reply = handle(msg)
-            except Exception as e:  # a server that dies takes all four tools with it for the session
+            except Exception as e:  # a server that dies takes all its tools with it for the session
                 mid = msg.get("id") if isinstance(msg, dict) else None
                 reply = {"jsonrpc": "2.0", "id": mid, "error": {"code": -32603, "message": "Internal error: %s" % e}}
         if reply is not None:
