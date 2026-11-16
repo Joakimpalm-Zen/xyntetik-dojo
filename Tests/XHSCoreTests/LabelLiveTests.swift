@@ -20,7 +20,7 @@ import Testing
         let clock = clock
         bus.now = { clock.date }
         ownToken = bus.add(name: "claude-1", kind: .claude, io: MockIO())
-        otherToken = bus.add(name: "codex-1", kind: .codex, io: MockIO())
+        otherToken = bus.add(name: "codex-1", kind: .codex, io: MockIO(kind: .codex))
     }
 
     func label(_ text: Any?, token: String? = nil) -> (Int, [String: Any]) {

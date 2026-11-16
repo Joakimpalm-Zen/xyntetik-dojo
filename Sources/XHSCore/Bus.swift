@@ -12,6 +12,30 @@ public protocol PaneIO: AnyObject {
     func visibleText() -> String
     /// Whether the program in the pane turned on bracketed paste.
     var bracketedPasteEnabled: Bool { get }
+    /// The live screen as the terminal holds it, for the rule that looks for the harness's composer (D35.1):
+    /// its lines, with rows the terminal wrapped joined again, and the line the cursor is on, taken in one
+    /// step, and which of the terminal's two buffers is showing. A pane that cannot say gives its screen
+    /// text row by row, no cursor and no buffer.
+    func liveScreen() -> PaneScreen
+}
+
+public struct PaneScreen: Equatable, Sendable {
+    public var lines: [String]
+    /// Which of `lines` the cursor is on; nil when the terminal does not say.
+    public var cursorLine: Int?
+    /// Whether the terminal shows its alternate buffer, the one a full-screen program switches to; nil when
+    /// the terminal does not say.
+    public var alternate: Bool?
+
+    public init(lines: [String], cursorLine: Int? = nil, alternate: Bool? = nil) {
+        self.lines = lines
+        self.cursorLine = cursorLine
+        self.alternate = alternate
+    }
+}
+
+public extension PaneIO {
+    func liveScreen() -> PaneScreen { PaneScreen(lines: screenText().components(separatedBy: "\n")) }
 }
 
 /// The message bus: pane registry, per-pane state, queued messages and the four operations.
@@ -40,6 +64,9 @@ public final class Bus {
         public let model: String
         /// The owner has unsent text in the pane; the bus holds its queue until that is sent or cleared.
         public let draft: Bool
+        /// The pane's screen shows no composer (a dialog is open there, or a screen the bus does not know):
+        /// the bus holds its queue, or the Enter it owes, until one is back (D35.1).
+        public let noComposer: Bool
         /// `coordinator` or `worker` once the owner has marked a coordinator (D21.2); empty before, and for
         /// panes that are not agents.
         public let role: String
@@ -54,7 +81,7 @@ public final class Bus {
 
         var json: [String: Any] {
             ["name": name, "kind": kind.rawValue, "host": host, "state": state.rawValue, "queued": queued, "model": model,
-             "draft": draft, "role": role, "reads": reads, "label": label]
+             "draft": draft, "no_composer": noComposer, "role": role, "reads": reads, "label": label]
         }
     }
 
@@ -96,6 +123,34 @@ public final class Bus {
         var hasDraft = false
         /// Text keys came after the last Enter: a submission hook arriving now is for an earlier prompt.
         var typedSinceSubmit = false
+        /// The bus looked for the harness's composer on the screen and did not see one, so it typed nothing,
+        /// or held back an Enter (D35.1). True only while something waits on it: a queue, or an Enter.
+        var noComposer = false
+        /// What the bus last pasted into the composer and has not yet pressed Enter on: the Enter goes out
+        /// only once the composer shows this, so the bus's own text is never taken for a dialog, and an Enter
+        /// never goes to a screen the text did not reach.
+        var pasted: String?
+        /// The composer as the bus saw it when it typed `pasted`: its Enter is pressed against this, so a
+        /// stand-in that was there already, or a dialog that opened under the composer, is not taken for the
+        /// paste having arrived in a composer that is free.
+        var look: Composer.Look?
+        /// The owner emptied the composer while the bus's Enter was still to come: the text is no longer
+        /// there for the bus to send.
+        var enterCancelled = false
+        /// The owner pressed Enter after the bus's paste and before the bus's own Enter. That sent the text
+        /// only if there is evidence of it (`ownersEnter`): in a harness Enter can also accept a completion,
+        /// or answer a dialog, and leave the text where it is.
+        var ownerEnterAfterPaste = false
+        /// A hook reported a prompt submitted from the composer, and the prompt it carried was `pasted`.
+        var hookCarriedThePaste = false
+        /// While an Enter is owed: the rows under the composer as last seen, each as its parts, and since
+        /// when they have read like that (`footerSettled`).
+        var settling: (rows: [[String]], since: Date)?
+        /// Which of the terminal's two buffers the harness draws itself in, as seen when a hook last said the
+        /// harness was at its composer (a turn ended, or a prompt was sent from it). A pager or an editor the
+        /// owner opened shows in the other one, and can show a file that reads as a composer; the bus types
+        /// nothing there. Nil until such a hook has come, and the bus then goes by the screen alone.
+        var harnessBuffer: Bool?
         /// The screen as last seen by `tick`, and since when it has looked like that.
         var screenHash = 0
         var quietSince: Date?
@@ -145,6 +200,11 @@ public final class Bus {
     public var onSession: (() -> Void)?
     /// A pane reported, through a hook, something the owner may want to know. See `Attention`.
     public var onAttention: ((String, Attention) -> Void)?
+    /// The harnesses whose cursor is known to sit on the composer while it takes input. For those the cursor's
+    /// line is part of the evidence the bus wants before it types (D35.1). Empty until a real pane of each
+    /// harness has been looked at, by hand, at a restart of the app: a harness that draws its own cursor and
+    /// parks the terminal's elsewhere would otherwise never be typed into.
+    public var cursorEvidence: Set<HarnessKind> = []
     /// Delay between typing a message and pressing Enter, so the harness sees the paste end first.
     public var submitDelay: TimeInterval = 0.15
     /// The bus does not type into a pane the owner typed into this recently.
@@ -288,11 +348,18 @@ public final class Bus {
         guard let p = pane(named: name), key != .reply, key != .pointer else { return }
         p.lastOwnerInput = now()
         if key == .text { p.lastOwnerText = now() }
-        // The owner sent or emptied the composer themselves: the bus's owed Enter would only send an empty line.
-        if p.enterOwed, key == .submit || key == .clear {
+        // The owner emptied the composer themselves: the bus's owed Enter would only send an empty line.
+        if p.enterOwed, key == .clear {
             p.enterOwed = false
-            note(["op": "enter", "pane": name, "outcome": "dropped", "why": key == .submit ? "the owner pressed Enter" : "the owner emptied the composer"])
+            nothingWaits(p)
+            note(["op": "enter", "pane": name, "outcome": "dropped", "why": "the owner emptied the composer"])
         }
+        // The same while the bus's Enter is still on its way: when its moment comes there is nothing to press
+        // it on, and an Enter owed for text that is gone would hold every later message.
+        if p.enterPending, key == .clear { p.enterCancelled = true }
+        // The owner's Enter over the bus's text is another matter: it sent the text only if something shows
+        // that it did. Until then the bus's Enter stays owed.
+        if p.enterOwed || p.enterPending, key == .submit { p.ownerEnterAfterPaste = true }
         // Each submission the owner makes from the keyboard, with no content.
         if key == .submit { note(["op": "owner-submit", "pane": name]) }
         let before = p.hasDraft
@@ -642,6 +709,9 @@ public final class Bus {
             result["note"] = "\(target.name) is at a prompt; the bus never types into a prompt. Queued until it is idle."
         } else if target.hasDraft {
             result["note"] = "the owner has unsent text in \(target.name); queued until it is sent, cleared, or the composer shows empty."
+        } else if target.noComposer {
+            result["note"] = "\(target.name) shows no composer on its screen (a dialog may be open there); the bus types only "
+                + "into a composer it can see. Queued until one is back."
         } else {
             result["note"] = "\(target.name) is \(target.state.rawValue); queued until it is idle."
         }
@@ -693,6 +763,25 @@ public final class Bus {
             pane.hasDraft = false
             onChange?()
         }
+        // A submission the hook names: evidence for the owner's Enter only when it carries the text the bus
+        // pasted AND comes after that Enter. A hook of an earlier prompt can come late, and an earlier prompt
+        // can have had the very same text: a hook that was here before the Enter proves nothing about it.
+        if let name = event["hook_event_name"] as? String,
+           name == "UserInputSubmitted" || (name == "UserPromptSubmit" && pane.kind != .pi), pane.ownerEnterAfterPaste,
+           let prompt = event["prompt"] as? String, let pasted = pane.pasted, Composer.sameText(prompt, pasted) {
+            pane.hookCarriedThePaste = true
+        }
+        // The harness is at its composer: a turn ended, or the owner sent a prompt from it. The buffer the
+        // terminal shows now is the harness's own, if a composer is on the screen: a hook can come late, while
+        // an editor shows. Not at SessionStart, which a harness may report before it has drawn itself: a new
+        // session only forgets what the one before it showed.
+        if event["hook_event_name"] as? String == "SessionStart" { pane.harnessBuffer = nil }
+        if let name = event["hook_event_name"] as? String, name != "SessionStart",
+           name == "UserPromptSubmit" || HookMapping.next(event: name, notificationType: event["notification_type"] as? String, current: pane.state) == .idle,
+           let screen = pane.io?.liveScreen(), let alternate = screen.alternate,
+           Composer.shown(kind: pane.kind, lines: screen.lines, cursorLine: nil, afterPaste: true) == true {
+            pane.harnessBuffer = alternate
+        }
         guard pane.state != .exited,
               let name = event["hook_event_name"] as? String,
               let next = HookMapping.next(event: name, notificationType: event["notification_type"] as? String, current: pane.state)
@@ -728,6 +817,10 @@ public final class Bus {
             p.hasDraft = false
             p.typedSinceSubmit = false
         }
+        // The bus types only into a composer it can see (D35.1). A permission prompt is known from a hook, and
+        // a hook can be lost; any dialog takes the composer off the screen, hook or no hook. Unseen, the queue
+        // waits and the next tick looks again.
+        guard composerShown(p, io) else { return }
         let message = p.queue.map { Delivery.line(from: $0.sender.name, text: $0.text) }.joined(separator: "\n")
         var senders: [String] = []
         for entry in p.queue where !senders.contains(entry.sender.name) { senders.append(entry.sender.name) }
@@ -735,6 +828,7 @@ public final class Bus {
         note(["op": "deliver", "pane": p.name, "senders": senders, "messages": p.queue.count, "chars": message.count,
               "posture": p.posture as Any])
         p.queue.removeAll()
+        p.pasted = message
         io.write(Delivery.bytes(message, bracketedPaste: io.bracketedPasteEnabled))
         if p.kind != .shell, p.state != .running {
             p.state = .running
@@ -748,29 +842,171 @@ public final class Bus {
             schedule(submitDelay) { [weak self, weak p, weak io] in
                 guard let self, let p else { return }
                 p.enterPending = false
+                let cancelled = p.enterCancelled
+                p.enterCancelled = false
                 let textAfter = p.lastOwnerText.map { $0 > pasted } ?? false
                 let keysAfter = p.lastOwnerInput.map { $0 > pasted } ?? false
-                if textAfter {
+                if cancelled {
+                    // The owner emptied the composer: nothing of the bus's is left to send.
+                    self.nothingWaits(p)
+                    self.note(["op": "enter", "pane": p.name, "outcome": "dropped", "why": "the owner emptied the composer"])
+                } else if p.ownerEnterAfterPaste, let io, self.ownersEnterSettledIt(p, io) {
+                    // dropped there: theirs sent the text, or left a draft of their own
+                } else if textAfter {
                     // The owner's words are in that composer now: the bus never sends them (D26).
+                    self.nothingWaits(p)
                     self.note(["op": "enter", "pane": p.name, "outcome": "dropped", "why": "the owner typed after the paste"])
-                } else if p.state == .idle || p.state == .running, !p.hasDraft, !keysAfter {
-                    io?.write(Delivery.enter)
+                } else if p.state == .idle || p.state == .running, !p.hasDraft, !keysAfter,
+                          let io, self.composerShown(p, io, afterPaste: true, record: false) {
+                    // Looked at and pressed in one step on this queue: nothing of the bus's runs in between.
+                    io.write(Delivery.enter)
+                    self.nothingWaits(p)
                     self.note(["op": "enter", "pane": p.name, "outcome": "sent"])
                 } else {
-                    // A prompt opened, or the owner pressed a key that adds no text: the Enter waits for the guard
-                    // to clear (D26). Before, it was dropped, and the text stayed in the composer for good.
+                    // A prompt opened, the composer left the screen or something new stands under it (a dialog
+                    // with no hook, D35.1), or the owner pressed a key that adds no text: the Enter waits for the guard to clear (D26). Before, it
+                    // was dropped, and the text stayed in the composer for good.
                     p.enterOwed = true
                     p.pastedAt = pasted
+                    let stateOK = p.state == .idle || p.state == .running
                     self.note(["op": "enter", "pane": p.name, "outcome": "owed",
-                               "why": keysAfter ? "owner keys after the paste" : "the pane is \(p.state.rawValue)"])
+                               "why": keysAfter ? "owner keys after the paste"
+                                   : stateOK && !p.hasDraft ? "no composer on the screen" : "the pane is \(p.state.rawValue)"])
                 }
                 self.flush(p)
             }
         } else {
             io.write(Delivery.enter)
+            p.pasted = nil
+            p.look = nil
             note(["op": "enter", "pane": p.name, "outcome": "sent"])
         }
         onChange?()
+    }
+
+    /// The Enter the bus owed is pressed, or no longer its to press: nothing of its waits in the composer,
+    /// so the header has nothing to say about one (D35.1).
+    private func nothingWaits(_ p: Pane) {
+        p.pasted = nil
+        p.look = nil
+        p.ownerEnterAfterPaste = false
+        p.hookCarriedThePaste = false
+        p.settling = nil
+        if p.noComposer, p.queue.isEmpty {
+            p.noComposer = false
+            onChange?()
+        }
+    }
+
+    /// D35.1: whether the bus may type into the pane, going by its screen. True for a harness the bus has no
+    /// composer rule for (pi, a shell), as before. The first miss of a hold goes into the record and the pane's
+    /// header says so, since a composer drawn in a way the bus does not know would otherwise hold a queue
+    /// without a word.
+    private func composerShown(_ p: Pane, _ io: PaneIO, afterPaste: Bool = false, record: Bool = true) -> Bool {
+        let screen = io.liveScreen()
+        let cursor = cursorEvidence.contains(p.kind) ? screen.cursorLine : nil
+        var shown = true
+        if Composer.rule(for: p.kind) == nil {
+            // no rule for this harness: typed into as before
+        } else if let home = p.harnessBuffer, let alternate = screen.alternate, alternate != home {
+            // not the buffer the harness draws itself in: a pager or an editor is showing
+            shown = false
+        } else if afterPaste {
+            shown = Composer.shown(kind: p.kind, lines: screen.lines, cursorLine: cursor, afterPaste: true, pasted: p.pasted, before: p.look) ?? true
+        } else {
+            // what the composer and the rows under it look like now is what the Enter is pressed against
+            p.look = Composer.look(kind: p.kind, lines: screen.lines, cursorLine: cursor)
+            shown = p.look != nil
+        }
+        if shown == p.noComposer {
+            p.noComposer = !shown
+            if !shown, record { note(["op": "hold", "pane": p.name, "why": "no composer on the screen", "messages": p.queue.count]) }
+            onChange?()
+        }
+        return shown
+    }
+
+    /// What the owner's Enter after the bus's paste did (D35.1). Enter alone does not say: in a harness it
+    /// can accept a completion, or answer a dialog.
+    private enum OwnersEnter {
+        /// It sent the bus's text: a free composer on the screen is empty, or shows the harness's own row
+        /// for a message it has queued; or a hook after that Enter reported a submission that carried the
+        /// text, and the composer holds nothing of the paste.
+        case sentIt
+        /// A free composer holds the bus's paste in an edited form (it shares a run of characters with it):
+        /// the owner's draft now, whatever a hook said. Or it holds other text and no hook proved a
+        /// submission.
+        case leftADraft
+        /// The composer still holds the bus's text, or there is no composer on the screen (a dialog): nothing
+        /// is known, and the bus's Enter stays owed.
+        case unknown
+    }
+
+    private func ownersEnter(_ p: Pane, _ io: PaneIO) -> OwnersEnter {
+        // For a harness with no composer rule Enter is all there is, as before.
+        guard Composer.rule(for: p.kind) != nil, let text = p.pasted else { return .sentIt }
+        // The screen first. Where it shows no free composer (a dialog, the other buffer, text over several
+        // rows), or one that still holds the bus's text, only a hook can say the text was sent.
+        let hook: OwnersEnter = p.hookCarriedThePaste ? .sentIt : .unknown
+        let screen = io.liveScreen()
+        if let home = p.harnessBuffer, let alternate = screen.alternate, alternate != home { return hook }
+        let cursor = cursorEvidence.contains(p.kind) ? screen.cursorLine : nil
+        guard let free = Composer.look(kind: p.kind, lines: screen.lines, cursorLine: cursor) else { return hook }
+        if Composer.shownEmpty(kind: p.kind, screen: screen.lines.joined(separator: "\n")) { return .sentIt }
+        // The harness's own row in a composer that holds no typed text: the pasted text has left it.
+        if Composer.rowsOfAComposerTheTextLeft(for: p.kind).contains(free.composer) { return .sentIt }
+        if Composer.holding(kind: p.kind, lines: screen.lines, cursorLine: cursor, pasted: text, before: p.look) != nil { return hook }
+        // Other text in a free composer. What tells the owner's draft from anything the harness writes there
+        // (a suggestion, a hint of its own) is the paste itself: text that shares a run of characters with
+        // what the bus pasted is the paste, edited, in whatever part, and the owner's draft whatever a hook
+        // said. Text with nothing of the paste in it is the owner's draft only when no hook after their
+        // Enter proved the submission.
+        if Composer.sharesARun(with: text, free.composer) { return .leftADraft }
+        return p.hookCarriedThePaste ? .sentIt : .leftADraft
+    }
+
+    /// Drops the bus's Enter when the owner's own settled what it was for. A draft the owner's Enter left
+    /// behind gets the draft hold, as text the owner typed does.
+    private func ownersEnterSettledIt(_ p: Pane, _ io: PaneIO) -> Bool {
+        let did = ownersEnter(p, io)
+        guard did != .unknown else { return false }
+        p.enterOwed = false
+        nothingWaits(p)
+        if did == .leftADraft {
+            p.hasDraft = true
+            p.typedSinceSubmit = true
+            onChange?()
+        }
+        note(["op": "enter", "pane": p.name, "outcome": "dropped", "why": "the owner pressed Enter"])
+        return true
+    }
+
+    /// The way back for an owed Enter whose footer changed for good (D35.1). The owner's status line can
+    /// change in any word between the paste and the Enter ("1 shell" to "2 shells"), and the Enter was then
+    /// owed for as long as it read differently. While an Enter is owed and the composer holds exactly what
+    /// the bus pasted, rows under it that show no sign of a dialog, are no more than before the paste, and
+    /// have read the same in two looks at least the owner-quiet interval apart become the rows to compare
+    /// against. A row that was added never does. What this lets through is a dialog that takes the place of
+    /// a footer row, with no number, frame or key hint, and stays.
+    private func footerSettled(_ p: Pane, _ io: PaneIO) -> Bool {
+        guard let before = p.look, let pasted = p.pasted else { return false }
+        let screen = io.liveScreen()
+        if let home = p.harnessBuffer, let alternate = screen.alternate, alternate != home { return false }
+        let cursor = cursorEvidence.contains(p.kind) ? screen.cursorLine : nil
+        guard let now = Composer.holding(kind: p.kind, lines: screen.lines, cursorLine: cursor, pasted: pasted, before: before),
+              now.under.count <= before.under.count else {
+            p.settling = nil
+            return false
+        }
+        let rows = now.under.map(Composer.parts)
+        guard let settling = p.settling, settling.rows == rows else {
+            p.settling = (rows, self.now())
+            return false
+        }
+        guard self.now().timeIntervalSince(settling.since) >= ownerQuietInterval else { return false }
+        p.look = Composer.Look(composer: before.composer, under: now.under)
+        p.settling = nil
+        return composerShown(p, io, afterPaste: true, record: false)
     }
 
     /// D26: the Enter the guard held back, pressed once the pane is idle or running and the owner has been quiet.
@@ -779,13 +1015,26 @@ public final class Bus {
         guard let io = p.io else { return }
         if let typed = p.lastOwnerText, let pasted = p.pastedAt, typed > pasted {
             p.enterOwed = false
+            nothingWaits(p)
             note(["op": "enter", "pane": p.name, "outcome": "dropped", "why": "the owner typed after the paste"])
             return
         }
+        // The owner pressed Enter over the bus's text, and it is gone, or no longer the bus's.
+        if p.ownerEnterAfterPaste, ownersEnterSettledIt(p, io) { return }
         guard p.state == .idle || p.state == .running, !p.hasDraft else { return }
         if let last = p.lastOwnerInput, now().timeIntervalSince(last) < ownerQuietInterval { return }
+        guard composerShown(p, io, afterPaste: true, record: false) || footerSettled(p, io) else { return }
+        let unproven = p.ownerEnterAfterPaste
         p.enterOwed = false
         io.write(Delivery.enter)
+        nothingWaits(p)
+        // The owner's Enter did not send this text, so the bus's may not have either (a completion took the
+        // one, and can take the other). The pane keeps its draft hold until a hook reports the submission or
+        // the composer shows empty, as for the owner's own text.
+        if unproven {
+            p.hasDraft = true
+            p.typedSinceSubmit = false
+        }
         if p.kind != .shell { p.state = .running }
         note(["op": "enter", "pane": p.name, "outcome": "sent", "late": true])
         onChange?()
@@ -801,7 +1050,7 @@ public final class Bus {
 
     private func info(_ p: Pane) -> Info {
         Info(name: p.name, kind: p.kind, host: p.host, state: p.state, queued: p.queue.count, model: p.model, draft: p.hasDraft,
-             role: role(of: p)?.rawValue ?? "",
+             noComposer: p.noComposer, role: role(of: p)?.rawValue ?? "",
              reads: panes.filter { p.mayRead.contains(ObjectIdentifier($0)) }.map(\.name),
              label: p.label, since: p.stateSince, idleFlag: idleFlag(of: p))
     }

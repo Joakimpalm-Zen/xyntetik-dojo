@@ -8,7 +8,7 @@ import Testing
 @Suite struct RolesTests {
     let bus = Bus()
     let coord: String, w1: String, w2: String, sh: String
-    let ios = (MockIO(), MockIO(), MockIO(), MockIO())
+    let ios = (MockIO(), MockIO(kind: .codex), MockIO(), MockIO())
 
     init() {
         bus.submitDelay = 0

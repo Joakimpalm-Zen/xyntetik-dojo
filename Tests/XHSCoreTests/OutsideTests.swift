@@ -13,7 +13,7 @@ import Testing
 
     let bus = Bus()
     let clock = Clock()
-    let targetIO = MockIO()
+    let targetIO = MockIO(kind: .codex)
     let paneToken: String
 
     init() {

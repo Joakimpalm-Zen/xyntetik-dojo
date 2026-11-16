@@ -83,7 +83,7 @@ import Testing
         bus.record = record
         let start = clock
         bus.now = { start }
-        let a = MockIO(), b = MockIO()
+        let a = MockIO(), b = MockIO(kind: .codex)
         let ta = bus.add(name: "claude-1", kind: .claude, io: a)
         let tb = bus.add(name: "codex-1", kind: .codex, unrestricted: true, io: b)
         return (bus, a, b, ta, tb)

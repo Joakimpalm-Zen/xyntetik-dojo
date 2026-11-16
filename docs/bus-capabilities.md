@@ -20,7 +20,9 @@ the panes work today, which is measured below before anything is proposed.
   never from the text: a line in the body that starts with `[from:` is set in by one space
   (`Delivery.line`), so only the bus writes such a line. Control characters are removed.
 - **The bus holds a message** while the target is at a permission prompt (it never types into a prompt),
-  while the owner is typing there, and while the owner has unsent text in the composer.
+  while the owner is typing there, and while the owner has unsent text in the composer. Since D35.1 it
+  also holds while a Claude or Codex pane's screen shows no composer, so a dialog whose hook was lost is
+  not typed into either.
 - **The relay** (`dojo relay`) runs one program the owner configured, with the words as data and the
   caller's name from its token. It is off unless `~/.dojo/relay` exists.
 - **Nothing is recorded.** After the fact there is no way to say who sent what to whom, or who read

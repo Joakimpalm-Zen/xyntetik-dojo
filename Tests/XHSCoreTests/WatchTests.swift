@@ -6,7 +6,7 @@ import Testing
 @Suite @MainActor struct WatchTests {
     let bus = Bus()
     let askerIO = MockIO()
-    let targetIO = MockIO()
+    let targetIO = MockIO(kind: .codex)
     let asker: String
     let target: String
 
