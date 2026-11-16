@@ -26,6 +26,11 @@ public enum Columns {
         let value = scalar.value
         if value >= 0x20, value < 0x7F { return 1 }
         if value < 0x20 || (0x7F...0x9F).contains(value) { return 0 }
+        // Where the terminal does not follow Unicode's categories, read off SwiftTerm 1.99.1: the soft hyphen
+        // and the Arabic signs that stand before a number are format characters and take a column; the two
+        // Hangul fillers are to be left undrawn and take two; a regional indicator takes two.
+        if value == 0xAD || (0x600...0x605).contains(value) || value == 0x6DD || value == 0x70F || value == 0x8E2 { return 1 }
+        if value == 0x115F || value == 0x3164 || (0x1F1E6...0x1F1FF).contains(value) { return 2 }
         let properties = scalar.properties
         if properties.isDefaultIgnorableCodePoint { return 0 }
         switch properties.generalCategory {

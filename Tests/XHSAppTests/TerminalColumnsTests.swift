@@ -12,6 +12,9 @@ import Testing
         (0x41, 1), (0x5B, 1), (0xE5, 1), (0xA0, 1), (0x2800, 1),
         (0x200B, 0), (0x200C, 0), (0x200D, 0), (0x200E, 0), (0x2060, 0), (0xFEFF, 0), (0xFE0F, 0), (0x301, 0), (0x1161, 0),
         (0x754C, 2), (0x3000, 2), (0xAC00, 2), (0xFF21, 2),
+        // where the terminal does not follow Unicode's categories
+        (0xAD, 1), (0x600, 1), (0x3164, 2), (0x115F, 2), (0x1F1F8, 2), (0x1160, 0), (0x11A8, 0), (0xD7B0, 0), (0x20E3, 0), (0xE0020, 0),
+        (0x2003, 1), (0x1F600, 2),
     ]
 
     /// The characters the core's tests lean on: the terminal and the core's own table agree on each.
@@ -25,7 +28,7 @@ import Testing
             #expect(terminal == Columns.builtIn(scalar), "U+\(String(value, radix: 16)): the core's own table")
         }
         // more of them, printed and not judged: where the two differ, the app uses the terminal's answer
-        for value in [0xAD, 0x3164, 0x115F, 0x1160, 0x11A8, 0xD7B0, 0x2003, 0x1F600, 0x1F1F8, 0x20E3, 0xE0020, 0x0600] as [UInt32] {
+        for value in [0x605, 0x6DD, 0x70F, 0x8E2, 0x1F1E6, 0x1F3FB, 0x2764, 0x303F, 0xFE00, 0x180E, 0x034F, 0x1100, 0xA960, 0x1F004] as [UInt32] {
             let scalar = Unicode.Scalar(value)!
             lines.append("U+\(String(value, radix: 16, uppercase: true)) terminal \(TerminalColumns.of(scalar)) core \(Columns.builtIn(scalar))")
         }
