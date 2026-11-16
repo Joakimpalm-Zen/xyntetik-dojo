@@ -125,4 +125,30 @@ import Testing
         rig.wait(10)
         #expect(!rig.io.typed.contains("second"))
     }
+
+    /// The second confirming read's trace, five things at once. An earlier prompt with the very same text
+    /// has a hook that comes seconds late. The bus pastes that text again; the owner takes its first
+    /// character away with keys that add no text, so the Enter is owed; a dialog opens with no hook and
+    /// the owner answers it with Enter; and the old hook arrives after that Enter. What is in the composer
+    /// is the paste, edited: it shares a long run of characters with what was pasted, tag or no tag.
+    @Test func aPartlyEditedPasteIsADraftWhateverALateHookSays() {
+        let rig = Rig(kind: .claude, submitDelay: 0.15)
+        rig.io.screen = Self.claude("❯", "  status")
+        rig.send("status?")
+        rig.clock += 0.05
+        for _ in 0..<3 { rig.bus.noteOwnerInput("worker", .other) }          // Home, forward Delete, End
+        rig.io.screen = ComposerShownTests.claudePermission(cursorOn: 1)
+        rig.fire()
+        #expect(rig.recorded("enter").last?["outcome"] as? String == "owed")
+        rig.clock += 1
+        rig.bus.noteOwnerInput("worker", .submit)                             // answers the dialog
+        rig.hook("UserPromptSubmit", ["prompt": "[from: fable] status?"])     // the earlier prompt's, late
+        rig.io.screen = Self.claude("❯ from: fable] status?", "  status")
+        rig.wait(5)
+        #expect(rig.enters == 0)
+        #expect(rig.bus.info("worker")?.draft == true, "what is left of the paste is the owner's draft")
+        rig.send("second")
+        rig.wait(10)
+        #expect(!rig.io.typed.contains("second"), "nothing is typed onto it")
+    }
 }
