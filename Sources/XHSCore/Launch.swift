@@ -313,8 +313,9 @@ public enum Launcher {
     /// bus answers by the caller's token and in which the shim marks the caller's own pane.
     ///
     /// The harness starts only on an answer that shows a bus that knows this pane: the shim succeeds, and
-    /// one of its lines has the exact shape it gives the caller's own pane, with a name that is one (the
-    /// shim writes None for a pane without) and, in the state's place, a state a bus gives. A state word
+    /// one of its lines has the exact shape it gives the caller's own pane: a star, then five words and no
+    /// more before "queued=", with a name that is one (the shim writes None for a pane without), a kind the
+    /// bus gives and, in the state's place, a state the bus gives. A state word
     /// anywhere else in a line counts for nothing, and lines of another shape are passed over, starred or
     /// not, so a line a host's Python prints when it starts hides nothing. The pane's name is not used, so
     /// a pane renamed while it starts is known all the same. Every other answer from a shim that ran ends
@@ -323,8 +324,9 @@ public enum Launcher {
     ///
     /// Three hosts start as before, each known by its own sign and none by "anything else", and never by
     /// words found somewhere in what the shim printed: no shim on the host (`command -v` fails); a shim
-    /// from before the call (status 2 and its usage line first); a shim whose Python is gone (status 127,
-    /// the shell's own for a command that is not there, with no word of the shim's own and no traceback).
+    /// from before the call (status 2 and its usage line first); a shim whose Python is gone (status 127 or
+    /// 126, the shell's own for a command that is not there or cannot be run, with no word of the shim's
+    /// own and no traceback).
     /// Such a host has no hooks with or without this.
     ///
     /// The pane's line is fixed words and, for a refusal, the status number. What the shim said is never
@@ -336,22 +338,25 @@ public enum Launcher {
         #"command -v dojo >/dev/null 2>&1 || exit 0"#,
         #"all=$(dojo panes 2>&1); code=$?"#,
         #"nl=$(echo; echo x); nl=${nl%x}; rest=$all; said=; known="#,
-        // Line by line. The answer is any line of the shape the shim gives the caller's own pane: a star,
-        // then at least a name, a kind, a host and a state, then "queued=". The state is read by its place,
-        // the word just before "queued=", and the name is the word after the star.
+        // Line by line. The answer is any line of the exact shape the shim gives the caller's own pane: a
+        // star, a name, a kind, a host and a state, five words and no more, then "queued=". Each is read by
+        // its place: the name is one (the shim writes None for none), the kind is one the bus gives
+        // (HarnessKind), the state is one the bus gives (PaneState).
         #"while :; do line=${rest%%"$nl"*}; "#
-            + #"case $line in "* "*" queued="*) cells=${line%%" queued="*}; n=0; word=; name=; "#
+            + #"case $line in "* "*" queued="*) cells=${line%%" queued="*}; n=0; word=; name=; kind=; "#
             + #"while :; do cells=${cells#"${cells%%[! ]*}"}; case $cells in "") break;; esac; word=${cells%%" "*}; n=$((n+1)); "#
-            + #"case $n in 2) name=$word;; esac; case $cells in *" "*) cells=${cells#*" "};; *) break;; esac; done; "#
-            + #"case $n in 0|1|2|3|4) ;; *) case $word in starting|running|idle|prompt|exited) "#
-            + #"case $name in None) ;; *) known=yes;; esac;; esac;; esac;; "#
+            + #"case $n in 2) name=$word;; 3) kind=$word;; esac; case $cells in *" "*) cells=${cells#*" "};; *) break;; esac; done; "#
+            + #"case $n in 5) case $word in starting|running|idle|prompt|exited) "#
+            + #"case $kind in claude|codex|pi|runner|shell) "#
+            + #"case $name in None) ;; *) known=yes;; esac;; esac;; esac;; esac;; "#
             // the shim's own words, for the reason the pane gives
             + #""dojo: "*) case $said in "") said=$line;; esac;; esac; "#
             + #"case $rest in *"$nl"*) rest=${rest#*"$nl"};; *) break;; esac; done"#,
         #"case $code$known in 0yes) exit 0;; esac"#,
-        // No Python: the shell's own status for a command that is not there, and not a word from the shim.
+        // No Python: the shell's own status for a command that is not there (127) or that cannot be run
+        // (126: a wrapper whose interpreter was removed), and not a word from the shim.
         // A shim from before the call: its usage line first, with its status for that.
-        #"case $code in 127) case "$nl$all" in *"${nl}dojo:"*|*Traceback*) ;; *) exit 0;; esac;; "#
+        #"case $code in 126|127) case "$nl$all" in *"${nl}dojo:"*|*Traceback*) ;; *) exit 0;; esac;; "#
             + #"2) case $all in "usage: "*) exit 0;; esac;; esac"#,
         #"why="the answer was not from a bus that knows this pane""#,
         #"case $said in "dojo: bus not reachable"*) why="bus not reachable";; "#
