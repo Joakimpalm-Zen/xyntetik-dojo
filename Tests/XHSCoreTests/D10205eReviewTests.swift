@@ -68,4 +68,61 @@ import Testing
         #expect(rig.io.typed.contains("second"), "later messages are not held")
         #expect(rig.bus.info("worker")?.queued == 0)
     }
+
+    /// The confirming read's trace. The bus's Enter is owed; the owner really sends the text; the matching
+    /// hook comes after that Enter; and the free composer then shows the harness's own suggestion. The
+    /// suggestion is not the owner's draft: it does not begin with the tag the bus puts before its text.
+    @Test func theHarnesssOwnSuggestionAfterAProvenSubmissionIsNotADraft() {
+        let rig = Rig(kind: .claude, submitDelay: 0.15)
+        rig.io.screen = Self.claude("❯", "  status")
+        rig.send("status?")
+        rig.clock += 0.05
+        rig.bus.noteOwnerInput("worker", .other)                              // a Left key: the Enter is owed
+        rig.fire()
+        #expect(rig.recorded("enter").last?["outcome"] as? String == "owed")
+        rig.clock += 1
+        rig.bus.noteOwnerInput("worker", .submit)                             // the owner sends the text
+        rig.hook("UserPromptSubmit", ["prompt": "[from: fable] status?"])     // and the hook says so
+        rig.io.screen = Self.claude("❯ Try \"fix the failing test\"", "  status")
+        rig.wait(1)
+        #expect(rig.enters == 0)
+        #expect(rig.recorded("enter").last?["outcome"] as? String == "dropped")
+        #expect(rig.bus.info("worker")?.draft == false, "the suggestion is the harness's, and the hook proved the submission")
+        rig.send("second")
+        rig.wait(5)
+        #expect(rig.io.typed.contains("second"), "later messages are not held")
+    }
+
+    /// The same suggestion with no hook: nothing shows that the text was sent, so the hold is set, as before.
+    @Test func otherTextWithNoHookIsStillTheOwnersDraft() {
+        let rig = Rig(kind: .claude, submitDelay: 0.15)
+        rig.io.screen = Self.claude("❯", "  status")
+        rig.send("status?")
+        rig.clock += 0.05
+        rig.bus.noteOwnerInput("worker", .submit)
+        rig.io.screen = Self.claude("❯ half a thought of the owner's", "  status")
+        rig.fire()
+        #expect(rig.enters == 0)
+        #expect(rig.bus.info("worker")?.draft == true)
+    }
+
+    /// The fifth read's completion edit, now with a matching hook AFTER the owner's Enter: the text in the
+    /// composer begins with the bus's tag, so it is the paste, edited, and the owner's draft whatever the
+    /// hook said.
+    @Test func thePastedTextEditedIsADraftEvenWithAMatchingHookAfterTheEnter() {
+        let rig = Rig(kind: .claude, submitDelay: 0.15)
+        rig.io.screen = Self.claude("❯", "  status")
+        rig.send("read @sr")
+        rig.clock += 0.05
+        rig.bus.noteOwnerInput("worker", .submit)                             // accepts a completion
+        rig.hook("UserPromptSubmit", ["prompt": "[from: fable] read @sr"])    // an identical earlier prompt's, late
+        rig.io.screen = Self.claude("❯ [from: fable] read @src/", "  status")
+        rig.fire()
+        rig.wait(5)
+        #expect(rig.enters == 0)
+        #expect(rig.bus.info("worker")?.draft == true, "the edited paste is the owner's draft")
+        rig.send("second")
+        rig.wait(10)
+        #expect(!rig.io.typed.contains("second"))
+    }
 }
