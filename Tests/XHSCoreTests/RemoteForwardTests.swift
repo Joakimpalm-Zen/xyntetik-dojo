@@ -121,6 +121,9 @@ import Testing
         // the states, as one list in the place where the check reads the state
         let known = [PaneState.starting, .running, .idle, .prompt, .exited].map(\.rawValue).joined(separator: "|")
         #expect(Launcher.reachCheck.contains("case $word in " + known + ")"))
+        // and every kind of pane a bus gives, from the bus's own list
+        let kinds = HarnessKind.allCases.map(\.rawValue).joined(separator: "|")
+        #expect(Launcher.reachCheck.contains("case $kind in " + kinds + ")"))
     }
 
     @Test func aLocalPaneKeepsTheBusPort() {

@@ -42,10 +42,17 @@ import Testing
         /// A listener answers 404 with a list as its body: the real shim crashes on it, and its traceback
         /// holds the words "not found", which are not the sign of a missing Python.
         case aTracebackThatSaysNotFound = "echo 'Traceback (most recent call last):' >&2; echo 'urllib.error.HTTPError: HTTP Error 404: File not found' >&2; echo 'AttributeError: list object has no attribute get' >&2; exit 1"
-        /// A shell's "not found" with a status that is not the one for a command that is not there.
-        case notFoundWithAnotherStatus = "echo '/opt/dojo/bin/dojo: 2: exec: python3: not found' >&2; exit 126"
-        /// The status of a command that is not there, from a shim that spoke for itself.
+        /// The host's Python prints a starred line when it starts that is almost a pane's row, six words
+        /// before "queued=" where a row has five, and a program that is no bus answers with an empty object.
+        case aBannerOfSixWords = "printf '%s\n' '* Background worker pool is idle queued=0'; exit 0"
+        /// A starred line of five words whose second is no kind a bus gives.
+        case aKindNoBusGives = "printf '%s\n' '* Background worker pool idle queued=0'; exit 0"
+        /// A line of four words.
+        case aRowWithoutAHost = "printf '%s\n' '* claude-1 claude idle queued=0'; exit 0"
+        /// A shell's status for a command that is not there or cannot be run, from a shim that spoke.
         case theShimSpokeAndGave127 = "echo 'dojo: bus not reachable on 127.0.0.1:50001: refused' >&2; exit 127"
+        case theShimSpokeAndGave126 = "echo 'dojo: bus not reachable on 127.0.0.1:50001: refused' >&2; exit 126"
+        case aTracebackAndStatus126 = "echo 'Traceback (most recent call last):' >&2; exit 126"
         /// A usage line that is not the first line, and a usage line with another status.
         case usageNotFirst = "echo 'Traceback (most recent call last):' >&2; echo 'usage: dojo send <name>' >&2; exit 2"
         case usageWithAnotherStatus = "echo 'usage: dojo send <name> <text...>' >&2; exit 1"
@@ -60,12 +67,15 @@ import Testing
         /// A shim that cannot run: its Python is gone, in the words of env and of a shell.
         case noPython = "echo 'env: python3: No such file or directory' >&2; exit 127"
         case noPythonInAShellsWords = "echo '/opt/dojo/bin/dojo: 2: exec: python3: not found' >&2; exit 127"
+        /// python3 on the PATH is a wrapper to an interpreter that was removed: bash gives 126 for that.
+        case noPythonBehindAWrapper = "echo '/opt/tools/bin/python3: line 2: /opt/old-python/bin/python3: No such file or directory' >&2; exit 126"
 
         /// Whether the harness starts: on an answer that shows a bus that knows this pane, and in the two
         /// cases that are recognised by their own sign as a host that has no hooks today either.
         var starts: Bool {
             switch self {
-            case .answers, .renamed, .aBannerBeforeTheAnswer, .aLabelThatSaysQueued, .old, .noPython, .noPythonInAShellsWords: return true
+            case .answers, .renamed, .aBannerBeforeTheAnswer, .aLabelThatSaysQueued, .old, .noPython, .noPythonInAShellsWords,
+                 .noPythonBehindAWrapper: return true
             default: return false
             }
         }
@@ -73,7 +83,7 @@ import Testing
         /// The end of the pane's line where it does not start: fixed words, and the status number alone.
         var says: String {
             switch self {
-            case .notReachable, .theShimSpokeAndGave127: return "bus not reachable."
+            case .notReachable, .theShimSpokeAndGave127, .theShimSpokeAndGave126: return "bus not reachable."
             case .refused, .refusedEchoingTheToken: return "bus refused (401)."
             case .pageNotFound: return "bus refused (404)."
             default: return "the answer was not from a bus that knows this pane."
