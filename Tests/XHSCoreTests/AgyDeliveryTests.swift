@@ -119,6 +119,32 @@ import Testing
         }
     }
 
+    /// A message taller than agy's composer: agy shows its end under "↑ N more lines". The Enter goes out as
+    /// it does for any paste agy shows (live on 2026-11-16 it stayed owed until the owner pressed it).
+    @Test func aPasteTallerThanTheComposerGetsItsEnter() {
+        let text = (1...12).map { "line \($0) of a relayed message long enough to fill more rows than the composer shows" }
+            .joined(separator: "\n")
+        let rig = Rig(kind: .agy, submitDelay: 0.15)
+        rig.io.screen = Self.idle
+        rig.io.bracketedPasteEnabled = true
+        rig.send(text)
+        let tail = Delivery.line(from: "fable", text: text).components(separatedBy: "\n").suffix(5).map { "  " + $0 }
+        rig.io.screen = ([Self.rule, "> ↑ 7 more lines"] + tail + [Self.rule, Self.status]).joined(separator: "\n")
+        rig.fire()
+        #expect(rig.enters == 1)
+        #expect(rig.recorded("enter").last?["outcome"] as? String == "sent")
+        // the end of another text in a capped composer is not this paste: the Enter waits
+        let other = Rig(kind: .agy, submitDelay: 0.15)
+        other.io.screen = Self.idle
+        other.io.bracketedPasteEnabled = true
+        other.send(text)
+        other.io.screen = ([Self.rule, "> ↑ 7 more lines", "  the end of something else, not what the bus pasted"]
+                           + [Self.rule, Self.status]).joined(separator: "\n")
+        other.fire()
+        #expect(other.enters == 0)
+        #expect(other.recorded("enter").last?["outcome"] as? String == "owed")
+    }
+
     /// What agy draws of a paste: a short one row by row, a long one as its stand-in. The Enter waits for it.
     @Test func aPasteGetsItsEnterOnceAgyShowsIt() {
         let rig = Rig(kind: .agy, submitDelay: 0.15)

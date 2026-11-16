@@ -230,5 +230,35 @@
    42,
    3
   ]
+ },
+ "r10-1-idle": {
+  "stream": "agy-1.5.9-capped.bin",
+  "offset": 3194,
+  "cursor": [
+   28,
+   3
+  ],
+  "rows": 30,
+  "cols": 100
+ },
+ "r10-2-long-paste": {
+  "stream": "agy-1.5.9-capped.bin",
+  "offset": 4790,
+  "cursor": [
+   28,
+   11
+  ],
+  "rows": 30,
+  "cols": 100
+ },
+ "r10-3-scrolled-up": {
+  "stream": "agy-1.5.9-capped.bin",
+  "offset": 9598,
+  "cursor": [
+   13,
+   11
+  ],
+  "rows": 30,
+  "cols": 100
  }
 }
