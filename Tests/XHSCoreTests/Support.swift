@@ -14,6 +14,9 @@ final class MockIO: PaneIO {
     var cursorLine: Int?
     /// Whether the terminal shows its alternate buffer; nil as for a pane that cannot say.
     var alternate: Bool?
+    /// The live screen's lines where they differ from the pane's text: a real pane's text can hold what a
+    /// wider pane once had beyond its right edge, which the live screen leaves out (D37).
+    var live: [String]?
     let kind: HarnessKind
     /// What the test set the screen to, if it did.
     private var set: String?
@@ -41,7 +44,7 @@ final class MockIO: PaneIO {
 
     func screenText() -> String { screen }
     func visibleText() -> String { screen }
-    func liveScreen() -> PaneScreen { PaneScreen(lines: screen.components(separatedBy: "\n"), cursorLine: cursorLine, alternate: alternate) }
+    func liveScreen() -> PaneScreen { PaneScreen(lines: live ?? screen.components(separatedBy: "\n"), cursorLine: cursorLine, alternate: alternate) }
 
     /// Everything typed so far as one string.
     var typed: String { String(decoding: written.flatMap { $0 }, as: UTF8.self) }
@@ -84,6 +87,20 @@ func body(_ object: [String: Any]) -> Data {
 let repoRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
 
 /// The argv a POSIX shell builds from a command line (without a leading "exec").
+/// The words of the harness command in the line a host's login shell reads: what follows the last `exec`,
+/// after the folder change and, for a pane that reports hooks, its check of the way to the bus (D35.2).
+func harnessArgs(_ inner: String, home: String = "/home/tester") -> [String] {
+    shellArgs(inner.components(separatedBy: " && exec ").last ?? inner, home: home)
+}
+
+/// The words of that check, nil when the line has none.
+func reachArgs(_ inner: String, home: String = "/home/tester") -> [String]? {
+    // what stands before the harness: the folder change, if any, and the check
+    let head = inner.components(separatedBy: " && exec ").dropLast().joined(separator: " && exec ")
+    if head.hasPrefix("env ") { return shellArgs(head, home: home) }
+    return head.range(of: " && env ").map { shellArgs("env " + String(head[$0.upperBound...]), home: home) }
+}
+
 func shellArgs(_ line: String, home: String = "/home/tester") -> [String] {
     var command = line
     if command.hasPrefix("exec ") { command.removeFirst(5) }

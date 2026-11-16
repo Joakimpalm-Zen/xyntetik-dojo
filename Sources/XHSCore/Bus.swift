@@ -872,7 +872,10 @@ public final class Bus {
         // from the composer all the same. The screen showing it empty ends the hold too (D18). Only after the
         // owner has been quiet, so a key not yet drawn cannot be missed.
         if p.hasDraft {
-            guard Composer.shownEmpty(kind: p.kind, screen: io.screenText()) else { return }
+            // By the live screen, whose rows end at the pane's width (D37). The pane's whole text also gives
+            // back what a wider pane once had beyond its right edge: words after the mark there made an
+            // empty composer read as a draft, and the hold lasted until the owner next sent something.
+            guard Composer.shownEmpty(kind: p.kind, screen: io.liveScreen().lines.joined(separator: "\n")) else { return }
             p.hasDraft = false
             p.typedSinceSubmit = false
         }

@@ -283,7 +283,15 @@ public enum Launcher {
         // A Windows host's command is built as before: cmd.exe and MSYS2 bash read it, never fish.
         let anyShell = remoteShell == .posix
         let cd = directory.map { "cd " + Shell.homeQuoted($0, anyShell: anyShell) + " && " } ?? ""
-        let inner = cd + "exec " + Shell.line([.literal("env")] + assignments + [path] + harness, anyShell: anyShell)
+        // D35.2: a pane that reports hooks first asks the bus through its tunnel whether it knows this pane,
+        // with the shim that is on the host for the hooks. One more command in the line the host's login
+        // shell reads, run by sh so that every login shell reads it alike: by its full path on a POSIX
+        // host, where a login profile can leave /bin off the PATH.
+        let reach = reportsHooks.contains(kind)
+            ? Shell.line([.literal("env")] + assignments + [path, .literal(remoteShell == .posix ? "/bin/sh" : "sh"), .literal("-c"),
+                          .literal(reachCheck)], anyShell: anyShell) + " && "
+            : ""
+        let inner = cd + reach + "exec " + Shell.line([.literal("env")] + assignments + [path] + harness, anyShell: anyShell)
         let remote: String
         switch remoteShell {
         case .posix: remote = #"exec "$SHELL" -l -i -c "# + Shell.quoteAnyShell(inner)
@@ -293,6 +301,70 @@ public enum Launcher {
                            runnerForward: kind == .runner ? runnerForward : nil)
         return LaunchPlan(executable: loginShell, args: ["-l", "-i", "-c", "exec " + Shell.line(ssh, anyShell: anyShell)], environment: env)
     }
+
+    /// The harnesses that report their state to the bus by hooks, and so need the way to it.
+    public static let reportsHooks: Set<HarnessKind> = [.claude, .codex, .pi]
+
+    /// D35.2: what a remote pane runs on its host before its harness, with the pane's own DOJO_PORT and
+    /// DOJO_TOKEN. Without its way to the bus a harness starts with no hooks, so the bus never learns of a
+    /// prompt there. ssh only warns when it cannot make the forward, and a forward ssh did make can still
+    /// lead elsewhere: to another program that holds the port on the address the hooks call, or to another
+    /// Mac's bus. So the pane asks, with the shim that is on the host for the hooks: `dojo panes`, which the
+    /// bus answers by the caller's token and in which the shim marks the caller's own pane.
+    ///
+    /// The harness starts only on an answer that shows a bus that knows this pane: the shim succeeds, and
+    /// one of its lines has the exact shape it gives the caller's own pane: a star, then five words and no
+    /// more before "queued=", with a name that is one (the shim writes None for a pane without), a kind the
+    /// bus gives and, in the state's place, a state the bus gives. A state word
+    /// anywhere else in a line counts for nothing, and lines of another shape are passed over, starred or
+    /// not, so a line a host's Python prints when it starts hides nothing. The pane's name is not used, so
+    /// a pane renamed while it starts is known all the same. Every other answer from a shim that ran ends
+    /// the pane: the bus not reachable, a refusal, a page or a wrong object from a program that is no bus,
+    /// a crash of the shim's own.
+    ///
+    /// Three hosts start as before, each known by its own sign and none by "anything else", and never by
+    /// words found somewhere in what the shim printed: no shim on the host (`command -v` fails); a shim
+    /// from before the call (status 2 and its usage line first); a shim whose Python is gone (status 127 or
+    /// 126, the shell's own for a command that is not there or cannot be run, with no word of the shim's
+    /// own and no traceback).
+    /// Such a host has no hooks with or without this.
+    ///
+    /// The pane's line is fixed words and, for a refusal, the status number. What the shim said is never
+    /// shown: a program on the port can answer with the request's headers, and the token is one of them.
+    ///
+    /// sh reads it, on a POSIX host and under MSYS2, with nothing but what sh has built in. It has no
+    /// apostrophe and no backslash: each would cost tens of bytes in the quoting a fish login shell needs.
+    public static let reachCheck = [
+        #"command -v dojo >/dev/null 2>&1 || exit 0"#,
+        #"all=$(dojo panes 2>&1); code=$?"#,
+        #"nl=$(echo; echo x); nl=${nl%x}; rest=$all; said=; known="#,
+        // Line by line. The answer is any line of the exact shape the shim gives the caller's own pane: a
+        // star, a name, a kind, a host and a state, five words and no more, then "queued=". Each is read by
+        // its place: the name is one (the shim writes None for none), the kind is one the bus gives
+        // (HarnessKind), the state is one the bus gives (PaneState).
+        #"while :; do line=${rest%%"$nl"*}; "#
+            + #"case $line in "* "*" queued="*) cells=${line%%" queued="*}; n=0; word=; name=; kind=; "#
+            + #"while :; do cells=${cells#"${cells%%[! ]*}"}; case $cells in "") break;; esac; word=${cells%%" "*}; n=$((n+1)); "#
+            + #"case $n in 2) name=$word;; 3) kind=$word;; esac; case $cells in *" "*) cells=${cells#*" "};; *) break;; esac; done; "#
+            + #"case $n in 5) case $word in starting|running|idle|prompt|exited) "#
+            + #"case $kind in claude|codex|pi|runner|shell) "#
+            + #"case $name in None) ;; *) known=yes;; esac;; esac;; esac;; esac;; "#
+            // the shim's own words, for the reason the pane gives
+            + #""dojo: "*) case $said in "") said=$line;; esac;; esac; "#
+            + #"case $rest in *"$nl"*) rest=${rest#*"$nl"};; *) break;; esac; done"#,
+        #"case $code$known in 0yes) exit 0;; esac"#,
+        // No Python: the shell's own status for a command that is not there (127) or that cannot be run
+        // (126: a wrapper whose interpreter was removed), and not a word from the shim.
+        // A shim from before the call: its usage line first, with its status for that.
+        #"case $code in 126|127) case "$nl$all" in *"${nl}dojo:"*|*Traceback*) ;; *) exit 0;; esac;; "#
+            + #"2) case $all in "usage: "*) exit 0;; esac;; esac"#,
+        #"why="the answer was not from a bus that knows this pane""#,
+        #"case $said in "dojo: bus not reachable"*) why="bus not reachable";; "#
+            + #""dojo: bus refused ("*) n=${said#"dojo: bus refused ("}; n=${n%%")"*}; "#
+            + #"case $n in ""|*[!0-9]*) why="bus refused";; *) why="bus refused ($n)";; esac;; esac"#,
+        #"echo "Dojo: the bus could not be reached through the tunnel of this pane, so the pane does not start: $why." >&2"#,
+        "exit 1",
+    ].joined(separator: "; ")
 
     /// MSYS2's bash on a Windows host. The standard MSYS2 install location.
     public static let msysBash = #"C:\msys64\usr\bin\bash.exe"#
@@ -407,12 +479,19 @@ public enum Launcher {
     }
 
     /// ssh with a reverse tunnel so the shim on the remote host reaches the bus at 127.0.0.1:remotePort there.
+    /// The listener is asked for with no address named, as it always was: a host whose sshd permits listening
+    /// on `localhost` only refuses 127.0.0.1 by name. ssh then asks for the loopback listeners of both
+    /// families and is content when either binds, so ssh's silence does not say the tunnel is there. The
+    /// pane's own check does (`reachCheck`, D35.2).
     public static func sshWords(host: String, port: Int, remotePort: Int, remoteCommand: String,
                                 runnerForward: Int? = nil) -> [ShellWord] {
         // The keepalive: a dropped connection ends the pane within 90 seconds instead of hanging it.
         var words: [ShellWord] = [.literal("ssh"), .literal("-t"), .literal("-R"), .literal("\(remotePort):127.0.0.1:\(port)")]
         // D12: a Runner pane on a host brings that host's Runner to this Mac. ExitOnForwardFailure: a local port
         // someone took since it was picked ends the pane with ssh's own message, not a pane with no tunnel.
+        // The option is for that forward alone. It is not how an agent pane learns that its tunnel failed
+        // (`reachCheck` is): it ends the pane on any forward that fails, the user's own in ~/.ssh/config too,
+        // and a second pane on a host alias with a LocalForward would never start.
         if let runnerForward {
             words += [.literal("-L"), .literal("\(runnerForward):127.0.0.1:\(remoteRunnerPort)"),
                       .literal("-o"), .literal("ExitOnForwardFailure=yes")]

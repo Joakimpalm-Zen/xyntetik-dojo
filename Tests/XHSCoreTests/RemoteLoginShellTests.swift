@@ -47,6 +47,9 @@ import Testing
         static let relative: Set<String> = ["%self", "x==sh"]
 
         let fm = FileManager.default
+        /// How the last run ended and what it wrote to the pane as errors.
+        var lastStatus: Int32 = 0
+        var lastErrors = ""
         let root: URL
         let localHome: URL
         let remoteHome: URL
@@ -112,8 +115,8 @@ import Testing
         }
 
         /// The command this Mac's login shell is given for a pane on the host: as the code under test builds
-        /// it, or as main builds it (`mainsCommand`: from `harnessWords`, `Shell.line`, `Shell.quote`,
-        /// `Shell.homeQuoted` and `sshWords`, which the change leaves as they are).
+        /// it, or as main builds it (`mainsCommand`: from `harnessWords`, `Shell.line`, `Shell.quote` and
+        /// `Shell.homeQuoted`, which the changes leave as they are, and main's ssh words written out).
         func command(kind: HarnessKind, folder: String?, main: Bool) -> String {
             let directory = folder.map { Host.relative.contains($0) ? $0 : path(of: $0) }
             guard main else {
@@ -140,13 +143,17 @@ import Testing
             process.environment = environment
             process.standardInput = FileHandle.nullDevice
             process.standardOutput = FileHandle.nullDevice
-            process.standardError = FileHandle.nullDevice
+            let errors = root.appendingPathComponent("errors-\(UUID().uuidString)")
+            fm.createFile(atPath: errors.path, contents: nil)
+            process.standardError = try FileHandle(forWritingTo: errors)
             process.qualityOfService = .utility
             try process.run()
             let stuck = DispatchWorkItem { process.terminate() }
             DispatchQueue.global().asyncAfter(deadline: .now() + 30, execute: stuck)
             process.waitUntilExit()
             stuck.cancel()
+            lastStatus = process.terminationStatus
+            lastErrors = (try? String(contentsOf: errors, encoding: .utf8)) ?? ""
             guard let folder = fm.contents(atPath: seen.path + ".folder"), let argv = fm.contents(atPath: seen.path + ".argv"),
                   let env = fm.contents(atPath: seen.path + ".env") else { return nil }
             var words = String(decoding: argv, as: UTF8.self).components(separatedBy: "\0")
@@ -162,28 +169,41 @@ import Testing
         }
     }
 
-    /// Main's command for a remote pane, put together from the parts main's `Launcher.plan` uses, in its order.
-    static func mainsCommand(kind: HarnessKind, directory: String?, windows: Bool = false) -> String {
+    /// Main's command for a remote pane, put together from the parts main's `Launcher.plan` uses, in its order,
+    /// as it was before D32 and D35.2. `since352` gives it the one thing D35.2 changes, and nothing else: a
+    /// pane that reports hooks first checks its way to the bus.
+    static func mainsCommand(kind: HarnessKind, directory: String?, windows: Bool = false, since352: Bool = false) -> String {
         var assignments = ["DOJO_PANE=\(kind)-1", "DOJO_PORT=50001", "DOJO_TOKEN=tok"]
         if kind == .runner { assignments += ["DOJO_RUNNER_PORT=\(Launcher.remoteRunnerPort)", "DOJO_RUNNER_TRAY=off"] }
         let harness = Launcher.harnessWords(kind: kind, paneName: "\(kind)-1", port: 50001, runnerModel: nil)
-        let words: [ShellWord] = [.literal("env")] + assignments.map { ShellWord.literal($0) }
-            + [.raw(#"PATH="$HOME/.dojo/bin:$PATH""#)] + harness
-        let inner = (directory.map { "cd " + Shell.homeQuoted($0) + " && " } ?? "") + "exec " + Shell.line(words)
+        let env: [ShellWord] = [.literal("env")] + assignments.map { ShellWord.literal($0) } + [.raw(#"PATH="$HOME/.dojo/bin:$PATH""#)]
+        let reach = since352 && Launcher.reportsHooks.contains(kind)
+            ? Shell.line(env + [.literal(windows ? "sh" : "/bin/sh"), .literal("-c"), .literal(Launcher.reachCheck)]) + " && " : ""
+        let inner = (directory.map { "cd " + Shell.homeQuoted($0) + " && " } ?? "") + reach + "exec " + Shell.line(env + harness)
         let remote = windows ? Launcher.windowsRemoteCommand(inner: inner) : #"exec "$SHELL" -l -i -c "# + Shell.quote(inner)
-        return "exec " + Shell.line(Launcher.sshWords(host: "user@box", port: 7788, remotePort: 50001, remoteCommand: remote,
-                                                      runnerForward: kind == .runner ? 18081 : nil))
+        var ssh: [ShellWord] = [.literal("ssh"), .literal("-t"), .literal("-R"), .literal("50001:127.0.0.1:7788")]
+        if kind == .runner {
+            ssh += [.literal("-L"), .literal("18081:127.0.0.1:\(Launcher.remoteRunnerPort)"), .literal("-o"), .literal("ExitOnForwardFailure=yes")]
+        }
+        ssh += [.literal("-o"), .literal("ServerAliveInterval=30"), .literal("-o"), .literal("ServerAliveCountMax=3"),
+                .literal("user@box"), .literal(remote)]
+        return "exec " + Shell.line(ssh)
     }
 
-    /// A Windows host's command is read by cmd.exe and MSYS2 bash, never by fish, and is not touched: it is
-    /// main's, character for character.
-    @Test func aWindowsHostsCommandIsMainsToTheLetter() {
+    /// A Windows host's command is read by cmd.exe and MSYS2 bash, never by fish. D32 did not touch it, and
+    /// D35.2 changes one thing in it and nothing else: character for character it is main's with, for a
+    /// pane that reports hooks, the check of its way to the bus.
+    @Test func aWindowsHostsCommandIsMainsToTheLetterButForTheCheck() {
         for kind in [HarnessKind.claude, .codex, .pi, .runner, .shell] {
             for folder in [nil, #"C:\Users\me\it's here"#] as [String?] {
                 let now = Launcher.plan(kind: kind, paneName: "\(kind)-1", host: "user@box", port: 7788, token: "tok",
                                         runnerModel: nil, loginShell: "/bin/zsh", remoteShell: .windows, directory: folder,
                                         remotePort: 50001, runnerForward: kind == .runner ? 18081 : nil).args[3]
-                #expect(now == Self.mainsCommand(kind: kind, directory: folder, windows: true), "\(kind), folder \(folder ?? "none")")
+                #expect(now == Self.mainsCommand(kind: kind, directory: folder, windows: true, since352: true), "\(kind), folder \(folder ?? "none")")
+                // a pane without hooks is main's to the letter
+                if !Launcher.reportsHooks.contains(kind) {
+                    #expect(now == Self.mainsCommand(kind: kind, directory: folder, windows: true), "\(kind), folder \(folder ?? "none")")
+                }
             }
         }
     }
