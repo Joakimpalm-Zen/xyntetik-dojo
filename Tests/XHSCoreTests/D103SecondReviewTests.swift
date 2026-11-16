@@ -84,7 +84,7 @@ import Testing
     }
 
     /// The rows and their cells are lined up from the end, whatever the pane counted and however the text ends.
-    @Test func theRowsAndTheirCellsAreLinedUpFromTheEnd() {
+    @MainActor @Test func theRowsAndTheirCellsAreLinedUpFromTheEnd() {
         // a pane's text ends each row with a line break; the pane counted only the last three rows
         let picked = Bus.lastRows("old\nrow one  \nrow two\n\n\n", cells: [7, 7, 0, 0], 2)
         #expect(picked.text == "row one\nrow two")
