@@ -186,6 +186,14 @@ public enum Launcher {
     /// The variable an agy pane carries its peer rule in, for `dojo hook agy` to inject at SessionStart.
     public static let agyRuleVariable = "DOJO_PEER_RULE"
 
+    /// agy settings passed with --settings, for the session only (agy never saves them): Dojo's own status
+    /// line. agy has no hook for a permission ask; its status-line command gets tool_confirmation_pending
+    /// while a confirmation dialog shows, and `dojo statusline agy` reports that to the bus. It prints one
+    /// plain line like the other panes.
+    public static func agySettings() -> [String: Any] {
+        ["statusLine": ["type": "command", "command": #"python3 "$HOME/.dojo/dojo-mcp.py" statusline agy"#]]
+    }
+
     /// Claude Code MCP config passed with --mcp-config.
     public static func claudeMCP() -> [String: Any] {
         ["mcpServers": ["dojo": ["command": "sh", "args": ["-c", shimCommand]]]]
@@ -238,10 +246,12 @@ public enum Launcher {
             // flag for a system prompt: its hooks and the bus come from Dojo's plugin, which "dojo install" puts
             // in agy's config, and the plugin's SessionStart hook hands agy this pane's rule from the environment
             // (`dojo hook agy`). A resumed conversation fires no SessionStart; it keeps the rule it was given at
-            // its start. The tick is agy's own flag, which approves every tool request.
+            // its start. The tick is agy's own flag, which approves every tool request. --settings carries the
+            // pane's status line, which reports a permission dialog (`agySettings`).
             return [.literal(agyRuleVariable + "=" + prompt), .literal("agy")] +
                    (session.map { [.literal("--conversation"), .literal($0)] } ?? []) +
-                   (unrestricted ? [.literal("--dangerously-skip-permissions")] : [])
+                   (unrestricted ? [.literal("--dangerously-skip-permissions")] : []) +
+                   [.literal("--settings"), .literal(json(agySettings()))]
         case .runner:
             // Finds or fetches Runner, picks a model that fits this machine and serves it (tools/runner-start.sh).
             return [.literal("/bin/sh"), .raw(#""$HOME/.dojo/runner-start.sh""#)]

@@ -635,6 +635,109 @@ def agy_hook(event, env):
     return posted, reply
 
 
+# agy has no hook for a permission ask, but its status-line command gets the session's state on every
+# change, at most every 300 ms (agy docs, cli/statusline): tool_confirmation_pending while a tool
+# confirmation dialog shows (left out otherwise), and agent_state. An agy pane runs this command for its
+# session only (Launcher.agySettings). It reports the state in the bus's words and prints the pane's line.
+AGY_RUNNING_STATES = ("working", "tool_use", "reviewing")
+
+
+def agy_status_event(data):
+    """The bus's word for the state a status-line payload shows; None when it says nothing about the turn
+    (initializing, authenticating, error, a state a later agy brings)."""
+    if data.get("tool_confirmation_pending") is True:
+        return "PermissionRequest"
+    state = data.get("agent_state")
+    if state == "idle":
+        return "Stop"
+    if state in AGY_RUNNING_STATES:
+        return "PostToolUse"
+    return None
+
+
+def _get(d, *path):
+    for key in path:
+        if not isinstance(d, dict) or key not in d:
+            return None
+        d = d[key]
+    return d
+
+
+def _tokens(n):
+    try:
+        n = float(n)
+    except (TypeError, ValueError):
+        return None
+    return "%.0fk" % (n / 1000) if n >= 1000 else str(int(n))
+
+
+def _left(bucket):
+    try:
+        return "%.0f%%" % (max(0.0, min(1.0, float(bucket["remaining_fraction"]))) * 100)
+    except (TypeError, ValueError, KeyError):
+        return None
+
+
+def _reset_hhmm(bucket):
+    """The local time a quota bucket resets, from reset_time or else reset_in_seconds."""
+    import datetime as dt
+    value = bucket.get("reset_time") if isinstance(bucket, dict) else None
+    if isinstance(value, str) and value.strip():
+        try:
+            when = dt.datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+            if when.tzinfo is None:
+                when = when.replace(tzinfo=dt.timezone.utc)
+            return when.astimezone().strftime("%H:%M")
+        except ValueError:
+            pass
+    try:
+        secs = float(bucket.get("reset_in_seconds")) if isinstance(bucket, dict) else None
+        return (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=secs)).astimezone().strftime("%H:%M")
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def agy_status_line(data):
+    """One plain line, in the order and words of the Claude Code panes' line: usage, context, model,
+    effort. Anything missing reads n/a."""
+    five, week = _get(data, "quota", "gemini-5h"), _get(data, "quota", "gemini-weekly")
+    five_left = _left(five) if isinstance(five, dict) else None
+    week_left = _left(week) if isinstance(week, dict) else None
+    reset = (_reset_hhmm(five) if isinstance(five, dict) else None) or "n/a"
+    usage = "Usage: 5h %s, resets at %s · %s" % (five_left + " left" if five_left else "n/a", reset,
+                                                  "week " + week_left + " left" if week_left else "week n/a")
+    size, pct = _get(data, "context_window", "context_window_size"), _get(data, "context_window", "used_percentage")
+    try:
+        used = _tokens(float(size) * float(pct) / 100) if size and pct is not None else None
+    except (TypeError, ValueError):
+        used = None
+    ctx = "Ctx: %s / %s" % (used, _tokens(size)) if used is not None and _tokens(size) else "Ctx: n/a"
+    name = _get(data, "model", "display_name")
+    effort = _get(data, "model", "effort")
+    effort = effort.strip().upper() if isinstance(effort, str) and effort.strip() else "n/a"
+    return " | ".join([usage, ctx, "Model: %s" % (name if isinstance(name, str) and name else "n/a"), "Thinking: " + effort])
+
+
+def agy_statusline_cli(stdin, out):
+    """`dojo statusline agy`: agy shows what this prints, so it prints the line whatever happens. Outside a
+    pane it only prints."""
+    data = {}
+    try:
+        parsed = json.loads(stdin.read(1 << 20) or "{}")
+        data = parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        pass
+    try:
+        event = agy_status_event(data)
+        if event and os.environ.get("DOJO_TOKEN"):
+            bus_call("hook", {"hook_event_name": event}, timeout=1)
+    except Exception:
+        pass
+    out.write(agy_status_line(data) + "\n")
+    out.flush()
+    return 0
+
+
 def agy_hook_cli(stdin, out):
     """`dojo hook agy`: agy waits for every hook and reads one JSON object from it, so it gets one whatever
     happens here. Outside a pane, nothing is posted and nothing is injected."""
@@ -664,6 +767,8 @@ def cli(argv, out=sys.stdout, err=sys.stderr, stdin=sys.stdin):
     cmd, rest = argv[0], argv[1:]
     if cmd == "hook" and rest == ["agy"]:
         return agy_hook_cli(stdin, out)
+    if cmd == "statusline" and rest == ["agy"]:
+        return agy_statusline_cli(stdin, out)
     if cmd == "hook":
         try:
             event = json.loads(stdin.read(1 << 20) or "{}")
