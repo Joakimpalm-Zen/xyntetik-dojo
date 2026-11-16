@@ -21,11 +21,15 @@ public enum Redact {
     public static let tokenMarker = "[dojo token]"
 
     /// `width`: the columns of the pane the text was read off, for keys the screen wrapped; 0 for text that
-    /// was never on a screen.
-    public static func apply(_ text: String, tokens: [String], width: Int = 0) -> Outcome {
+    /// was never on a screen. `columns`: how many columns the terminal gives a character.
+    public static func apply(_ text: String, tokens: [String], width: Int = 0,
+                             columns: (Unicode.Scalar) -> Int = Columns.of) -> Outcome {
         var count = 0
+        // Which rows reach the pane's width is read off the rows as they came, before any pass replaces
+        // anything: a bus token taken out of a row makes it shorter than the screen had it.
+        let reaches = rowsThatReach(width, text, columns: columns)
         var out = tokensOut(text, tokens, &count)
-        out = wrappedOut(out, width: width, &count)
+        out = wrappedOut(out, reaches: reaches, &count)
         for rule in rules { out = rule.apply(out, &count) }
         return Outcome(text: out, count: count)
     }
@@ -78,6 +82,14 @@ public enum Redact {
 
     // MARK: keys the terminal wrapped
 
+    /// For each row of the text, whether it reaches the pane's width, in the terminal's columns: a row of
+    /// wide characters fills the pane with half as many characters. Empty when no width is known.
+    static func rowsThatReach(_ width: Int, _ text: String, columns: (Unicode.Scalar) -> Int) -> [Bool] {
+        let full = width - wrapMargin
+        guard full > 8 else { return [] }
+        return text.components(separatedBy: "\n").map { Columns.width($0, by: columns) >= full }
+    }
+
     /// How far short of the pane's width a row may end and still be one the screen wrapped: a harness wraps
     /// its own text a little inside the edge.
     static let wrapMargin = 4
@@ -89,16 +101,16 @@ public enum Redact {
     /// rows, emptied of it. Hits inside one row are left to the rules below.
     ///
     /// Only a row as wide as the pane counts, so two rows that merely follow each other are never joined; with
-    /// no width given nothing is.
-    static func wrappedOut(_ text: String, width: Int, _ count: inout Int) -> String {
+    /// no width given nothing is. `reaches` says which rows those are (`rowsThatReach`).
+    static func wrappedOut(_ text: String, reaches: [Bool], _ count: inout Int) -> String {
         var rows = text.components(separatedBy: "\n")
-        let full = width - wrapMargin
-        guard full > 8, rows.count > 1 else { return text }
+        // the passes before this one keep every row break, so the rows are still the ones `reaches` is about
+        guard rows.count > 1, reaches.count == rows.count else { return text }
         var first = 0
         while first < rows.count - 1 {
-            guard rows[first].count >= full else { first += 1; continue }
+            guard reaches[first] else { first += 1; continue }
             var last = first
-            while last < rows.count - 1, rows[last].count >= full { last += 1 }
+            while last < rows.count - 1, reaches[last] { last += 1 }
             // rows first...last as one line; where each row's part starts in it, and how much indent it lost
             var joined = ""
             var starts: [Int] = []
@@ -193,17 +205,25 @@ public enum Redact {
         Rule("jwt", #"\beyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}"#, wraps: true),
         Rule("bearer token", #"(?i)(\bauthorization\s*[:=]\s*["']?bearer\s+)(?!\[(?:dojo token|redacted))[A-Za-z0-9._~+/=\-]{8,}"#, keep: 1),
         Rule("url credentials", #"(?i)(\b[a-z][a-z0-9+.\-]{1,20}://)(?!\[(?:dojo token|redacted))[^\s:/@]+:[^\s@/]+(?=@)"#, keep: 1),
-        // curl -u name:password; the name stays.
-        Rule("password", #"(?i)(\bcurl\b[^\n]*?[ \t](?:-u|--user)[ \t=]+["']?[^\s:"']+:)(?!\[(?:dojo token|redacted))[^\s"']+"#, keep: 1),
-        // NAME=value where the name says what it holds; not MAX_TOKENS, not a bare number. The name may be the
-        // word alone (PASSWORD=, API_KEY=): the part in front of it is optional (D35.4).
+        // curl -u name:password, in the forms curl takes: after a blank or attached to -u, with no name, and
+        // in quotes, where the password runs to the closing quote and may have blanks in it. The name stays.
+        Rule("password", #"(?i)(\bcurl\b[^\n]*?[ \t](?:-u[ \t]*|--user[ \t=]+)'[^':\n]*:)(?!\[(?:dojo token|redacted))[^'\n]+(?=')"#, keep: 1),
+        Rule("password", #"(?i)(\bcurl\b[^\n]*?[ \t](?:-u[ \t]*|--user[ \t=]+)"[^":\n]*:)(?!\[(?:dojo token|redacted))(?:[^"\\\n]|\\.)+(?=")"#, keep: 1),
+        Rule("password", #"(?i)(\bcurl\b[^\n]*?[ \t](?:-u[ \t]*|--user[ \t=]+)[^\s:"']*:)(?!\[(?:dojo token|redacted))[^\s"']+"#, keep: 1),
+        // NAME=value where the name says what it holds; not MAX_TOKENS, not a bare number (which also ends at
+        // a shell's separator, and never takes it). The name may be the word alone (PASSWORD=, API_KEY=): the
+        // part in front of it is optional (D35.4). A quoted value is read to its closing quote, whatever
+        // blanks it holds; in double quotes a quote after a backslash is not the end.
         Rule("secret",
-             #"(?im)((?:^|[ \t])(?:export[ \t]+)?(?:[A-Z_][A-Z0-9_]*)?(?:TOKEN(?!S)|SECRET|PASSWORD|PASSWD|API_?KEY)[A-Z0-9_]*[ \t]*=[ \t]*)(?!\[(?:dojo token|redacted))(?![0-9]+(?:\s|$))["']?[^\s"']{4,}["']?"#,
+             #"(?im)((?:^|[ \t])(?:export[ \t]+)?(?:[A-Z_][A-Z0-9_]*)?(?:TOKEN(?!S)|SECRET|PASSWORD|PASSWD|API_?KEY)[A-Z0-9_]*[ \t]*=[ \t]*)(?!\[(?:dojo token|redacted))(?![0-9]+(?:[\s;&|)]|$))(?:"(?:[^"\\\n]|\\.){4,}"|'[^'\n]{4,}'|["']?[^\s"']{4,}["']?)"#,
              keep: 1),
         // The same names as a YAML or JSON key: `password: value` where the key starts its row, and a quoted
-        // `"api_key": "value"` after a brace or a comma. Not `token: String` in the middle of a row of code.
+        // `"api_key": "value"` after a brace or a comma. Not `token: String` in the middle of a row of code,
+        // and not a type on a row of its own: one bare word of a type's letters that ends its row with a
+        // comma or a semicolon (`token: String,`, `password: string;`), or a common type name alone. A value
+        // that is exactly such a word passes with them.
         Rule("secret",
-             #"(?im)((?:^[ \t]*(?:-[ \t]+)?["']?(?:[A-Z_][A-Z0-9_\-]*)?(?:TOKEN(?!S)|SECRET|PASSWORD|PASSWD|API[_\-]?KEY)[A-Z0-9_\-]*["']?|[{,][ \t]*["'](?:[A-Z_][A-Z0-9_\-]*)?(?:TOKEN(?!S)|SECRET|PASSWORD|PASSWD|API[_\-]?KEY)[A-Z0-9_\-]*["'])[ \t]*:[ \t]*)(?!\[(?:dojo token|redacted))(?![0-9]+(?:[\s,}]|$))(?:"[^"\n]{4,}"|'[^'\n]{4,}'|[^\s"',}]{4,})"#,
+             #"(?im)((?:^[ \t]*(?:-[ \t]+)?["']?(?:[A-Z_][A-Z0-9_\-]*)?(?:TOKEN(?!S)|SECRET|PASSWORD|PASSWD|API[_\-]?KEY)[A-Z0-9_\-]*["']?|[{,][ \t]*["'](?:[A-Z_][A-Z0-9_\-]*)?(?:TOKEN(?!S)|SECRET|PASSWORD|PASSWD|API[_\-]?KEY)[A-Z0-9_\-]*["'])[ \t]*:[ \t]*)(?!\[(?:dojo token|redacted))(?![0-9]+(?:[\s,}]|$))(?![A-Za-z0-9_<>\[\]?.]+[,;][ \t]*$)(?!(?:string|str|int|bool|boolean|number|any|bytes|data|optional<[A-Za-z0-9_.]+>)[?!]?[ \t]*$)(?:"(?:[^"\\\n]|\\.){4,}"|'[^'\n]{4,}'|[^\s"',}]{4,})"#,
              keep: 1),
     ]
 }

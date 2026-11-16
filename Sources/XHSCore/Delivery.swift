@@ -27,37 +27,31 @@ public enum Delivery {
 
     /// The message as it appears in the target terminal. A harness that puts its own `[from: ...]` tag
     /// at the front of its text loses it: the tag is the bus's, from the token, never from the text.
-    public static func line(from sender: String, text: String) -> String {
+    /// `columns`: how many columns the terminal gives a character, the terminal's own answer in the app.
+    public static func line(from sender: String, text: String, columns: (Unicode.Scalar) -> Int = Columns.of) -> String {
         // A later line of the text that starts like a tag would read as another sender's message: it is
         // set in by one space, so only the bus writes a line that begins with [from:.
         let body = stripLeadingTags(text).split(separator: "\n", omittingEmptySubsequences: false)
-            .enumerated().map { i, line in i > 0 ? setIn(line) : String(line) }
+            .enumerated().map { i, line in i > 0 ? setIn(line, columns: columns) : String(line) }
             .joined(separator: "\n")
         return "[from: \(sender)] \(body)"
     }
 
-    /// A later line as the bus types it: one that would show as beginning with a tag is set in by one space.
-    /// A character that takes no room on the screen in front of the tag (a zero-width space, a word joiner, a
-    /// byte order mark and their like) left the line looking like the bus's own, so those are dropped with
-    /// the indent (D35.3). A line that already starts with a plain space is set in and stays as it is.
-    static func setIn(_ line: Substring) -> String {
-        let scalars = line.unicodeScalars
-        guard let tag = scalars.firstIndex(where: { !takesNoRoom($0) }), String(scalars[tag...]).hasPrefix("[from:") else {
-            return String(line)
-        }
-        let lead = scalars[..<tag]
-        if !lead.isEmpty, lead.allSatisfy({ $0 == " " }) { return String(line) }
-        return " " + String(scalars[tag...])
-    }
+    static let tagStart = "[from:"
 
-    /// Whether a character shows as nothing, or as empty room, at the start of a line: whitespace, the
-    /// characters Unicode says to leave undrawn (zero-width space and joiners, word joiner, byte order mark,
-    /// soft hyphen, variation selectors, the Hangul fillers), other format characters, a combining mark with
-    /// no letter to sit on, and the empty braille cell.
-    static func takesNoRoom(_ scalar: Unicode.Scalar) -> Bool {
-        let category = scalar.properties.generalCategory
-        return scalar.properties.isWhitespace || scalar.properties.isDefaultIgnorableCodePoint
-            || category == .format || category == .nonspacingMark || category == .enclosingMark || scalar.value == 0x2800
+    /// A later line as the bus types it: one that SHOWS as beginning with a tag is set in by one space
+    /// (D35.3). The test is made on the line as the screen shows it, without the characters the terminal
+    /// gives no column: a zero-width space or a word joiner, a combining mark, a letter that is drawn into
+    /// the cell before it. Such a character in front of the tag, or inside it, left the line looking like
+    /// the bus's own. The indent is the protection, so the characters stay where they were. A line that
+    /// begins with a blank that takes room is set in already and stays as it is.
+    static func setIn(_ line: Substring, columns: (Unicode.Scalar) -> Int = Columns.of) -> String {
+        var shown = String.UnicodeScalarView()
+        for scalar in line.unicodeScalars where columns(scalar) != 0 {
+            shown.append(scalar)
+            if shown.count == tagStart.unicodeScalars.count { break }
+        }
+        return String(shown) == tagStart ? " " + line : String(line)
     }
 
     static func stripLeadingTags(_ text: String) -> String {
