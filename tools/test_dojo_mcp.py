@@ -532,6 +532,72 @@ class AgyHookTest(unittest.TestCase):
                            env=self.env, timeout=20)
         self.assertEqual((r.returncode, json.loads(r.stdout)), (0, {}))
 
+    # D38: agy has no hook for a permission ask, but its status-line command gets the session's state on
+    # every change (agy docs, cli/statusline): tool_confirmation_pending while a tool confirmation dialog
+    # shows, and agent_state. `dojo statusline agy` reports that to the bus and prints the pane's line.
+
+    def statusline(self, data, env=None):
+        r = subprocess.run([sys.executable, SHIM, "statusline", "agy"], input=json.dumps(data) if not isinstance(data, str) else data,
+                           capture_output=True, text=True, env=env or self.env, timeout=20)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r.stdout
+
+    STATUS = {"cwd": "/home/tester/work", "conversation_id": CONVERSATION, "session_id": CONVERSATION,
+              "model": {"id": "gemini-3.8-flash-high", "display_name": "Gemini 3.8 Flash (High)", "effort": "high"},
+              "context_window": {"total_input_tokens": 21775, "total_output_tokens": 955, "context_window_size": 1000000,
+                                 "used_percentage": 1.3, "remaining_percentage": 98.7},
+              "quota": {"gemini-5h": {"remaining_fraction": 0.99, "reset_in_seconds": 17400},
+                        "gemini-weekly": {"remaining_fraction": 0.993, "reset_in_seconds": 601200}},
+              "product": "antigravity", "terminal_width": 120}
+
+    def status(self, **fields):
+        data = dict(self.STATUS)
+        data.update(fields)
+        return data
+
+    def test_the_status_line_moves_the_pane_to_prompt_and_back(self):
+        # the live control: a field that flips must move the pane, so an inert command fails here
+        for data in (self.status(agent_state="working"),
+                     self.status(agent_state="tool_use", tool_confirmation_pending=True),
+                     self.status(agent_state="tool_use"),
+                     self.status(agent_state="idle")):
+            self.statusline(data)
+        self.assertEqual([e["hook_event_name"] for e in self.posted()], ["PostToolUse", "PermissionRequest", "PostToolUse", "Stop"])
+
+    def test_states_that_say_nothing_about_the_turn_post_nothing(self):
+        for state in ("initializing", "authenticating", "error", None):
+            self.statusline(self.status(agent_state=state) if state else self.status())
+        self.statusline(self.status(agent_state="reviewing"))
+        self.assertEqual([e["hook_event_name"] for e in self.posted()], ["PostToolUse"])
+
+    def test_without_the_field_an_older_agy_never_shows_a_prompt_from_here(self):
+        # the field is left out when false; an agy that never sends it leaves the dialog to the screen guard
+        self.statusline(self.status(agent_state="tool_use"))
+        self.statusline(self.status(agent_state="tool_use", tool_confirmation_pending=False))
+        self.assertNotIn("PermissionRequest", [e["hook_event_name"] for e in self.posted()])
+
+    def test_it_prints_one_plain_line_like_the_other_panes(self):
+        out = self.statusline(self.status(agent_state="idle"))
+        self.assertEqual(out.count("\n"), 1)
+        line = out.rstrip("\n")
+        self.assertRegex(line, r"^Usage: 5h 99% left, resets at \d\d:\d\d · week 99% left \| Ctx: 13k / 1000k \| "
+                               r"Model: Gemini 3.8 Flash \(High\) \| Thinking: HIGH$")
+        self.assertNotIn("\x1b", out, "no colours")
+
+    def test_a_partial_or_broken_payload_still_gives_a_line(self):
+        for data in ({}, "not json", "[1]", {"model": None, "quota": {"gemini-5h": {"remaining_fraction": "x"}}}):
+            self.assertEqual(self.statusline(data), "Usage: 5h n/a, resets at n/a · week n/a | Ctx: n/a | Model: n/a | Thinking: n/a\n")
+
+    def test_outside_dojo_the_status_line_only_prints(self):
+        env = {k: v for k, v in self.env.items() if k != "DOJO_TOKEN"}
+        out = self.statusline(self.status(agent_state="tool_use", tool_confirmation_pending=True), env=env)
+        self.assertTrue(out.startswith("Usage: "))
+        self.assertEqual(self.bus.requests, [])
+
+    def test_a_bus_that_is_gone_does_not_hold_the_line(self):
+        env = dict(self.env, DOJO_PORT="1")
+        self.assertTrue(self.statusline(self.status(agent_state="idle"), env=env).startswith("Usage: "))
+
     def test_claude_and_codex_hooks_are_as_before(self):
         # The differential: `dojo hook` with no harness named posts the event as it came and prints nothing,
         # which Claude Code would otherwise read as context for its session.

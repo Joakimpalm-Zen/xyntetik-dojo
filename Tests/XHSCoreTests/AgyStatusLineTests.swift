@@ -1,0 +1,102 @@
+import Foundation
+import Testing
+@testable import XHSCore
+
+/// D38: agy fires no hook for a permission ask. Its status-line command gets the session's state on every
+/// change (agy docs, cli/statusline), with `tool_confirmation_pending` true while a tool confirmation dialog
+/// shows. An agy pane runs Dojo's own status-line command (`dojo statusline agy`), which reports that to the
+/// bus. Run for real here: the shim as agy runs it, with agy's JSON on stdin, against a bus served over
+/// loopback HTTP.
+@MainActor
+@Suite struct AgyStatusLineTests {
+    static let shim = repoRoot.appendingPathComponent("tools/dojo-mcp.py").path
+
+    /// A status-line payload of the shape agy 1.5.9 documents, with `fields` on top.
+    static func payload(_ fields: [String: Any]) -> String {
+        var data: [String: Any] = [
+            "conversation_id": "d38d38d3-8d38-4d38-8d38-d38d38d38d38", "cwd": "/home/tester/work", "product": "antigravity",
+            "model": ["id": "gemini-3.8-flash-high", "display_name": "Gemini 3.8 Flash (High)", "effort": "high"],
+            "context_window": ["context_window_size": 1_000_000, "used_percentage": 1.3],
+            "quota": ["gemini-5h": ["remaining_fraction": 0.99, "reset_in_seconds": 17400]],
+        ]
+        data.merge(fields) { $1 }
+        return String(decoding: try! JSONSerialization.data(withJSONObject: data), as: UTF8.self)
+    }
+
+    /// The shim's status line, run off the main actor so the bus can answer it.
+    static func statusLine(_ stdin: String, environment: [String: String]) async -> (status: Int32, out: String) {
+        let shim = Self.shim
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+                process.arguments = ["python3", shim, "statusline", "agy"]
+                process.environment = environment
+                let input = Pipe(), output = Pipe()
+                process.standardInput = input
+                process.standardOutput = output
+                process.standardError = FileHandle.nullDevice
+                guard (try? process.run()) != nil else { return continuation.resume(returning: (-1, "")) }
+                input.fileHandleForWriting.write(Data(stdin.utf8))
+                try? input.fileHandleForWriting.close()
+                let data = output.fileHandleForReading.readDataToEndOfFile()
+                process.waitUntilExit()
+                continuation.resume(returning: (process.terminationStatus, String(decoding: data, as: UTF8.self)))
+            }
+        }
+    }
+
+    @Test func aConfirmationDialogPutsThePaneAtPromptAndTheAnswerTakesItBack() async throws {
+        let bus = Bus()
+        let token = bus.add(name: "agy-1", kind: .agy, io: MockIO(kind: .agy))
+        let server = try BusServer(port: 0) { path, token, body in bus.handle(path: path, token: token, body: body) }
+        let started: Error? = await withCheckedContinuation { continuation in
+            server.start { continuation.resume(returning: $0) }
+        }
+        #expect(started == nil)
+        defer { server.stop() }
+        let port = try #require(server.port)
+        let path = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"
+        let pane = ["PATH": path, "DOJO_TOKEN": token, "DOJO_PORT": String(port), "DOJO_PANE": "agy-1"]
+        func report(_ fields: [String: Any], _ environment: [String: String]? = nil) async -> String {
+            let (status, out) = await Self.statusLine(Self.payload(fields), environment: environment ?? pane)
+            #expect(status == 0)
+            return out
+        }
+
+        // the control: the same flip from a command that tells the bus nothing leaves the pane as it was
+        _ = await report(["agent_state": "working"], ["PATH": path])
+        _ = await report(["agent_state": "tool_use", "tool_confirmation_pending": true], ["PATH": path])
+        #expect(bus.info("agy-1")?.state == .starting)
+
+        let line = await report(["agent_state": "working"])
+        #expect(bus.info("agy-1")?.state == .running)
+        #expect(line.hasPrefix("Usage: 5h 99% left") && line.hasSuffix(" | Model: Gemini 3.8 Flash (High) | Thinking: HIGH\n"))
+        _ = await report(["agent_state": "tool_use", "tool_confirmation_pending": true])
+        #expect(bus.info("agy-1")?.state == .prompt)
+        // the owner answered: agy goes on with the tool, and then ends the turn
+        _ = await report(["agent_state": "tool_use"])
+        #expect(bus.info("agy-1")?.state == .running)
+        _ = await report(["agent_state": "idle"])
+        #expect(bus.info("agy-1")?.state == .idle)
+    }
+
+    /// An agy that does not send the field: no prompt from the status line. The composer guard, which
+    /// types only into a composer it can see, keeps the bus out of the dialog (D35.1).
+    @Test func anAgyWithoutTheFieldLeavesTheDialogToTheScreen() async throws {
+        let bus = Bus()
+        let token = bus.add(name: "agy-1", kind: .agy, io: MockIO(kind: .agy))
+        let server = try BusServer(port: 0) { path, token, body in bus.handle(path: path, token: token, body: body) }
+        let started: Error? = await withCheckedContinuation { continuation in
+            server.start { continuation.resume(returning: $0) }
+        }
+        #expect(started == nil)
+        defer { server.stop() }
+        let port = try #require(server.port)
+        let pane = ["PATH": ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin", "DOJO_TOKEN": token,
+                    "DOJO_PORT": String(port), "DOJO_PANE": "agy-1"]
+        let (status, _) = await Self.statusLine(Self.payload(["agent_state": "tool_use"]), environment: pane)
+        #expect(status == 0)
+        #expect(bus.info("agy-1")?.state == .running)
+    }
+}
