@@ -39,7 +39,8 @@ import XHSCore
     @Test func anEmptyComposerIsOneTheBusMayTypeInto() {
         // r5-1: agy's own default mode, Auto, writes its mode in the empty composer until the first prompt
         for name in ["1-idle", "1b-idle-after-turns", "1c-idle-end", "4-running", "6-queued",
-                     "r3-1-idle", "r3-3-cleared", "r3-5-after-enter", "r3-6-answered", "r5-1-idle-auto", "r5-6-idle-after-skip"] {
+                     "r3-1-idle", "r3-3-cleared", "r3-5-after-enter", "r3-6-answered", "r5-1-idle-auto", "r5-6-idle-after-skip",
+                     "r8-1-idle-auto", "r8-3-running", "r8-4-idle-after-turn"] {
             let lines = Self.lines(name)
             #expect(Composer.look(kind: .agy, lines: lines, cursorLine: nil) != nil, "\(name)")
             #expect(Self.shownEmpty(lines), "\(name)")
@@ -48,7 +49,7 @@ import XHSCore
 
     /// The owner's text in the composer: a composer, and not an empty one, so a draft hold stays on.
     @Test func typedTextIsAComposerThatIsNotEmpty() {
-        for name in ["2-typed", "6a-typed-while-running", "r5-2-typed-auto"] {
+        for name in ["2-typed", "6a-typed-while-running", "r5-2-typed-auto", "r8-2-typed"] {
             let lines = Self.lines(name)
             #expect(Composer.look(kind: .agy, lines: lines, cursorLine: nil) != nil, "\(name)")
             #expect(!Self.shownEmpty(lines), "\(name)")
@@ -92,6 +93,26 @@ import XHSCore
         #expect(Composer.holding(kind: .agy, lines: shown, cursorLine: nil, pasted: "something else", before: cleared) == nil)
         #expect(Composer.footerUnchanged(Composer.look(kind: .agy, lines: shown, cursorLine: nil)?.under ?? [],
                                          since: cleared.under, kind: .agy))
+    }
+
+    /// D38 follow-up: agy started from the pane's foot (`Launcher.agyFootStart`; these bytes begin with the
+    /// 44 new lines it printed in a pty of 45 rows). A fresh pane has its composer on row 43 and its status line
+    /// on the last row, as the other panes have theirs; after a turn agy draws its frame one row shorter, and
+    /// it stays at the foot: the composer on row 42, its rule and the status line under it, an empty last row.
+    @Test func aFreshPaneHasItsComposerAndStatusLineAtTheFoot() throws {
+        let fresh = Self.lines("r8-1-idle-auto")
+        #expect(fresh.count == 45)
+        let composer = try #require(fresh.lastIndex { $0 == ">" || $0.hasPrefix("> ") })
+        #expect(composer + 1 == 43)
+        #expect(fresh[44].hasPrefix("Usage: 5h "))
+        for name in ["r8-3-running", "r8-4-idle-after-turn"] {
+            let lines = Self.lines(name)
+            let row = try #require(lines.lastIndex { $0 == ">" || $0.hasPrefix("> ") })
+            #expect(row + 1 == 42, "\(name)")
+            let under = lines[(row + 1)...].filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            #expect(under.count == 2, "\(name): the composer's rule and the status line, nothing more")
+            #expect(under.last?.hasPrefix("Usage: 5h ") == true, "\(name)")
+        }
     }
 
     /// Under the composer stands the pane's own status line, which starts in the first column.

@@ -198,5 +198,37 @@
    13,
    121
   ]
+ },
+ "r8-1-idle-auto": {
+  "stream": "agy-1.5.9-foot.bin",
+  "offset": 3628,
+  "cursor": [
+   43,
+   3
+  ]
+ },
+ "r8-2-typed": {
+  "stream": "agy-1.5.9-foot.bin",
+  "offset": 4005,
+  "cursor": [
+   43,
+   31
+  ]
+ },
+ "r8-3-running": {
+  "stream": "agy-1.5.9-foot.bin",
+  "offset": 5772,
+  "cursor": [
+   42,
+   3
+  ]
+ },
+ "r8-4-idle-after-turn": {
+  "stream": "agy-1.5.9-foot.bin",
+  "offset": 8727,
+  "cursor": [
+   42,
+   3
+  ]
  }
 }
