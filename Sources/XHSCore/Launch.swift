@@ -183,6 +183,19 @@ public enum Launcher {
         ]]
     }
 
+    /// What an agy pane runs agy with: the pane's rows less one as new lines, then agy (its words follow as
+    /// the script's arguments). agy draws a new session from its cursor down, so a fresh pane had its composer
+    /// near the top; from the last row, agy's first frame stands at the foot and stays there (D38 follow-up,
+    /// read off agy in a pty). The rows come from `stty size` in the pane's own shell, here or on a host; with
+    /// no terminal, no stty or an answer that is no size, no line is printed and agy starts as before. sh
+    /// reads it with nothing but what sh has built in, and stty. No apostrophe and no backslash, which would
+    /// cost bytes in the quoting a fish login shell needs (see `reachCheck`).
+    public static let agyFootStart = [
+        #"size=$(stty size 2>/dev/null); rows=${size%% *}"#,
+        #"case $rows in ""|*[!0-9]*) ;; *) i=1; while [ "$i" -lt "$rows" ]; do echo; i=$((i+1)); done;; esac"#,
+        #"exec "$@""#,
+    ].joined(separator: "; ")
+
     /// The variable an agy pane carries its peer rule in, for `dojo hook agy` to inject at SessionStart.
     public static let agyRuleVariable = "DOJO_PEER_RULE"
 
@@ -248,7 +261,9 @@ public enum Launcher {
             // (`dojo hook agy`). A resumed conversation fires no SessionStart; it keeps the rule it was given at
             // its start. The tick is agy's own flag, which approves every tool request. --settings carries the
             // pane's status line, which reports a permission dialog (`agySettings`).
-            return [.literal(agyRuleVariable + "=" + prompt), .literal("agy")] +
+            // It starts from the pane's foot (`agyFootStart`): agy draws a new session from its cursor down.
+            return [.literal(agyRuleVariable + "=" + prompt), .literal("/bin/sh"), .literal("-c"), .literal(agyFootStart),
+                    .literal("sh"), .literal("agy")] +
                    (session.map { [.literal("--conversation"), .literal($0)] } ?? []) +
                    (unrestricted ? [.literal("--dangerously-skip-permissions")] : []) +
                    [.literal("--settings"), .literal(json(agySettings()))]
