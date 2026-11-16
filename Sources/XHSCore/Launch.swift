@@ -474,24 +474,77 @@ public enum Launcher {
     /// Whether a command's output lists `flag`, run in the login shell as a pane is. No answer in `timeout`
     /// seconds is a no, so a slow or hanging profile cannot hold a pane back.
     public static func helpLists(_ flag: String, command: String, loginShell: String, timeout: TimeInterval = 5) async -> Bool {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: loginShell)
-        process.arguments = ["-l", "-i", "-c", command]
-        process.standardInput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        let out = Pipe()
-        process.standardOutput = out
-        guard (try? process.run()) != nil else { return false }
+        guard let child = Detached(loginShell, ["-l", "-i", "-c", command]) else { return false }
         return await withCheckedContinuation { continuation in
             let answer = Once(continuation)
             DispatchQueue.global().async {
-                let data = out.fileHandleForReading.readDataToEndOfFile()
+                let data = child.output.readDataToEndOfFile()
                 answer.give(String(decoding: data, as: UTF8.self).contains(flag))
+                child.reap()
             }
             DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
-                process.terminate()
+                child.stop()
                 answer.give(false)
             }
+        }
+    }
+
+    /// A program started in a session of its own, so that it has no controlling terminal: stdin and stderr
+    /// /dev/null, stdout a pipe, nothing else of this process's files. D38: Foundation's Process puts its child
+    /// in a process group of its own; where Dojo has a controlling terminal (started from a terminal, as
+    /// `make smoke` in an agy pane, whose shell tool runs commands on one), that group is a background one,
+    /// and an interactive login shell there is stopped by SIGTTIN until the time runs out. A pane's harness
+    /// never was: it runs in the pane's own terminal, in a session of its own.
+    final class Detached: @unchecked Sendable {
+        let pid: pid_t
+        let output: FileHandle
+        private let lock = NSLock()
+        private var reaped = false
+
+        init?(_ executable: String, _ arguments: [String]) {
+            var fds: [Int32] = [0, 0]
+            guard pipe(&fds) == 0 else { return nil }
+            var actions: posix_spawn_file_actions_t?
+            var attributes: posix_spawnattr_t?
+            posix_spawn_file_actions_init(&actions)
+            posix_spawnattr_init(&attributes)
+            defer {
+                posix_spawn_file_actions_destroy(&actions)
+                posix_spawnattr_destroy(&attributes)
+            }
+            posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0)
+            posix_spawn_file_actions_adddup2(&actions, fds[1], 1)
+            posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0)
+            posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETSID | POSIX_SPAWN_CLOEXEC_DEFAULT))
+            let argv: [UnsafeMutablePointer<CChar>?] = ([executable] + arguments).map { strdup($0) } + [nil]
+            // this process's environment, as Process gives its child
+            let envp: [UnsafeMutablePointer<CChar>?] = ProcessInfo.processInfo.environment.map { strdup($0.key + "=" + $0.value) } + [nil]
+            defer { (argv + envp).forEach { free($0) } }
+            var pid: pid_t = 0
+            let started = posix_spawn(&pid, executable, &actions, &attributes, argv, envp)
+            close(fds[1])
+            guard started == 0 else {
+                close(fds[0])
+                return nil
+            }
+            self.pid = pid
+            output = FileHandle(fileDescriptor: fds[0], closeOnDealloc: true)
+        }
+
+        /// Waits for the program to end, once its output has.
+        func reap() {
+            var status: Int32 = 0
+            waitpid(pid, &status, 0)
+            lock.lock()
+            reaped = true
+            lock.unlock()
+        }
+
+        /// Ends the program, if it has not ended and been reaped (its pid could be another's by then).
+        func stop() {
+            lock.lock()
+            defer { lock.unlock() }
+            if !reaped { kill(pid, SIGTERM) }
         }
     }
 
