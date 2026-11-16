@@ -151,4 +151,17 @@ import Testing
         rig.wait(10)
         #expect(!rig.io.typed.contains("second"), "nothing is typed onto it")
     }
+
+    @Test func aRunOfEightCharactersInCommonIsThePasteEdited() {
+        let pasted = "[from: fable] read @sr"
+        #expect(Composer.sharesARun(with: pasted, "[from: fable] read @src/"))
+        #expect(Composer.sharesARun(with: pasted, "from: fable] read @sr"))
+        #expect(Composer.sharesARun(with: pasted, "f r o m : f a b l e"), "blanks apart")
+        #expect(Composer.sharesARun(with: pasted, "x fable] re y"))
+        #expect(!Composer.sharesARun(with: pasted, "Try \"fix the failing test\""))
+        #expect(!Composer.sharesARun(with: pasted, "Press up to edit queued messages"))
+        #expect(!Composer.sharesARun(with: pasted, "read @sr"), "seven characters are not a run")
+        #expect(!Composer.sharesARun(with: pasted, ""))
+        #expect(!Composer.sharesARun(with: "short", "short"), "a paste under eight characters has no run")
+    }
 }

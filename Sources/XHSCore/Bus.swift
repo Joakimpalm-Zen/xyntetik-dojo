@@ -931,9 +931,9 @@ public final class Bus {
     private enum OwnersEnter {
         /// It sent the bus's text: a free composer on the screen is empty, or shows the harness's own row
         /// for a message it has queued; or a hook after that Enter reported a submission that carried the
-        /// text, and the composer does not hold the paste in an edited form.
+        /// text, and the composer holds nothing of the paste.
         case sentIt
-        /// A free composer holds the bus's paste in an edited form (it still begins with the paste's tag):
+        /// A free composer holds the bus's paste in an edited form (it shares a run of characters with it):
         /// the owner's draft now, whatever a hook said. Or it holds other text and no hook proved a
         /// submission.
         case leftADraft
@@ -957,17 +957,12 @@ public final class Bus {
         if Composer.rowsOfAComposerTheTextLeft(for: p.kind).contains(free.composer) { return .sentIt }
         if Composer.holding(kind: p.kind, lines: screen.lines, cursorLine: cursor, pasted: text, before: p.look) != nil { return hook }
         // Other text in a free composer. What tells the owner's draft from anything the harness writes there
-        // (a suggestion, a hint of its own) is the bus's tag: text that begins with this paste's tag is the
-        // paste, edited, and the owner's draft whatever a hook said. Text that does not is the owner's draft
-        // only when no hook after their Enter proved the submission.
-        if let tag = Bus.tag(of: text), free.composer.hasPrefix(tag) { return .leftADraft }
+        // (a suggestion, a hint of its own) is the paste itself: text that shares a run of characters with
+        // what the bus pasted is the paste, edited, in whatever part, and the owner's draft whatever a hook
+        // said. Text with nothing of the paste in it is the owner's draft only when no hook after their
+        // Enter proved the submission.
+        if Composer.sharesARun(with: text, free.composer) { return .leftADraft }
         return p.hookCarriedThePaste ? .sentIt : .leftADraft
-    }
-
-    /// The tag the bus put before what it pasted: "[from: name]", the start of `Delivery.line`.
-    static func tag(of pasted: String) -> String? {
-        guard pasted.hasPrefix("[from: "), let end = pasted.firstIndex(of: "]") else { return nil }
-        return String(pasted[...end])
     }
 
     /// Drops the bus's Enter when the owner's own settled what it was for. A draft the owner's Enter left

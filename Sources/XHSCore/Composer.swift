@@ -151,6 +151,22 @@ public enum Composer {
         return true
     }
 
+    /// How many characters in a row a text must have in common with what the bus pasted to be taken for
+    /// that paste, edited.
+    static let editedRun = 8
+
+    /// Whether `text` holds a run of `editedRun` characters or more that `pasted` also holds, blanks apart:
+    /// then it is the paste with something changed, added or taken away, not something the harness wrote.
+    /// A suggestion of the harness's that happens to repeat that much of a message reads as an edit too.
+    static func sharesARun(with pasted: String, _ text: String) -> Bool {
+        let a = Array(pasted.unicodeScalars.filter { !$0.properties.isWhitespace })
+        let b = Array(text.unicodeScalars.filter { !$0.properties.isWhitespace })
+        guard a.count >= editedRun, b.count >= editedRun else { return false }
+        var runs = Set<[Unicode.Scalar]>()
+        for at in 0...(a.count - editedRun) { runs.insert(Array(a[at..<(at + editedRun)])) }
+        return (0...(b.count - editedRun)).contains { runs.contains(Array(b[$0..<($0 + editedRun)])) }
+    }
+
     /// Whether two texts are the same but for their blanks and line breaks, which a harness lays out as it
     /// likes.
     public static func sameText(_ a: String, _ b: String) -> Bool {
