@@ -142,5 +142,61 @@
    16,
    3
   ]
+ },
+ "r5-1-idle-auto": {
+  "stream": "agy-1.5.9-auto-mode.bin",
+  "offset": 3557,
+  "cursor": [
+   13,
+   3
+  ]
+ },
+ "r5-2-typed-auto": {
+  "stream": "agy-1.5.9-auto-mode.bin",
+  "offset": 4604,
+  "cursor": [
+   13,
+   81
+  ]
+ },
+ "r5-3-question": {
+  "stream": "agy-1.5.9-auto-mode.bin",
+  "offset": 9826,
+  "cursor": [
+   26,
+   1
+  ]
+ },
+ "r5-4-write-in": {
+  "stream": "agy-1.5.9-auto-mode.bin",
+  "offset": 10198,
+  "cursor": [
+   31,
+   1
+  ]
+ },
+ "r5-5-write-in-typed": {
+  "stream": "agy-1.5.9-auto-mode.bin",
+  "offset": 10270,
+  "cursor": [
+   26,
+   9
+  ]
+ },
+ "r5-6-idle-after-skip": {
+  "stream": "agy-1.5.9-auto-mode.bin",
+  "offset": 12865,
+  "cursor": [
+   20,
+   3
+  ]
+ },
+ "r6-trust-dialog": {
+  "stream": "agy-1.5.9-trust.bin",
+  "offset": 1071,
+  "cursor": [
+   13,
+   121
+  ]
  }
 }

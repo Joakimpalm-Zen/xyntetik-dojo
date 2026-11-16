@@ -37,8 +37,9 @@ import XHSCore
 
     /// Idle, running, a message queued above the composer, the composer emptied by the owner or by an Enter.
     @Test func anEmptyComposerIsOneTheBusMayTypeInto() {
+        // r5-1: agy's own default mode, Auto, writes its mode in the empty composer until the first prompt
         for name in ["1-idle", "1b-idle-after-turns", "1c-idle-end", "4-running", "6-queued",
-                     "r3-1-idle", "r3-3-cleared", "r3-5-after-enter", "r3-6-answered"] {
+                     "r3-1-idle", "r3-3-cleared", "r3-5-after-enter", "r3-6-answered", "r5-1-idle-auto", "r5-6-idle-after-skip"] {
             let lines = Self.lines(name)
             #expect(Composer.look(kind: .agy, lines: lines, cursorLine: nil) != nil, "\(name)")
             #expect(Self.shownEmpty(lines), "\(name)")
@@ -47,7 +48,7 @@ import XHSCore
 
     /// The owner's text in the composer: a composer, and not an empty one, so a draft hold stays on.
     @Test func typedTextIsAComposerThatIsNotEmpty() {
-        for name in ["2-typed", "6a-typed-while-running"] {
+        for name in ["2-typed", "6a-typed-while-running", "r5-2-typed-auto"] {
             let lines = Self.lines(name)
             #expect(Composer.look(kind: .agy, lines: lines, cursorLine: nil) != nil, "\(name)")
             #expect(!Self.shownEmpty(lines), "\(name)")
@@ -56,8 +57,11 @@ import XHSCore
 
     /// A permission dialog, agy's question and its slash-command menu take the composer's place or open
     /// under it: no composer, and nothing is typed and no Enter pressed.
+    /// r5-4 and r5-5: the question's write-in field, empty and with an answer typed; r6: agy's question
+    /// whether to trust a folder it has not seen, in the terminal's other buffer, at startup.
     @Test func aDialogAQuestionOrAMenuIsNoComposer() {
-        for name in ["5-dialog", "6b-question", "7-slash-menu"] {
+        for name in ["5-dialog", "6b-question", "7-slash-menu", "r5-3-question", "r5-4-write-in", "r5-5-write-in-typed",
+                     "r6-trust-dialog"] {
             let lines = Self.lines(name)
             print("D38 \(name):\n" + lines.filter { !$0.isEmpty }.suffix(12).joined(separator: "\n"))
             #expect(Composer.look(kind: .agy, lines: lines, cursorLine: nil) == nil, "\(name)")

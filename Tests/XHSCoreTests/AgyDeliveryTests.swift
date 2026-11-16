@@ -26,6 +26,30 @@ import Testing
                            "> 1. (Recommended) Python", "  2. Go", "  3. Rust", "  4. Write-in...", "",
                            "  ↑/↓ Navigate · enter Select · esc Skip", status].joined(separator: "\n")
 
+    /// agy's mode in an empty composer (Auto, its own default, until the first prompt; the other modes from
+    /// its binary): an empty composer, which ends a draft hold as an empty one does.
+    static let modes = ["Auto mode: edits & safe commands auto-approved (shift+tab to cycle)",
+                        "Accept-edits mode: file edits auto-approved (shift+tab to cycle)",
+                        "Plan mode: research & plan only (shift+tab to cycle)",
+                        "Best-of-N mode: fork into parallel arms and pick a winner (shift+tab to cycle)"]
+
+    @Test func agysModeInAnEmptyComposerIsAnEmptyComposer() {
+        for mode in Self.modes {
+            let screen = [Self.rule, "> " + mode, Self.rule, Self.status].joined(separator: "\n")
+            #expect(Composer.shownEmpty(kind: .agy, screen: screen), "\(mode)")
+            #expect(!Composer.shownEmpty(kind: .agy, screen: [Self.rule, "> " + mode + " and more", Self.rule].joined(separator: "\n")))
+            let rig = Rig(kind: .agy)
+            rig.io.screen = Self.draft
+            rig.bus.noteOwnerInput("worker", .text)
+            rig.send("report")
+            rig.wait(10)
+            #expect(rig.io.written.isEmpty)
+            rig.io.screen = screen
+            rig.wait(5)
+            #expect(rig.io.typed == "[from: fable] report\r", "\(mode)")
+        }
+    }
+
     @Test func anIdleComposerIsTypedIntoAndSent() {
         let rig = Rig(kind: .agy)
         rig.io.screen = Self.idle
