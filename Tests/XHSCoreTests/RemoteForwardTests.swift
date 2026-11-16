@@ -118,9 +118,9 @@ import Testing
     @Test func theCheckNamesNoPaneAndKnowsEveryState() {
         #expect(!Launcher.reachCheck.contains("DOJO_PANE"))
         #expect(Launcher.reachCheck.contains("dojo panes"))
-        for state in [PaneState.starting, .running, .idle, .prompt, .exited] {
-            #expect(Launcher.reachCheck.contains("\" \(state.rawValue) \""), "\(state)")
-        }
+        // the states, as one list in the place where the check reads the state
+        let known = [PaneState.starting, .running, .idle, .prompt, .exited].map(\.rawValue).joined(separator: "|")
+        #expect(Launcher.reachCheck.contains("case $word in " + known + ")"))
     }
 
     @Test func aLocalPaneKeepsTheBusPort() {
