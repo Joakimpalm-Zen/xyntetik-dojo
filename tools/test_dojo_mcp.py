@@ -456,11 +456,14 @@ class AgyHookTest(unittest.TestCase):
 
     def setUp(self):
         self.bus = FakeBus()
+        # the status line keeps what it last told the bus in the temporary folder: one of its own per test
+        self.tmp = tempfile.mkdtemp()
         self.env = dict(os.environ, DOJO_TOKEN="tok-1", DOJO_PORT=str(self.bus.port), DOJO_PANE="agy-1",
-                        DOJO_PEER_RULE=self.RULE)
+                        DOJO_PEER_RULE=self.RULE, TMPDIR=self.tmp)
 
     def tearDown(self):
         self.bus.close()
+        shutil.rmtree(self.tmp)
 
     def event(self, name, **fields):
         base = {"artifactDirectoryPath": "/home/tester/.gemini/antigravity-cli/brain/" + self.CONVERSATION,
@@ -506,8 +509,14 @@ class AgyHookTest(unittest.TestCase):
                                               continuationActive=False, error="")), {})
         self.assertEqual([e["hook_event_name"] for e in self.posted()], ["PostToolUse", "Stop"])
 
+    def test_a_question_puts_the_pane_at_prompt_and_any_other_tool_is_work(self):
+        # agy's question dialog sets no tool_confirmation_pending: its tool is seen before it runs
+        self.assertEqual(self.hook(self.event("PreToolUse", stepIdx=9, toolCall={"id": "t2", "name": "ask_question"})), {})
+        self.assertEqual(self.hook(self.event("PreToolUse", stepIdx=6, toolCall={"id": "t1", "name": "run_command"})), {})
+        self.assertEqual([e["hook_event_name"] for e in self.posted()], ["PermissionRequest", "PostToolUse"])
+
     def test_events_the_bus_has_no_use_for_post_nothing(self):
-        for name in ("PreToolUse", "PostInvocation", "SomethingNew"):
+        for name in ("PostInvocation", "SomethingNew"):
             self.assertEqual(self.hook(self.event(name, invocationNum=0)), {})
         self.assertEqual(self.posted(), [])
 
@@ -564,6 +573,32 @@ class AgyHookTest(unittest.TestCase):
             self.statusline(data)
         self.assertEqual([e["hook_event_name"] for e in self.posted()], ["PostToolUse", "PermissionRequest", "PostToolUse", "Stop"])
 
+    def test_the_status_line_tells_the_bus_only_what_changed(self):
+        # agy runs it about every 300 ms, idle or not
+        for state in ("idle", "idle", "idle", "working", "tool_use", "working", "idle"):
+            self.statusline(self.status(agent_state=state))
+        self.assertEqual([e["hook_event_name"] for e in self.posted()], ["Stop", "PostToolUse", "Stop"])
+
+    def test_a_question_stays_at_prompt_while_the_status_line_runs_on(self):
+        self.statusline(self.status(agent_state="working"))
+        self.hook(self.event("PreToolUse", stepIdx=9, toolCall={"id": "t2", "name": "ask_question"}))
+        for state in ("tool_use", "tool_use", "working"):
+            self.statusline(self.status(agent_state=state))
+        self.assertEqual([e["hook_event_name"] for e in self.posted()], ["PostToolUse", "PermissionRequest"])
+        # the answer is in: the model is called again
+        self.hook(self.event("PreInvocation", invocationNum=1, initialNumSteps=12, lastUserInput="x"))
+        self.assertEqual(self.posted()[-1]["hook_event_name"], "PostToolUse")
+
+    def test_what_did_not_reach_the_bus_is_told_again(self):
+        self.statusline(self.status(agent_state="idle"), env=dict(self.env, DOJO_PORT="1"))
+        self.statusline(self.status(agent_state="idle"))
+        self.assertEqual([e["hook_event_name"] for e in self.posted()], ["Stop"])
+
+    def test_each_pane_keeps_its_own_record(self):
+        self.statusline(self.status(agent_state="idle"))
+        self.statusline(self.status(agent_state="idle"), env=dict(self.env, DOJO_TOKEN="tok-2"))
+        self.assertEqual(len([r for r in self.bus.requests if r[0] == "/hook"]), 2)
+
     def test_states_that_say_nothing_about_the_turn_post_nothing(self):
         for state in ("initializing", "authenticating", "error", None):
             self.statusline(self.status(agent_state=state) if state else self.status())
@@ -597,6 +632,93 @@ class AgyHookTest(unittest.TestCase):
     def test_a_bus_that_is_gone_does_not_hold_the_line(self):
         env = dict(self.env, DOJO_PORT="1")
         self.assertTrue(self.statusline(self.status(agent_state="idle"), env=env).startswith("Usage: "))
+
+    # D38: "dojo install" puts Dojo's agy plugin in place (the owner's pick: agy plugin install of a plugin
+    # with the hooks and the bus). Never the real agy here: a stand-in on a PATH without it, and the
+    # plugin is installed only into a home that has agy's folder, which no other test's home has.
+
+    def agy_home(self, with_gemini=True):
+        home = tempfile.mkdtemp()
+        os.makedirs(os.path.join(home, ".dojo"))
+        shutil.copy(SHIM, os.path.join(home, ".dojo", "dojo-mcp.py"))
+        if with_gemini:
+            os.makedirs(os.path.join(home, ".gemini"))
+        bin_dir = os.path.join(home, "fake-bin")
+        os.makedirs(bin_dir)
+        stand_in = os.path.join(bin_dir, "agy")
+        with open(stand_in, "w") as f:
+            f.write('#!/bin/sh\nprintf "%s\\n" "$@" >> "$HOME/agy-calls"\necho "  [ok]    dojo"\n')
+        os.chmod(stand_in, 0o755)
+        env = {k: v for k, v in self.env.items() if not k.startswith("DOJO_")}
+        env.update(HOME=home, PATH=bin_dir + ":/usr/bin:/bin")
+        return home, env
+
+    def test_install_puts_the_agy_plugin_in_place(self):
+        home, env = self.agy_home()
+        try:
+            r = subprocess.run([sys.executable, SHIM, "install"], capture_output=True, text=True, env=env, timeout=20)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            plugin = os.path.join(home, ".dojo", "agy", "dojo")
+            with open(os.path.join(home, "agy-calls")) as f:
+                self.assertEqual(f.read().splitlines(), ["plugin", "install", plugin])
+            self.assertIn("agy plugin install", r.stdout)
+            with open(os.path.join(plugin, "plugin.json")) as f:
+                self.assertEqual(json.load(f)["name"], "dojo")
+            with open(os.path.join(plugin, "hooks.json")) as f:
+                hooks = json.load(f)["dojo"]
+            command = 'python3 "$HOME/.dojo/dojo-mcp.py" hook agy'
+            for event in ("SessionStart", "PreInvocation", "Stop"):
+                self.assertEqual([h["command"] for h in hooks[event]], [command], event)
+            for event in ("PreToolUse", "PostToolUse"):
+                self.assertEqual([(g["matcher"], [h["command"] for h in g["hooks"]]) for g in hooks[event]], [("*", [command])], event)
+            with open(os.path.join(plugin, "mcp_config.json")) as f:
+                self.assertEqual(json.load(f), {"mcpServers": {"dojo": {"command": "python3",
+                                                                       "args": [os.path.join(home, ".dojo", "dojo-mcp.py")]}}})
+        finally:
+            shutil.rmtree(home)
+
+    def test_install_leaves_agy_alone_where_it_is_not_set_up(self):
+        home, env = self.agy_home(with_gemini=False)
+        try:
+            r = subprocess.run([sys.executable, SHIM, "install"], capture_output=True, text=True, env=env, timeout=20)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertFalse(os.path.exists(os.path.join(home, "agy-calls")))
+            self.assertFalse(os.path.exists(os.path.join(home, ".dojo", "agy")))
+        finally:
+            shutil.rmtree(home)
+
+    def test_install_says_so_when_agy_is_not_found(self):
+        home, env = self.agy_home()
+        os.remove(os.path.join(home, "fake-bin", "agy"))
+        try:
+            r = subprocess.run([sys.executable, SHIM, "install"], capture_output=True, text=True, env=env, timeout=20)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("agy was not found", r.stdout)
+        finally:
+            shutil.rmtree(home)
+
+    @unittest.skipUnless(shutil.which("agy"), "agy is not installed here")
+    def test_agy_itself_takes_the_plugin(self):
+        # agy's own check of the plugin, and an install into a config folder of the test's own
+        # (--gemini_dir, which agy's mcp and plugin commands honour); the owner's agy config is not touched
+        mod = load_shim()
+        folder = tempfile.mkdtemp()
+        try:
+            plugin = mod.write_agy_plugin(os.path.join(folder, "plugin-src"), os.path.expanduser("~"))
+            env = {k: v for k, v in os.environ.items() if not k.startswith("DOJO_")}
+            env["BROWSER"] = "/usr/bin/true"
+            r = subprocess.run(["agy", "plugin", "validate", "--strict", plugin], capture_output=True, text=True,
+                               env=env, timeout=60, stdin=subprocess.DEVNULL)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            gemini = os.path.join(folder, "gemini")
+            r = subprocess.run(["agy", "--gemini_dir=" + gemini, "plugin", "install", plugin], capture_output=True,
+                               text=True, env=env, timeout=60, stdin=subprocess.DEVNULL)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertIn("hooks", r.stdout)
+            self.assertIn("mcpServers", r.stdout)
+            self.assertTrue(os.path.exists(os.path.join(gemini, "config", "plugins", "dojo", "hooks.json")))
+        finally:
+            shutil.rmtree(folder)
 
     def test_claude_and_codex_hooks_are_as_before(self):
         # The differential: `dojo hook` with no harness named posts the event as it came and prints nothing,

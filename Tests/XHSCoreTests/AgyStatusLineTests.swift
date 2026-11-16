@@ -46,6 +46,24 @@ import Testing
         }
     }
 
+    /// Whether the pane reaches `state` within five seconds. The bus answers on the main actor, which the
+    /// tests running beside this one can keep busy past the shim's one second: the shim has gone by then, and
+    /// the bus handles its request when the main actor is free.
+    static func settles(_ bus: Bus, _ name: String, at state: PaneState) async -> Bool {
+        for _ in 0..<100 {
+            if bus.info(name)?.state == state { return true }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        return bus.info(name)?.state == state
+    }
+
+    /// A folder of the test's own for what the status line keeps between runs.
+    static func folder() -> String {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("agy-status-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url.path
+    }
+
     @Test func aConfirmationDialogPutsThePaneAtPromptAndTheAnswerTakesItBack() async throws {
         let bus = Bus()
         let token = bus.add(name: "agy-1", kind: .agy, io: MockIO(kind: .agy))
@@ -57,7 +75,9 @@ import Testing
         defer { server.stop() }
         let port = try #require(server.port)
         let path = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"
-        let pane = ["PATH": path, "DOJO_TOKEN": token, "DOJO_PORT": String(port), "DOJO_PANE": "agy-1"]
+        let tmp = Self.folder()
+        defer { try? FileManager.default.removeItem(atPath: tmp) }
+        let pane = ["PATH": path, "DOJO_TOKEN": token, "DOJO_PORT": String(port), "DOJO_PANE": "agy-1", "TMPDIR": tmp]
         func report(_ fields: [String: Any], _ environment: [String: String]? = nil) async -> String {
             let (status, out) = await Self.statusLine(Self.payload(fields), environment: environment ?? pane)
             #expect(status == 0)
@@ -65,20 +85,20 @@ import Testing
         }
 
         // the control: the same flip from a command that tells the bus nothing leaves the pane as it was
-        _ = await report(["agent_state": "working"], ["PATH": path])
-        _ = await report(["agent_state": "tool_use", "tool_confirmation_pending": true], ["PATH": path])
+        _ = await report(["agent_state": "working"], ["PATH": path, "TMPDIR": tmp])
+        _ = await report(["agent_state": "tool_use", "tool_confirmation_pending": true], ["PATH": path, "TMPDIR": tmp])
         #expect(bus.info("agy-1")?.state == .starting)
 
         let line = await report(["agent_state": "working"])
-        #expect(bus.info("agy-1")?.state == .running)
+        #expect(await Self.settles(bus, "agy-1", at: .running))
         #expect(line.hasPrefix("Usage: 5h 99% left") && line.hasSuffix(" | Model: Gemini 3.8 Flash (High) | Thinking: HIGH\n"))
         _ = await report(["agent_state": "tool_use", "tool_confirmation_pending": true])
-        #expect(bus.info("agy-1")?.state == .prompt)
+        #expect(await Self.settles(bus, "agy-1", at: .prompt))
         // the owner answered: agy goes on with the tool, and then ends the turn
         _ = await report(["agent_state": "tool_use"])
-        #expect(bus.info("agy-1")?.state == .running)
+        #expect(await Self.settles(bus, "agy-1", at: .running))
         _ = await report(["agent_state": "idle"])
-        #expect(bus.info("agy-1")?.state == .idle)
+        #expect(await Self.settles(bus, "agy-1", at: .idle))
     }
 
     /// An agy that does not send the field: no prompt from the status line. The composer guard, which
@@ -93,10 +113,13 @@ import Testing
         #expect(started == nil)
         defer { server.stop() }
         let port = try #require(server.port)
+        let tmp = Self.folder()
+        defer { try? FileManager.default.removeItem(atPath: tmp) }
         let pane = ["PATH": ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin", "DOJO_TOKEN": token,
-                    "DOJO_PORT": String(port), "DOJO_PANE": "agy-1"]
+                    "DOJO_PORT": String(port), "DOJO_PANE": "agy-1", "TMPDIR": tmp]
         let (status, _) = await Self.statusLine(Self.payload(["agent_state": "tool_use"]), environment: pane)
         #expect(status == 0)
-        #expect(bus.info("agy-1")?.state == .running)
+        #expect(await Self.settles(bus, "agy-1", at: .running))
+        #expect(bus.info("agy-1")?.state != .prompt)
     }
 }
