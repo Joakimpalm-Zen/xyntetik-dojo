@@ -27,8 +27,8 @@ import Testing
             hook("SessionStart")
         }
 
-        func hook(_ event: String) {
-            _ = bus.handle(path: "/hook", token: target, body: body(["hook_event_name": event]))
+        func hook(_ event: String, _ extra: [String: Any] = [:]) {
+            _ = bus.handle(path: "/hook", token: target, body: body(extra.merging(["hook_event_name": event]) { $1 }))
         }
 
         @discardableResult
