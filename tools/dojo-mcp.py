@@ -696,6 +696,13 @@ def audit(argv, out, err, home=None, now=None):
 AGY_RULE_VARIABLE = "DOJO_PEER_RULE"
 
 
+def agy_pane(env):
+    """Whether this agy is an agy pane's own: its launch line sets DOJO_HARNESS=agy. Every process in any
+    pane inherits DOJO_TOKEN, so an agy run as a tool inside a Claude pane has it too, and must not report
+    into that pane (live on 2026-11-16)."""
+    return bool(env.get("DOJO_TOKEN")) and env.get("DOJO_HARNESS") == "agy"
+
+
 def agy_hook(event, env):
     """What to post to the bus for one of agy's hook events (None: nothing), and what to print to agy."""
     name = event.get("hookEventName")
@@ -718,6 +725,7 @@ def agy_hook(event, env):
         else:
             posted = {"hook_event_name": "PostToolUse"}
     if posted is not None:
+        posted["harness"] = "agy"  # the bus takes it from an agy pane only
         if isinstance(event.get("conversationId"), str):
             posted["session_id"] = event["conversationId"]
         if isinstance(event.get("modelName"), str):
@@ -731,7 +739,7 @@ def agy_hook(event, env):
     # The pane's peer rule, as a system step at the start of the conversation: agy takes no system prompt on
     # its command line. Only in a pane, where the launch line set the variable.
     rule = env.get(AGY_RULE_VARIABLE)
-    if name == "SessionStart" and rule and env.get("DOJO_TOKEN"):
+    if name == "SessionStart" and rule and agy_pane(env):
         reply = {"injectSteps": [{"systemMessage": {"systemMessage": rule}}]}
     return posted, reply
 
@@ -888,7 +896,7 @@ def agy_statusline_cli(stdin, out):
     try:
         event = agy_status_event(data)
         token = os.environ.get("DOJO_TOKEN")
-        if event and token:
+        if event and agy_pane(os.environ):
             with AgyPane(token) as pane:
                 if event == "Stop":
                     pane.record.pop("question", None)  # the turn is over: no question is open
@@ -897,7 +905,7 @@ def agy_statusline_cli(stdin, out):
                     pass
                 # The bus hears a change only, whichever of the two told it the state it has.
                 elif AGY_EVENT_STATES[event] != pane.record.get("state"):
-                    pane.report({"hook_event_name": event})
+                    pane.report({"hook_event_name": event, "harness": "agy"})
     except Exception:
         pass
     out.write(agy_status_line(data) + "\n")
@@ -914,7 +922,7 @@ def agy_hook_cli(stdin, out):
         if isinstance(event, dict):
             posted, reply = agy_hook(event, os.environ)
             token = os.environ.get("DOJO_TOKEN")
-            if token:
+            if agy_pane(os.environ):
                 with AgyPane(token) as pane:
                     name = event.get("hookEventName")
                     tool = event.get("toolCall") if isinstance(event.get("toolCall"), dict) else {}

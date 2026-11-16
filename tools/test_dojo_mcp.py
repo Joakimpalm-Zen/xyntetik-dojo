@@ -489,20 +489,21 @@ class AgyHookTest(unittest.TestCase):
         reply = self.hook(self.event("SessionStart"))
         self.assertEqual(reply, {"injectSteps": [{"systemMessage": {"systemMessage": self.RULE}}]})
         self.assertEqual(self.posted(), [{"hook_event_name": "SessionStart", "session_id": self.CONVERSATION,
-                                          "model": "gemini-3.8-flash-high"}])
+                                          "model": "gemini-3.8-flash-high", "harness": "agy"}])
 
     def test_the_first_model_call_of_a_turn_is_the_prompt(self):
         reply = self.hook(self.event("PreInvocation", invocationNum=0, initialNumSteps=4,
                                      lastUserInput="[from: claude] hello there"))
         self.assertEqual(reply, {})
         self.assertEqual(self.posted(), [{"hook_event_name": "UserPromptSubmit", "session_id": self.CONVERSATION,
-                                          "model": "gemini-3.8-flash-high", "prompt": "[from: claude] hello there"}])
+                                          "model": "gemini-3.8-flash-high", "prompt": "[from: claude] hello there",
+                                          "harness": "agy"}])
 
     def test_a_later_model_call_of_the_turn_is_work_going_on(self):
         reply = self.hook(self.event("PreInvocation", invocationNum=1, initialNumSteps=7, lastUserInput="run it"))
         self.assertEqual(reply, {})
         self.assertEqual(self.posted(), [{"hook_event_name": "PostToolUse", "session_id": self.CONVERSATION,
-                                          "model": "gemini-3.8-flash-high"}])
+                                          "model": "gemini-3.8-flash-high", "harness": "agy"}])
 
     def test_a_tool_that_finished_and_the_end_of_a_turn(self):
         self.assertEqual(self.hook(self.event("PostToolUse", stepIdx=5, toolCall={"id": "t1", "name": "run_command"})), {})

@@ -262,7 +262,10 @@ public enum Launcher {
             // its start. The tick is agy's own flag, which approves every tool request. --settings carries the
             // pane's status line, which reports a permission dialog (`agySettings`).
             // It starts from the pane's foot (`agyFootStart`): agy draws a new session from its cursor down.
-            return [.literal(agyRuleVariable + "=" + prompt), .literal("/bin/sh"), .literal("-c"), .literal(agyFootStart),
+            // DOJO_HARNESS marks the pane's own agy: Dojo's plugin reports only for it, not for an agy run as
+            // a tool in another pane, which inherits that pane's DOJO_TOKEN.
+            return [.literal(agyRuleVariable + "=" + prompt), .literal("DOJO_HARNESS=agy"), .literal("/bin/sh"), .literal("-c"),
+                    .literal(agyFootStart),
                     .literal("sh"), .literal("agy")] +
                    (session.map { [.literal("--conversation"), .literal($0)] } ?? []) +
                    (unrestricted ? [.literal("--dangerously-skip-permissions")] : []) +
