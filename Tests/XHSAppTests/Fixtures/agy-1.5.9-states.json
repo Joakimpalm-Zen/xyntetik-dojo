@@ -1,0 +1,146 @@
+{
+ "1-idle": {
+  "stream": "agy-1.5.9-session.bin",
+  "offset": 3396,
+  "cursor": [
+   13,
+   3
+  ]
+ },
+ "2-typed": {
+  "stream": "agy-1.5.9-session.bin",
+  "offset": 4170,
+  "cursor": [
+   13,
+   61
+  ]
+ },
+ "3a-paste-shown": {
+  "stream": "agy-1.5.9-session.bin",
+  "offset": 4848,
+  "cursor": [
+   16,
+   39
+  ]
+ },
+ "3b-paste-collapsed": {
+  "stream": "agy-1.5.9-session.bin",
+  "offset": 4886,
+  "cursor": [
+   16,
+   65
+  ]
+ },
+ "4-running": {
+  "stream": "agy-1.5.9-session.bin",
+  "offset": 14412,
+  "cursor": [
+   34,
+   3
+  ]
+ },
+ "6a-typed-while-running": {
+  "stream": "agy-1.5.9-session.bin",
+  "offset": 19345,
+  "cursor": [
+   35,
+   48
+  ]
+ },
+ "6-queued": {
+  "stream": "agy-1.5.9-session.bin",
+  "offset": 22495,
+  "cursor": [
+   36,
+   3
+  ]
+ },
+ "1b-idle-after-turns": {
+  "stream": "agy-1.5.9-session.bin",
+  "offset": 54029,
+  "cursor": [
+   42,
+   3
+  ]
+ },
+ "5-dialog": {
+  "stream": "agy-1.5.9-session.bin",
+  "offset": 63503,
+  "cursor": [
+   44,
+   56
+  ]
+ },
+ "6b-question": {
+  "stream": "agy-1.5.9-session.bin",
+  "offset": 86203,
+  "cursor": [
+   45,
+   121
+  ]
+ },
+ "1c-idle-end": {
+  "stream": "agy-1.5.9-session.bin",
+  "offset": 95095,
+  "cursor": [
+   42,
+   3
+  ]
+ },
+ "7-slash-menu": {
+  "stream": "agy-1.5.9-session.bin",
+  "offset": 103860,
+  "cursor": [
+   40,
+   8
+  ]
+ },
+ "r3-1-idle": {
+  "stream": "agy-1.5.9-pastes.bin",
+  "offset": 3386,
+  "cursor": [
+   13,
+   3
+  ]
+ },
+ "r3-2-long-paste": {
+  "stream": "agy-1.5.9-pastes.bin",
+  "offset": 3424,
+  "cursor": [
+   13,
+   29
+  ]
+ },
+ "r3-3-cleared": {
+  "stream": "agy-1.5.9-pastes.bin",
+  "offset": 3444,
+  "cursor": [
+   13,
+   3
+  ]
+ },
+ "r3-4-short-paste": {
+  "stream": "agy-1.5.9-pastes.bin",
+  "offset": 4135,
+  "cursor": [
+   15,
+   38
+  ]
+ },
+ "r3-5-after-enter": {
+  "stream": "agy-1.5.9-pastes.bin",
+  "offset": 6475,
+  "cursor": [
+   14,
+   3
+  ]
+ },
+ "r3-6-answered": {
+  "stream": "agy-1.5.9-pastes.bin",
+  "offset": 8140,
+  "cursor": [
+   16,
+   3
+  ]
+ }
+}

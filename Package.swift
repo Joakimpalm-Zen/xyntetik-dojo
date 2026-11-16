@@ -32,7 +32,8 @@ let package = Package(
             dependencies: ["XHSCore", .product(name: "SwiftTerm", package: "SwiftTerm")]
         ),
         .testTarget(name: "XHSCoreTests", dependencies: ["XHSCore"], swiftSettings: testSettings),
-        .testTarget(name: "XHSAppTests", dependencies: ["XHSApp"], swiftSettings: testSettings),
+        // Fixtures: bytes recorded from real harnesses, which the tests read by path (D38)
+        .testTarget(name: "XHSAppTests", dependencies: ["XHSApp"], exclude: ["Fixtures"], swiftSettings: testSettings),
     ],
     swiftLanguageModes: [.v5]
 )
