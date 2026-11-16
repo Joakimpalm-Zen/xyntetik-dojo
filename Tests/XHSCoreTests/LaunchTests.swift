@@ -322,8 +322,9 @@ import Testing
         #expect(plan.environment == ["DOJO_PANE": "agy-1", "DOJO_PORT": "7788", "DOJO_TOKEN": "tok"])
         let rule = "DOJO_PEER_RULE=" + PeerRule.launchPrompt(paneName: "agy-1")
         let settings = Launcher.json(Launcher.agySettings())
-        // agy starts from the pane's foot, by way of sh: a fresh agy draws from its cursor down (D38 follow-up)
-        let foot = ["/bin/sh", "-c", Launcher.agyFootStart, "sh"]
+        // agy starts from the pane's foot, by way of sh: a fresh agy draws from its cursor down (D38 follow-up);
+        // DOJO_HARNESS marks the pane's own agy, the one the plugin reports for
+        let foot = ["DOJO_HARNESS=agy", "/bin/sh", "-c", Launcher.agyFootStart, "sh"]
         #expect(shellArgs(plan.args[3]) == ["env", "PATH=/home/tester/.dojo/bin:/usr/bin:/bin", rule] + foot + ["agy", "--settings", settings])
         let parsed = try JSONSerialization.jsonObject(with: Data(settings.utf8)) as! NSDictionary
         #expect(parsed == ["statusLine": ["type": "command", "command": #"python3 "$HOME/.dojo/dojo-mcp.py" statusline agy"#]] as NSDictionary)
@@ -340,7 +341,7 @@ import Testing
                                    runnerModel: nil, loginShell: "/bin/zsh")
         let inner = shellArgs(shellArgs(remote.args[3])[9], home: "/remote/home")[4]
         #expect(reachArgs(inner, home: "/remote/home")?.last == Launcher.reachCheck)
-        #expect(Array(harnessArgs(inner, home: "/remote/home").suffix(8))
+        #expect(Array(harnessArgs(inner, home: "/remote/home").suffix(9))
                     == ["DOJO_PEER_RULE=" + PeerRule.launchPrompt(paneName: "agy-2")] + foot + ["agy", "--settings", settings])
     }
 

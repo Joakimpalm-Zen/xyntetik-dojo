@@ -458,8 +458,9 @@ class AgyHookTest(unittest.TestCase):
         self.bus = FakeBus()
         # the status line keeps what it last told the bus in the temporary folder: one of its own per test
         self.tmp = tempfile.mkdtemp()
+        # an agy pane's own agy: the launch line sets DOJO_HARNESS=agy, and only it
         self.env = dict(os.environ, DOJO_TOKEN="tok-1", DOJO_PORT=str(self.bus.port), DOJO_PANE="agy-1",
-                        DOJO_PEER_RULE=self.RULE, TMPDIR=self.tmp)
+                        DOJO_PEER_RULE=self.RULE, DOJO_HARNESS="agy", TMPDIR=self.tmp)
 
     def tearDown(self):
         self.bus.close()
@@ -783,6 +784,27 @@ class AgyHookTest(unittest.TestCase):
             self.assertTrue(os.path.exists(os.path.join(gemini, "config", "plugins", "dojo", "hooks.json")))
         finally:
             shutil.rmtree(folder)
+
+    # Live on 2026-11-16: an agy run as a tool inside a Claude pane (agy -p) fired Dojo's plugin, which
+    # posted with that pane's DOJO_TOKEN: the Claude pane went idle, running, idle and took agy's model.
+
+    def test_an_agy_run_inside_another_kind_of_pane_tells_the_bus_nothing(self):
+        claude = {k: v for k, v in self.env.items() if k not in ("DOJO_HARNESS", "DOJO_PEER_RULE")}
+        claude["DOJO_PANE"] = "claude-1"
+        self.assertEqual(self.hook(self.event("SessionStart"), env=claude), {}, "no rule injected")
+        self.hook(self.event("PreInvocation", invocationNum=0, initialNumSteps=1, lastUserInput="reply ok"), env=claude)
+        self.hook(self.event("Stop", terminationReason="NO_TOOL_CALL"), env=claude)
+        out = self.statusline(self.status(agent_state="working"), env=claude)
+        self.assertTrue(out.startswith("Usage: "), "the line is still printed")
+        self.assertEqual(self.bus.requests, [])
+        # agy's question is still let through there: an empty answer would stop the tool
+        self.assertEqual(self.hook(self.event("PreToolUse", toolCall={"id": "q", "name": "ask_question"}), env=claude),
+                         {"decision": "allow"})
+
+    def test_what_the_agy_pane_posts_says_it_is_agys(self):
+        self.hook(self.event("Stop"))
+        self.statusline(self.status(agent_state="working"))
+        self.assertEqual([e.get("harness") for e in self.posted()], ["agy", "agy"])
 
     def test_claude_and_codex_hooks_are_as_before(self):
         # The differential: `dojo hook` with no harness named posts the event as it came and prints nothing,
