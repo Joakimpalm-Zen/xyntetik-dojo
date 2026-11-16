@@ -21,13 +21,14 @@ public enum Redact {
     public static let tokenMarker = "[dojo token]"
 
     /// `width`: the columns of the pane the text was read off, for keys the screen wrapped; 0 for text that
-    /// was never on a screen. `columns`: how many columns the terminal gives a character.
-    public static func apply(_ text: String, tokens: [String], width: Int = 0,
-                             columns: (Unicode.Scalar) -> Int = Columns.of) -> Outcome {
+    /// was never on a screen. `cells`: for each row of the text, how many of the terminal's cells it uses,
+    /// which the pane knows and the text does not say (a wide character fills two, a flag is two characters
+    /// in one cell); nil where no pane gave them.
+    public static func apply(_ text: String, tokens: [String], width: Int = 0, cells: [Int]? = nil) -> Outcome {
         var count = 0
         // Which rows reach the pane's width is read off the rows as they came, before any pass replaces
         // anything: a bus token taken out of a row makes it shorter than the screen had it.
-        let reaches = rowsThatReach(width, text, columns: columns)
+        let reaches = rowsThatReach(width, text, cells: cells)
         var out = tokensOut(text, tokens, &count)
         out = wrappedOut(out, reaches: reaches, &count)
         for rule in rules { out = rule.apply(out, &count) }
@@ -82,12 +83,17 @@ public enum Redact {
 
     // MARK: keys the terminal wrapped
 
-    /// For each row of the text, whether it reaches the pane's width, in the terminal's columns: a row of
-    /// wide characters fills the pane with half as many characters. Empty when no width is known.
-    static func rowsThatReach(_ width: Int, _ text: String, columns: (Unicode.Scalar) -> Int) -> [Bool] {
+    /// For each row of the text, whether it reaches the pane's width. That is not worked out from the text:
+    /// how many columns a character takes depends on the terminal and on the characters beside it. The pane
+    /// knows how many cells of each row are in use, and where it gave them (`cells`) they decide. Where it
+    /// did not, a row counts by its characters, which is right for text of one column each and misses a row
+    /// of wide characters. Empty when no width is known.
+    static func rowsThatReach(_ width: Int, _ text: String, cells: [Int]?) -> [Bool] {
         let full = width - wrapMargin
         guard full > 8 else { return [] }
-        return text.components(separatedBy: "\n").map { Columns.width($0, by: columns) >= full }
+        let rows = text.components(separatedBy: "\n")
+        if let cells, cells.count == rows.count { return cells.map { $0 >= full } }
+        return rows.map { $0.count >= full }
     }
 
     /// How far short of the pane's width a row may end and still be one the screen wrapped: a harness wraps
@@ -206,10 +212,11 @@ public enum Redact {
         Rule("bearer token", #"(?i)(\bauthorization\s*[:=]\s*["']?bearer\s+)(?!\[(?:dojo token|redacted))[A-Za-z0-9._~+/=\-]{8,}"#, keep: 1),
         Rule("url credentials", #"(?i)(\b[a-z][a-z0-9+.\-]{1,20}://)(?!\[(?:dojo token|redacted))[^\s:/@]+:[^\s@/]+(?=@)"#, keep: 1),
         // curl -u name:password, in the forms curl takes: after a blank or attached to -u, with no name, and
-        // in quotes, where the password runs to the closing quote and may have blanks in it. The name stays.
+        // in quotes, where the password runs to the closing quote and may have blanks in it. Without quotes
+        // it ends at a blank or at a shell's separator, which is never taken. The name stays.
         Rule("password", #"(?i)(\bcurl\b[^\n]*?[ \t](?:-u[ \t]*|--user[ \t=]+)'[^':\n]*:)(?!\[(?:dojo token|redacted))[^'\n]+(?=')"#, keep: 1),
         Rule("password", #"(?i)(\bcurl\b[^\n]*?[ \t](?:-u[ \t]*|--user[ \t=]+)"[^":\n]*:)(?!\[(?:dojo token|redacted))(?:[^"\\\n]|\\.)+(?=")"#, keep: 1),
-        Rule("password", #"(?i)(\bcurl\b[^\n]*?[ \t](?:-u[ \t]*|--user[ \t=]+)[^\s:"']*:)(?!\[(?:dojo token|redacted))[^\s"']+"#, keep: 1),
+        Rule("password", #"(?i)(\bcurl\b[^\n]*?[ \t](?:-u[ \t]*|--user[ \t=]+)[^\s:"']*:)(?!\[(?:dojo token|redacted))[^\s"';&|)]+"#, keep: 1),
         // NAME=value where the name says what it holds; not MAX_TOKENS, not a bare number (which also ends at
         // a shell's separator, and never takes it). The name may be the word alone (PASSWORD=, API_KEY=): the
         // part in front of it is optional (D35.4). A quoted value is read to its closing quote, whatever

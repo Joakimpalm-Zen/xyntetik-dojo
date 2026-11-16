@@ -20,6 +20,10 @@ public protocol PaneIO: AnyObject {
     /// How many columns wide the pane is, 0 when that is not known. `read` uses it to find a key that ran
     /// past the right edge into the next row (D35.4).
     var columns: Int { get }
+    /// For the last rows of `screenText()`, at least `last` of them that are not empty rows at its end: how
+    /// many of the terminal's cells each uses, up to its last character that is not a blank. The terminal
+    /// knows this and the text does not say it. Nil when the pane cannot tell.
+    func usedCells(last: Int) -> [Int]?
 }
 
 public struct PaneScreen: Equatable, Sendable {
@@ -40,6 +44,7 @@ public struct PaneScreen: Equatable, Sendable {
 public extension PaneIO {
     func liveScreen() -> PaneScreen { PaneScreen(lines: screenText().components(separatedBy: "\n")) }
     var columns: Int { 0 }
+    func usedCells(last: Int) -> [Int]? { nil }
 }
 
 /// The message bus: pane registry, per-pane state, queued messages and the four operations.
@@ -775,9 +780,12 @@ public final class Bus {
         guard let target = target(args) else { return noPane(args) }
         let requested = (args["lines"] as? NSNumber)?.intValue ?? 40
         let lines = min(max(requested, 1), Bus.maxReadLines)
-        let screen = Bus.lastLines(target.io?.screenText() ?? "", lines)
+        // the rows and, for each, how many of the terminal's cells it uses: taken in one step, so they are
+        // of the same screen
+        let picked = Bus.lastRows(target.io?.screenText() ?? "", cells: target.io?.usedCells(last: lines), lines)
+        let screen = picked.text
         // D21.2: secrets are taken out of what leaves the bus, always; the pane's own screen is untouched.
-        let clean = Redact.apply(screen, tokens: panes.map(\.token), width: target.io?.columns ?? 0)
+        let clean = Redact.apply(screen, tokens: panes.map(\.token), width: target.io?.columns ?? 0, cells: picked.cells)
         line["lines"] = screen.isEmpty ? 0 : screen.components(separatedBy: "\n").count
         line["redacted"] = clean.count
         return ok(["pane": target.name, "state": target.state.rawValue, "text": clean.text, "redacted": clean.count])
@@ -1128,13 +1136,27 @@ public final class Bus {
 
     /// The last `count` lines, trailing blanks removed.
     public static func lastLines(_ text: String, _ count: Int) -> String {
-        var lines = text.components(separatedBy: "\n").map { line in
+        lastRows(text, cells: nil, count).text
+    }
+
+    /// The last `count` rows of a pane's text, without the blanks at each row's end and the empty rows at
+    /// the text's end, and for each of them its used cells where the pane gave them. `cells` is for the
+    /// last rows of the text, however many the pane counted: the two are lined up from the end. A pane's
+    /// text ends each row with a line break, which leaves one empty piece after the last row; it is not a
+    /// row. Nil cells when any of the rows picked has none.
+    public static func lastRows(_ text: String, cells: [Int]?, _ count: Int) -> (text: String, cells: [Int]?) {
+        var pieces = text.components(separatedBy: "\n")
+        if text.hasSuffix("\n") { pieces.removeLast() }
+        var rows: [(text: String, cells: Int?)] = pieces.enumerated().map { i, line in
             var l = Substring(line)
             while let c = l.last, c == " " || c == "\r" || c == "\t" { l = l.dropLast() }
-            return String(l)
+            let from = cells.map { i - (pieces.count - $0.count) }
+            return (String(l), from.flatMap { $0 >= 0 ? cells?[$0] : nil })
         }
-        while let last = lines.last, last.isEmpty { lines.removeLast() }
-        return lines.suffix(count).joined(separator: "\n")
+        while let last = rows.last, last.text.isEmpty { rows.removeLast() }
+        let picked = rows.suffix(count)
+        let used = picked.compactMap(\.cells)
+        return (picked.map(\.text).joined(separator: "\n"), cells != nil && used.count == picked.count ? used : nil)
     }
 
     static func newToken() -> String {

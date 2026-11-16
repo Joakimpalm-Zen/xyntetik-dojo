@@ -6,6 +6,10 @@ final class MockIO: PaneIO {
     var written: [[UInt8]] = []
     var bracketedPasteEnabled = false
     var columns = 0
+    /// The used cells of the screen's rows, for a test of what `read` does with them; nil as for a pane
+    /// that cannot tell.
+    var cells: [Int]?
+    func usedCells(last: Int) -> [Int]? { cells }
     /// The line the terminal's cursor is on, for a test of that evidence; nil as for a pane that cannot say.
     var cursorLine: Int?
     /// Whether the terminal shows its alternate buffer; nil as for a pane that cannot say.

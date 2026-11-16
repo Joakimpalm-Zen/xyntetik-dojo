@@ -27,31 +27,32 @@ public enum Delivery {
 
     /// The message as it appears in the target terminal. A harness that puts its own `[from: ...]` tag
     /// at the front of its text loses it: the tag is the bus's, from the token, never from the text.
-    /// `columns`: how many columns the terminal gives a character, the terminal's own answer in the app.
-    public static func line(from sender: String, text: String, columns: (Unicode.Scalar) -> Int = Columns.of) -> String {
+    public static func line(from sender: String, text: String) -> String {
         // A later line of the text that starts like a tag would read as another sender's message: it is
         // set in by one space, so only the bus writes a line that begins with [from:.
         let body = stripLeadingTags(text).split(separator: "\n", omittingEmptySubsequences: false)
-            .enumerated().map { i, line in i > 0 ? setIn(line, columns: columns) : String(line) }
+            .enumerated().map { i, line in i > 0 ? setIn(line) : String(line) }
             .joined(separator: "\n")
         return "[from: \(sender)] \(body)"
     }
 
     static let tagStart = "[from:"
 
-    /// A later line as the bus types it: one that SHOWS as beginning with a tag is set in by one space
-    /// (D35.3). The test is made on the line as the screen shows it, without the characters the terminal
-    /// gives no column: a zero-width space or a word joiner, a combining mark, a letter that is drawn into
-    /// the cell before it. Such a character in front of the tag, or inside it, left the line looking like
-    /// the bus's own. The indent is the protection, so the characters stay where they were. A line that
-    /// begins with a blank that takes room is set in already and stays as it is.
-    static func setIn(_ line: Substring, columns: (Unicode.Scalar) -> Int = Columns.of) -> String {
-        var shown = String.UnicodeScalarView()
-        for scalar in line.unicodeScalars where columns(scalar) != 0 {
-            shown.append(scalar)
-            if shown.count == tagStart.unicodeScalars.count { break }
+    /// A later line as the bus types it: one that could show as beginning with a tag is set in by one space
+    /// (D35.3). What a terminal does with a character that is not plain ASCII at the start of a line, or
+    /// inside the tag, cannot be known from here: it may draw it into the cell before, give it no column, or
+    /// drop it. So the test asks nothing about widths. It reads the line's start without every character
+    /// that is not printable ASCII, and if what is left begins with a tag the line is set in. Anything
+    /// invisible, combining, dropped or zero-width, before the tag or inside it, ends in an indent. The
+    /// cost is one space a line did not strictly need, for one like "é[from: x]". The characters stay where
+    /// they were: the indent is the protection. A line that begins with a plain space is set in already.
+    static func setIn(_ line: Substring) -> String {
+        var start = ""
+        for scalar in line.unicodeScalars where scalar.value >= 0x20 && scalar.value <= 0x7E {
+            start.unicodeScalars.append(scalar)
+            if start.unicodeScalars.count == tagStart.unicodeScalars.count { break }
         }
-        return String(shown) == tagStart ? " " + line : String(line)
+        return start == tagStart ? " " + line : String(line)
     }
 
     static func stripLeadingTags(_ text: String) -> String {

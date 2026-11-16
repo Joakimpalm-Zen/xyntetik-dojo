@@ -31,13 +31,16 @@ import Testing
     // MARK: 2 and 3, a key the screen wrapped
 
     /// A row of wide characters fills 80 columns with 44 characters; the key that starts on it goes on in
-    /// the next row.
-    @Test func aRowOfWideCharactersReachesThePanesWidthInColumns() {
+    /// the next row. The pane says how many cells each row uses.
+    @Test func aRowOfWideCharactersReachesThePanesWidthByItsCells() {
         let row1 = String(repeating: "界", count: 36) + " gl" + "pat-A"
         let row2 = "  " + String(repeating: "A", count: 19)
-        let r = redact(row1 + "\n" + row2 + "\nnext", width: 80, tokens: [])
+        let text = row1 + "\n" + row2 + "\nnext"
+        let r = Redact.apply(text, tokens: [], width: 80, cells: [80, 21, 4])
         #expect(r.text == String(repeating: "界", count: 36) + " [redacted: gitlab token]\n  \nnext")
         #expect(r.count == 1)
+        // the limit where no pane gave the cells: the row counts by its 44 characters and is not seen as full
+        #expect(Redact.apply(text, tokens: [], width: 80).count == 0)
     }
 
     /// One of the bus's own tokens on the row is replaced first, which makes the row shorter than the pane

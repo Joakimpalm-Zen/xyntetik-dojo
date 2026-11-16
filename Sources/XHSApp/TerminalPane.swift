@@ -165,6 +165,17 @@ final class TerminalPane: TerminalView, PaneIO {
 
     var columns: Int { terminalDimensions.cols }
 
+    /// For the screen's rows and `last` rows of the scrollback before them, how many cells each uses up to
+    /// its last character that is not a blank (D35.4). The terminal's own count: a wide character fills two
+    /// cells, a flag is two characters in one cell of two, a mark sits in the cell of its letter. These are
+    /// the last rows of `screenText()`, row for row.
+    func usedCells(last: Int) -> [Int]? {
+        guard let snapshot = terminalContentSnapshot(region: .history(maximumScrollbackRows: max(last, 0))) else { return nil }
+        return snapshot.rows.map { row in
+            row.cells.lastIndex { !$0.text.isEmpty && $0.text != "\u{0}" && $0.text != " " }.map { $0 + max(row.cells[$0].width, 1) } ?? 0
+        }
+    }
+
     /// The live screen in one step: the rows as the terminal holds them, with a row it wrapped joined to the
     /// one it continues, and the line the cursor is on. The bus reads this just before it types (D35.1).
     func liveScreen() -> PaneScreen {

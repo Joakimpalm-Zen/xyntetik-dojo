@@ -104,8 +104,6 @@ final class AppModel: NSObject, ObservableObject {
         smoke = Headless.isRequested
         loginShell = AppModel.userShell()
         super.init()
-        // the core asks the terminal how wide a character is (D35.3, D35.4)
-        TerminalColumns.install()
         if let wanted, wanted != port { problem = "DOJO_PORT is \(wanted); a port is 1 to 65535. Using \(port)." }
         // The tools (and the move from ~/.xhs) come first, so the recent lists are read from the right folder.
         if !smoke, let trouble = ToolInstall.run() {
