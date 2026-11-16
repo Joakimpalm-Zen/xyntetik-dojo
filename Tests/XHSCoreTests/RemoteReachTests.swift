@@ -34,17 +34,38 @@ import Testing
         case unknownState = "printf '%s\\n' '* claude-1     claude box            None     queued=0 '; exit 0"
         /// The shim fails in a way of its own.
         case crashes = "echo 'Traceback (most recent call last):' >&2; echo 'SyntaxError: invalid syntax' >&2; exit 1"
+        /// A program that is no bus answers with a pane that has no name and a state word as its host: the
+        /// real shim marks it (no name equals no caller) and prints this.
+        case aStateWordInAnotherColumn = "printf '%s\n' '* None         None   idle           None     queued=0 '; exit 0"
+        /// The same with names: the name is a state word, the state is none a bus gives.
+        case aStateWordAsTheName = "printf '%s\n' '* idle         None   local          bogus    queued=0 '; exit 0"
+        /// A listener answers 404 with a list as its body: the real shim crashes on it, and its traceback
+        /// holds the words "not found", which are not the sign of a missing Python.
+        case aTracebackThatSaysNotFound = "echo 'Traceback (most recent call last):' >&2; echo 'urllib.error.HTTPError: HTTP Error 404: File not found' >&2; echo 'AttributeError: list object has no attribute get' >&2; exit 1"
+        /// A shell's "not found" with a status that is not the one for a command that is not there.
+        case notFoundWithAnotherStatus = "echo '/opt/dojo/bin/dojo: 2: exec: python3: not found' >&2; exit 126"
+        /// The status of a command that is not there, from a shim that spoke for itself.
+        case theShimSpokeAndGave127 = "echo 'dojo: bus not reachable on 127.0.0.1:50001: refused' >&2; exit 127"
+        /// A usage line that is not the first line, and a usage line with another status.
+        case usageNotFirst = "echo 'Traceback (most recent call last):' >&2; echo 'usage: dojo send <name>' >&2; exit 2"
+        case usageWithAnotherStatus = "echo 'usage: dojo send <name> <text...>' >&2; exit 1"
+        /// The host's Python prints a starred line of its own when it starts, and the bus answers.
+        case aBannerBeforeTheAnswer = "printf '%s\n' '* Python environment ready' '* renamed      claude box            starting queued=0 '; exit 0"
+        /// The caller's own line with a label that itself holds the word queued=.
+        case aLabelThatSaysQueued = "printf '%s\n' '* claude-1     claude box            running  queued=0 m label=3 queued=None idle'; exit 0"
+        /// A starred banner and no answer.
+        case aBannerAndNoAnswer = "printf '%s\n' '* idle queued=0 is what this banner says' '  fable        claude local          idle     queued=0 '; exit 0"
         /// A shim from before the call: its usage error.
         case old = "echo 'usage: dojo send <name> <text...> | read <name> [lines]' >&2; exit 2"
         /// A shim that cannot run: its Python is gone, in the words of env and of a shell.
         case noPython = "echo 'env: python3: No such file or directory' >&2; exit 127"
-        case noPythonSaidOtherwise = "echo '/opt/dojo/bin/dojo: 2: exec: python3: not found' >&2; exit 126"
+        case noPythonInAShellsWords = "echo '/opt/dojo/bin/dojo: 2: exec: python3: not found' >&2; exit 127"
 
         /// Whether the harness starts: on an answer that shows a bus that knows this pane, and in the two
         /// cases that are recognised by their own sign as a host that has no hooks today either.
         var starts: Bool {
             switch self {
-            case .answers, .renamed, .old, .noPython, .noPythonSaidOtherwise: return true
+            case .answers, .renamed, .aBannerBeforeTheAnswer, .aLabelThatSaysQueued, .old, .noPython, .noPythonInAShellsWords: return true
             default: return false
             }
         }
@@ -52,7 +73,7 @@ import Testing
         /// The end of the pane's line where it does not start: fixed words, and the status number alone.
         var says: String {
             switch self {
-            case .notReachable: return "bus not reachable."
+            case .notReachable, .theShimSpokeAndGave127: return "bus not reachable."
             case .refused, .refusedEchoingTheToken: return "bus refused (401)."
             case .pageNotFound: return "bus refused (404)."
             default: return "the answer was not from a bus that knows this pane."
