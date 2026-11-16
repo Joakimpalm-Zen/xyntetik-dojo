@@ -516,6 +516,8 @@ class AgyHookTest(unittest.TestCase):
         self.assertEqual(self.hook(self.event("PreToolUse", stepIdx=9, toolCall={"id": "t2", "name": "ask_question"})),
                          {"decision": "allow"})
         self.assertEqual([e["hook_event_name"] for e in self.posted()], ["PermissionRequest"])
+        # never an allow for another tool, which would skip the owner's prompt
+        self.assertEqual(self.hook(self.event("PreToolUse", stepIdx=6, toolCall={"id": "t1", "name": "run_command"})), {})
 
     def test_events_the_bus_has_no_use_for_post_nothing(self):
         for name in ("PostInvocation", "SomethingNew"):

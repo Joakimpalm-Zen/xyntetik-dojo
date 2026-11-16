@@ -506,7 +506,9 @@ def agy_plugin_files(home):
     hooks = {"dojo": {
         "SessionStart": [handler],
         "PreInvocation": [handler],
-        "PreToolUse": [{"matcher": "*", "hooks": [handler]}],
+        # The question alone: agy stops a tool whose PreToolUse hook answers without a decision (a live run
+        # on 2026-11-16 had the dojo tool refused so), and Dojo has no say over any other tool.
+        "PreToolUse": [{"matcher": "ask_question", "hooks": [handler]}],
         "PostToolUse": [{"matcher": "*", "hooks": [handler]}],
         "Stop": [handler],
     }}
@@ -715,6 +717,11 @@ def agy_hook(event, env):
         if isinstance(event.get("modelName"), str):
             posted["model"] = event["modelName"]
     reply = {}
+    if name == "PreToolUse" and posted and posted["hook_event_name"] == "PermissionRequest":
+        # An answer without a decision stops the tool: the question is let through, as agy would. Never any
+        # other tool: the plugin asks about the question alone, and an allow here would skip the owner's
+        # permission prompt. Should another tool come, the answer stays empty, which stops it.
+        reply = {"decision": "allow"}
     # The pane's peer rule, as a system step at the start of the conversation: agy takes no system prompt on
     # its command line. Only in a pane, where the launch line set the variable.
     rule = env.get(AGY_RULE_VARIABLE)
