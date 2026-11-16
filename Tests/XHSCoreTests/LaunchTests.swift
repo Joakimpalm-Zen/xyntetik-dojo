@@ -44,10 +44,13 @@ import Testing
         let ssh = shellArgs(plan.args[3], home: home)
         #expect(Array(ssh.prefix(9)) == ["ssh", "-t", "-R", "7788:127.0.0.1:7788", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=3", "user@box"])
         #expect(ssh.count == 10)
-        // On the remote host: the login shell, then env with the pane's variables, then the harness.
+        // On the remote host: the login shell, then the pane's check of its way to the bus (D35.2), then env
+        // with the pane's variables, then the harness.
         let remote = shellArgs(ssh[9], home: "/remote/home")
         #expect(Array(remote.prefix(4)) == ["/bin/remote-shell", "-l", "-i", "-c"])
-        let harness = shellArgs(remote[4], home: "/remote/home")
+        #expect(reachArgs(remote[4], home: "/remote/home") == ["env", "DOJO_PANE=codex-2", "DOJO_PORT=7788", "DOJO_TOKEN=tok",
+                                                               "PATH=/remote/home/.dojo/bin:/usr/bin:/bin", "/bin/sh", "-c", Launcher.reachCheck])
+        let harness = harnessArgs(remote[4], home: "/remote/home")
         #expect(Array(harness.prefix(6)) == ["env", "DOJO_PANE=codex-2", "DOJO_PORT=7788", "DOJO_TOKEN=tok",
                                              "PATH=/remote/home/.dojo/bin:/usr/bin:/bin", "codex"])
         #expect(Array(harness[6...7]) == ["--dangerously-bypass-hook-trust", "-c"])
@@ -55,8 +58,8 @@ import Testing
         // the tick reaches a host the same way
         let ticked = Launcher.plan(kind: .codex, paneName: "codex-2", host: "user@box", port: 7788, token: "tok",
                                    runnerModel: nil, loginShell: "/bin/zsh", unrestricted: true)
-        let tickedHarness = shellArgs(shellArgs(shellArgs(ticked.args[3], home: home)[9], home: "/remote/home")[4],
-                                      home: "/remote/home")
+        let tickedHarness = harnessArgs(shellArgs(shellArgs(ticked.args[3], home: home)[9], home: "/remote/home")[4],
+                                        home: "/remote/home")
         #expect(Array(tickedHarness[6...8]) == ["--yolo", "--dangerously-bypass-hook-trust", "-c"])
     }
 
@@ -103,8 +106,15 @@ import Testing
         // bash.exe then runs the line a POSIX host's login shell gets: the same words, quoted the POSIX way
         // here and the way fish also reads there (D32).
         let posixInner = shellArgs(shellArgs(posix.args[3], home: home)[9], home: "/remote/home")[4]
-        #expect(shellArgs(try #require(Launcher.windowsInnerCommand(remote)), home: "/c/Users/me") == shellArgs(posixInner, home: "/c/Users/me"))
-        let harness = shellArgs(try #require(Launcher.windowsInnerCommand(remote)), home: "/c/Users/me")
+        let windowsInner = try #require(Launcher.windowsInnerCommand(remote))
+        #expect(harnessArgs(windowsInner, home: "/c/Users/me") == harnessArgs(posixInner, home: "/c/Users/me"))
+        // the check is the same but for the shell that reads it: by its full path on a POSIX host
+        let windowsCheck = try #require(reachArgs(windowsInner, home: "/c/Users/me"))
+        let posixCheck = try #require(reachArgs(posixInner, home: "/c/Users/me"))
+        #expect(windowsCheck.filter { $0 != "sh" } == posixCheck.filter { $0 != "/bin/sh" })
+        #expect(windowsCheck.contains("sh") && posixCheck.contains("/bin/sh"))
+        #expect(windowsCheck.last == Launcher.reachCheck)
+        let harness = harnessArgs(windowsInner, home: "/c/Users/me")
         #expect(Array(harness.prefix(6)) == ["env", "DOJO_PANE=claude-3", "DOJO_PORT=7788", "DOJO_TOKEN=tok",
                                              "PATH=/c/Users/me/.dojo/bin:/usr/bin:/bin", "claude"])
         let settings = try #require(harness.firstIndex(of: "--settings"))
@@ -140,10 +150,14 @@ import Testing
         #expect(remote.directory == nil)
         let inner = shellArgs(shellArgs(remote.args[3], home: home)[9], home: "/remote/home")[4]
         // quoted so that fish reads it as sh does (D32): the apostrophe stands in double quotes
-        #expect(inner.hasPrefix(#"cd '/srv/it'"'"'s here' && exec env "#))
+        // then the pane's check of its way to the bus, then the harness
+        #expect(inner.hasPrefix(#"cd '/srv/it'"'"'s here' && env "#))
+        #expect(inner.components(separatedBy: " && exec env ").count == 2)
         let windows = Launcher.plan(kind: .codex, paneName: "codex-1", host: "me@box", port: 7788, token: "t",
                                     runnerModel: nil, loginShell: "/bin/zsh", remoteShell: .windows, directory: #"C:\Users\me\repo"#)
-        #expect(Launcher.windowsInnerCommand(shellArgs(windows.args[3], home: home)[9])?.hasPrefix(#"cd 'C:\Users\me\repo' && exec env "#) == true)
+        let windowsInner = Launcher.windowsInnerCommand(shellArgs(windows.args[3], home: home)[9]) ?? ""
+        #expect(windowsInner.hasPrefix(#"cd 'C:\Users\me\repo' && env "#))
+        #expect(windowsInner.components(separatedBy: " && exec env ").count == 2)
     }
 
     @Test func recentHostsRememberTheLatestFirst() throws {
