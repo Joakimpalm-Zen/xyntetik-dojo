@@ -37,7 +37,12 @@ import Testing
         for mode in Self.modes {
             let screen = [Self.rule, "> " + mode, Self.rule, Self.status].joined(separator: "\n")
             #expect(Composer.shownEmpty(kind: .agy, screen: screen), "\(mode)")
-            #expect(!Composer.shownEmpty(kind: .agy, screen: [Self.rule, "> " + mode + " and more", Self.rule].joined(separator: "\n")))
+            // the owner's text after a mode sentence is a draft, after one space or two (the second read of #113:
+            // the padding that marks a hint at Codex's right edge is no sign of an empty agy composer)
+            for typed in [" and more", "  explain this", "   explain this"] {
+                #expect(!Composer.shownEmpty(kind: .agy, screen: [Self.rule, "> " + mode + typed, Self.rule, Self.status].joined(separator: "\n")),
+                        "\(mode)\(typed)")
+            }
             let rig = Rig(kind: .agy)
             rig.io.screen = Self.draft
             rig.bus.noteOwnerInput("worker", .text)
@@ -48,6 +53,20 @@ import Testing
             rig.wait(5)
             #expect(rig.io.typed == "[from: fable] report\r", "\(mode)")
         }
+    }
+
+    /// The owner's unsent draft begins with agy's mode sentence and two spaces: the bus holds, and types
+    /// nothing onto it, however long the owner is quiet (the second read of #113, as it reproduced it).
+    @Test func aDraftThatBeginsWithAModeSentenceIsHeld() {
+        let draft = [Self.rule, "> " + Self.modes[0] + "  explain this", Self.rule, Self.status].joined(separator: "\n")
+        let rig = Rig(kind: .agy)
+        rig.io.screen = draft
+        rig.bus.noteOwnerInput("worker", .text)
+        rig.send("report")
+        rig.wait(30)
+        #expect(rig.io.written.isEmpty)
+        #expect(rig.bus.info("worker")?.draft == true)
+        #expect(rig.bus.info("worker")?.queued == 1)
     }
 
     @Test func anIdleComposerIsTypedIntoAndSent() {
