@@ -216,7 +216,9 @@ public enum Composer {
         let standIn = Composer.standIn(for: kind)
         /// The composer's rows from `at` to `end`, without the mark.
         func rows(to end: Int) -> [String] { [first] + foot[(at + 1)..<max(end, at + 1)].map(\.text) }
-        func arrived(_ rows: [String]) -> Bool { pasted.map { Composer.arrived($0, rows: rows, standIn: standIn, before: before) } ?? true }
+        func arrived(_ rows: [String]) -> Bool {
+            pasted.map { Composer.arrived($0, rows: rows, standIn: standIn, before: before, partial: kind == .agy) } ?? true
+        }
         let end: Int        // the first row under the composer: its footer starts here
         var block: Int      // the first row that is not the composer's own text
         switch kind {
@@ -267,9 +269,54 @@ public enum Composer {
 
     /// `holds`, against the look before the paste: a stand-in that was in the composer already says nothing
     /// about this paste, so it counts only when the composer's row has changed.
-    static func arrived(_ pasted: String, rows: [String], standIn: String, before: Look?) -> Bool {
+    static func arrived(_ pasted: String, rows: [String], standIn: String, before: Look?, partial: Bool = false) -> Bool {
         if rows.count == 1, isStandIn(rows[0], standIn) { return rows[0] != before?.composer }
+        if partial, let shown = shownPart(rows) { return shown.isPart(of: pasted) }
         return sameText(rows.joined(), pasted)
+    }
+
+    /// What a composer taller than the harness lets it be shows of its text: agy (D38, a pty on 2026-11-16)
+    /// writes "↑ N more lines" on the composer's first row and "↓ N more lines" on its last for the rows it
+    /// does not show. Nil when the rows carry neither.
+    struct ShownPart {
+        var text: String
+        var above: Bool
+        var below: Bool
+
+        /// Whether the rows shown are this part of `pasted`, blanks apart: its end when only rows above are
+        /// hidden, its start when only rows below are, somewhere inside it when both are. At least `editedRun`
+        /// characters of it, so that a row or two of punctuation says nothing.
+        func isPart(of pasted: String) -> Bool {
+            let whole = Composer.bare(pasted), part = Composer.bare(text)
+            guard part.count >= Composer.editedRun else { return false }
+            switch (above, below) {
+            case (true, false): return whole.hasSuffix(part)
+            case (false, true): return whole.hasPrefix(part)
+            default: return whole.contains(part)
+            }
+        }
+    }
+
+    static func shownPart(_ rows: [String]) -> ShownPart? {
+        var rows = rows
+        let above = rows.first.map { isMoreLines($0, "↑") } ?? false
+        if above { rows.removeFirst() }
+        let below = rows.last.map { isMoreLines($0, "↓") } ?? false
+        if below { rows.removeLast() }
+        guard above || below else { return nil }
+        return ShownPart(text: rows.joined(), above: above, below: below)
+    }
+
+    /// "↑ 6 more lines", "↓ 1 more line": agy's word for rows of its composer it does not show.
+    static func isMoreLines(_ row: String, _ arrow: String) -> Bool {
+        let words = row.trimmingCharacters(in: .whitespaces).split(separator: " ")
+        return words.count == 4 && words[0] == arrow && words[1].allSatisfy(\.isNumber)
+            && words[2] == "more" && (words[3] == "lines" || words[3] == "line")
+    }
+
+    /// A text without its blanks and line breaks, which a harness lays out as it likes.
+    static func bare(_ text: String) -> String {
+        String(String.UnicodeScalarView(text.unicodeScalars.filter { !$0.properties.isWhitespace }))
     }
 
     static func isStandIn(_ row: String, _ standIn: String) -> Bool { row.hasPrefix(standIn) && row.hasSuffix("]") }
