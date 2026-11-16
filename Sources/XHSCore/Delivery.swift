@@ -46,6 +46,9 @@ public enum Delivery {
     /// invisible, combining, dropped or zero-width, before the tag or inside it, ends in an indent. The
     /// cost is one space a line did not strictly need, for one like "é[from: x]". The characters stay where
     /// they were: the indent is the protection. A line that begins with a plain space is set in already.
+    /// The limit: a line whose first letter is of a right-to-left script is drawn by the terminal from the
+    /// right, and a tag later in it shows first. A LEFT-TO-RIGHT MARK in front would turn that, but SwiftTerm
+    /// drops the mark before it reaches a cell, so the bus sends none (D103ThirdReviewAppTests).
     static func setIn(_ line: Substring) -> String {
         var start = ""
         for scalar in line.unicodeScalars where scalar.value >= 0x20 && scalar.value <= 0x7E {

@@ -22,7 +22,9 @@ public protocol PaneIO: AnyObject {
     var columns: Int { get }
     /// For the last rows of `screenText()`, at least `last` of them that are not empty rows at its end: how
     /// many of the terminal's cells each uses, up to its last character that is not a blank. The terminal
-    /// knows this and the text does not say it. Nil when the pane cannot tell.
+    /// knows this and the text does not say it. Nil when the pane cannot tell. Within the pane's width only:
+    /// a row the terminal kept past its right edge after a narrowing is in `screenText()` whole, and its
+    /// count stops at the edge, so a row can have more characters than this says (`Redact.rowsThatReach`).
     func usedCells(last: Int) -> [Int]?
 }
 
@@ -780,8 +782,9 @@ public final class Bus {
         guard let target = target(args) else { return noPane(args) }
         let requested = (args["lines"] as? NSNumber)?.intValue ?? 40
         let lines = min(max(requested, 1), Bus.maxReadLines)
-        // the rows and, for each, how many of the terminal's cells it uses: taken in one step, so they are
-        // of the same screen
+        // the rows and, for each, how many of the terminal's cells it uses within the width: two calls, since
+        // the terminal gives no row's cells past its width (see `PaneIO.usedCells`). Redact counts a row by
+        // the larger of that and its characters, so output between the two calls can only join more rows.
         let picked = Bus.lastRows(target.io?.screenText() ?? "", cells: target.io?.usedCells(last: lines), lines)
         let screen = picked.text
         // D21.2: secrets are taken out of what leaves the bus, always; the pane's own screen is untouched.

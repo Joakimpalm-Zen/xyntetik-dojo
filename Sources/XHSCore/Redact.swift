@@ -83,16 +83,20 @@ public enum Redact {
 
     // MARK: keys the terminal wrapped
 
-    /// For each row of the text, whether it reaches the pane's width. That is not worked out from the text:
-    /// how many columns a character takes depends on the terminal and on the characters beside it. The pane
-    /// knows how many cells of each row are in use, and where it gave them (`cells`) they decide. Where it
-    /// did not, a row counts by its characters, which is right for text of one column each and misses a row
-    /// of wide characters. Empty when no width is known.
+    /// For each row of the text, whether it reaches the pane's width. That is not worked out from the text
+    /// alone: how many columns a character takes depends on the terminal and on the characters beside it.
+    /// A row counts by its characters, which is right for text of one column each, and where the pane gave
+    /// how many of the row's cells it uses within its width (`cells`), by that count where it is the larger,
+    /// as it is for a row of wide characters. The larger of the two, because they are not the same row
+    /// everywhere: after a narrowing the terminal keeps a row's cells past the new right edge, the text has
+    /// them, and the terminal's count stops at the edge (SwiftTerm 1.99.1 gives the cells of a row only up to
+    /// the width, and the stored row is not public). The cost: where that part past the edge holds wide
+    /// characters, it counts by its characters. Empty when no width is known.
     static func rowsThatReach(_ width: Int, _ text: String, cells: [Int]?) -> [Bool] {
         let full = width - wrapMargin
         guard full > 8 else { return [] }
         let rows = text.components(separatedBy: "\n")
-        if let cells, cells.count == rows.count { return cells.map { $0 >= full } }
+        if let cells, cells.count == rows.count { return zip(cells, rows).map { max($0, $1.count) >= full } }
         return rows.map { $0.count >= full }
     }
 
@@ -213,10 +217,11 @@ public enum Redact {
         Rule("url credentials", #"(?i)(\b[a-z][a-z0-9+.\-]{1,20}://)(?!\[(?:dojo token|redacted))[^\s:/@]+:[^\s@/]+(?=@)"#, keep: 1),
         // curl -u name:password, in the forms curl takes: after a blank or attached to -u, with no name, and
         // in quotes, where the password runs to the closing quote and may have blanks in it. Without quotes
-        // it ends at a blank or at a shell's separator, which is never taken. The name stays.
+        // it ends at a blank or at a shell's separator, which is never taken; a backslash and the character
+        // after it are part of it, as the shell reads them ("\;secret" gives curl ";secret"). The name stays.
         Rule("password", #"(?i)(\bcurl\b[^\n]*?[ \t](?:-u[ \t]*|--user[ \t=]+)'[^':\n]*:)(?!\[(?:dojo token|redacted))[^'\n]+(?=')"#, keep: 1),
         Rule("password", #"(?i)(\bcurl\b[^\n]*?[ \t](?:-u[ \t]*|--user[ \t=]+)"[^":\n]*:)(?!\[(?:dojo token|redacted))(?:[^"\\\n]|\\.)+(?=")"#, keep: 1),
-        Rule("password", #"(?i)(\bcurl\b[^\n]*?[ \t](?:-u[ \t]*|--user[ \t=]+)[^\s:"']*:)(?!\[(?:dojo token|redacted))[^\s"';&|)]+"#, keep: 1),
+        Rule("password", #"(?i)(\bcurl\b[^\n]*?[ \t](?:-u[ \t]*|--user[ \t=]+)[^\s:"']*:)(?!\[(?:dojo token|redacted))(?:\\.|[^\s"';&|)\\])+"#, keep: 1),
         // NAME=value where the name says what it holds; not MAX_TOKENS, not a bare number (which also ends at
         // a shell's separator, and never takes it). The name may be the word alone (PASSWORD=, API_KEY=): the
         // part in front of it is optional (D35.4). A quoted value is read to its closing quote, whatever

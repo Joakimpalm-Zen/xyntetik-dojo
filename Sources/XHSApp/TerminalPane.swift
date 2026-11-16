@@ -168,7 +168,9 @@ final class TerminalPane: TerminalView, PaneIO {
     /// For the screen's rows and `last` rows of the scrollback before them, how many cells each uses up to
     /// its last character that is not a blank (D35.4). The terminal's own count: a wide character fills two
     /// cells, a flag is two characters in one cell of two, a mark sits in the cell of its letter. These are
-    /// the last rows of `screenText()`, row for row.
+    /// the last rows of `screenText()`, row for row, but up to the width only: SwiftTerm 1.99.1 copies a row's
+    /// cells no further than that (TerminalContentSnapshot), and the stored row that `screenText()` reads
+    /// whole, past the edge after a narrowing, is not public. So the text and these counts are two calls.
     func usedCells(last: Int) -> [Int]? {
         guard let snapshot = terminalContentSnapshot(region: .history(maximumScrollbackRows: max(last, 0))) else { return nil }
         return snapshot.rows.map { row in

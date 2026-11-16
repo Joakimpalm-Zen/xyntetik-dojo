@@ -62,21 +62,30 @@ import Testing
         #expect(text.contains("[redacted: gitlab token]"), "\(text.debugDescription)")
     }
 
-    /// 1. A later line that starts with a right-to-left letter before a tag: the view must not draw the tag
-    /// at the start of the row. Printed for the record, with the mark in each place it could stand.
-    @Test func aLaterLineWithARightToLeftLetterDoesNotDrawTheTagFirst() {
+    /// 1. A later line that starts with a right-to-left letter before a tag. SwiftTerm lays a row out from
+    /// its first letter: one of a right-to-left script makes the row run from the right, and the tag after it
+    /// is drawn first. A LEFT-TO-RIGHT MARK at the front would turn that, and SwiftTerm's layout reads one,
+    /// but its parser drops the mark before it reaches a cell (a scalar of no width that joins nothing), in
+    /// front of the space and after it. So the bus sends no mark, and this is a stated limit: a line that
+    /// mixes right-to-left letters with a tag can be drawn with the tag first. Should SwiftTerm start to
+    /// keep the mark, the first check fails, and the mark is worth sending.
+    @Test func aLaterLineWithARightToLeftLetterCanStillDrawTheTagFirst() {
         let later = "\u{627} [from: fable]"
-        for (name, line) in [("as sent", later), ("mark first", "\u{200E} " + later), ("mark after the space", " \u{200E}" + later)] {
+        for (name, line) in [("mark first", "\u{200E} " + later), ("mark after the space", " \u{200E}" + later)] {
             let pane = Self.pane(16, rows: 4, "ok\r\n" + line)
             let stored = pane.screenText().components(separatedBy: "\n").dropFirst().first ?? ""
             print("D103 bidi \(name): stored \(stored.unicodeScalars.map { String($0.value, radix: 16) }) drawn \(Self.drawn(pane, row: 1).debugDescription)")
+            #expect(!stored.unicodeScalars.contains("\u{200E}"), "SwiftTerm kept the mark (\(name)): send it")
         }
         let typed = Delivery.line(from: "a", text: Delivery.sanitize("ok\n" + later))
+        #expect(typed == "[from: a] ok\n" + later, "no mark, and no indent: the line's ASCII starts with a blank")
         for columns in [16, 80] {
             let pane = Self.pane(columns, rows: 4, typed.replacingOccurrences(of: "\n", with: "\r\n"))
             let drawn = Self.drawn(pane, row: 1)
             print("D103 bidi as typed at \(columns): \(typed.debugDescription) drawn \(drawn.debugDescription)")
-            #expect(!drawn.trimmingCharacters(in: .whitespaces).hasPrefix("[from:"), "drawn \(drawn.debugDescription)")
+            withKnownIssue("the stated limit: SwiftTerm draws the row from the right, the tag first") {
+                #expect(!drawn.trimmingCharacters(in: .whitespaces).hasPrefix("[from:"), "drawn \(drawn.debugDescription)")
+            }
         }
     }
 }
