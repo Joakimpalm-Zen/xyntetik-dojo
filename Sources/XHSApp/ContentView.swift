@@ -810,8 +810,9 @@ struct PickerSheet: View {
         case .pi:
             return "pi has no permission prompts: it runs its tools without asking, ticked or not."
         case .agy:
-            return "Unticked, Antigravity keeps its own permission prompts. Ticked, it approves every tool request "
-                + "without asking. Remembered for Antigravity."
+            return "Unticked, Antigravity keeps its own permission prompts, and in its Auto mode runs shell commands in its "
+                + "sandbox. Ticked, it approves every tool request without asking and runs commands outside the sandbox. "
+                + "Remembered for Antigravity."
         case .runner, .shell:
             return ""
         }
