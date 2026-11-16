@@ -23,13 +23,13 @@
 </p>
 <p align="center"><sub>A roll call: one session asks five others to report over the bus, and they do; Runner serves the pi pane's model in the strip at the bottom.</sub></p>
 
-Claude Code, Codex and local models in one window, on this Mac or over SSH,
+Claude Code, Codex, Antigravity and local models in one window, on this Mac or over SSH,
 talking to each other on a bus that runs on your Mac. One asks another for a
 review, hears when it is done and reads the answer. Mark one as the coordinator
 and the others become its workers. You see every message land, and no message
 ever answers a prompt for you.
 
-- **Every agent in one window.** Claude Code, Codex and pi side by side in real terminals, on this Mac or on a Linux, Mac or Windows host over SSH. Press plus to add one; each pane also has a tab of its own for a close look.
+- **Every agent in one window.** Claude Code, Codex, Google's Antigravity CLI and pi side by side in real terminals, on this Mac or on a Linux, Mac or Windows host over SSH. Press plus to add one; each pane also has a tab of its own for a close look.
 - **They talk, you see it.** `dojo send codex-1 "review the diff"` lands in that terminal as typed input, tagged with who sent it. `dojo watch` tells a pane when another finishes, and `dojo read` shows another pane's screen.
 - **You stay in charge.** A message never answers a permission prompt and never sends the text you have half typed. The sender comes from the pane, never from the text, and what one pane reads of another has the keys and passwords it recognises taken out. These rules guard against a confused agent, not a hostile one: every pane runs as you, and a pane that asks before it acts can send work to one that does not ([the limits](docs/guide.md#safety-rules)).
 - **It tells you when you are needed.** Each pane shows whether it is working, idle or waiting on you. A prompt or a finished turn in a pane you cannot see raises a Mac notification and counts on the Dock.
@@ -65,11 +65,11 @@ cd xyntetik-dojo
 make install    # builds the app and puts it in /Applications; make run opens it from the build instead
 ```
 
-Or let the agent you already have do it. Paste this into Claude Code, Codex or pi:
+Or let the agent you already have do it. Paste this into Claude Code, Codex, Antigravity or pi:
 
 > Install Xyntetik Dojo on this Mac: clone https://github.com/Joakimpalm-Zen/xyntetik-dojo.git, run `make install` in it (it needs the Command Line Tools and python3; tell me if either is missing), then open /Applications/XyntetikDojo.app and tell me what it asked for on first run.
 
-You need macOS 14 or later, `python3` on every host that runs a harness, and `claude`, `codex` and `pi` on your login shell's PATH, each logged in. The first run copies a few small tools to `~/.dojo` and, if you have Codex, adds its bus entry to `~/.codex/config.toml` once. [What it asks for, and why](docs/guide.md#first-run).
+You need macOS 14 or later, `python3` on every host that runs a harness, and `claude`, `codex`, `agy` and `pi` on your login shell's PATH, each logged in. The first run copies a few small tools to `~/.dojo`, adds Codex's bus entry to `~/.codex/config.toml` once if you have Codex, and installs Dojo's agy plugin (the bus and its state hooks) if you have agy. [What it asks for, and why](docs/guide.md#first-run).
 
 <a id="adding-a-pane"></a>
 ## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> Add a pane
@@ -78,12 +78,12 @@ You need macOS 14 or later, `python3` on every host that runs a harness, and `cl
   <img src="packaging/readme/picker.png" alt="The picker: Claude, Codex and pi with host, folder and name and an Open button, the Skip permission prompts box with what it does; under them the local model card with Runner's state, a Start Runner button and a popup of the models that fit" width="540">
 </p>
 
-Press plus, pick Claude, Codex or pi, and press Open. Fill in a host to run it on another machine, a folder to start in, or a name if `claude-1` is not it. A pane keeps its harness's own permission prompts unless you tick **Skip permission prompts**, and the picker remembers that per agent. The Runner card below starts the local model the pi panes use.
+Press plus, pick Claude, Codex, pi or Antigravity, and press Open. Fill in a host to run it on another machine, a folder to start in, or a name if `claude-1` is not it. A pane keeps its harness's own permission prompts unless you tick **Skip permission prompts**, and the picker remembers that per agent. The Runner card below starts the local model the pi panes use.
 
 <a id="how-harnesses-talk"></a>
 ## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> How they talk
 
-Every pane can list, read and message the others, as MCP tools for Claude and Codex and as the `dojo` command for pi and any shell. Ask in plain words, "send codex-1 a summary of what you changed", or type it:
+Every pane can list, read and message the others, as MCP tools for Claude, Codex and Antigravity and as the `dojo` command for pi and any shell. Ask in plain words, "send codex-1 a summary of what you changed", or type it:
 
 ```
 dojo panes                         # who is here, what each is doing
