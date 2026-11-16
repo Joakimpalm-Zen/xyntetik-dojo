@@ -19,16 +19,23 @@ public enum Composer {
 
     /// Codex 0.166.0: the composer is `› ` and its placeholders are in the binary. Claude Code: `❯` and a
     /// no-break space, and nothing after it. agy 1.5.9 (D38, read off its screens in a pty): `> `, between
-    /// two ruled lines as Claude Code's, with no placeholder; its dialogs and its question take the
+    /// two ruled lines as Claude Code's, with its mode as the placeholder (`agyModes`); its dialogs and its question take the
     /// composer's place, their highlighted choice marked `> 1.`.
     static func rule(for kind: HarnessKind) -> Rule? {
         switch kind {
         case .codex: return Rule(marks: ["›"], placeholders: ["Ask Codex to do anything", "Ask a follow-up question", "Waiting for startup"])
         case .claude: return Rule(marks: ["❯", ">"], placeholders: [])
-        case .agy: return Rule(marks: [">"], placeholders: [])
+        case .agy: return Rule(marks: [">"], placeholders: agyModes)
         case .pi, .runner, .shell: return nil
         }
     }
+
+    /// What agy writes in its empty composer in each mode but its plain one: Auto, its own default, shows
+    /// until the first prompt (a pty on 2026-11-16); the others are in agy 1.5.9's binary.
+    static let agyModes: Set<String> = ["Auto mode: edits & safe commands auto-approved (shift+tab to cycle)",
+                                        "Accept-edits mode: file edits auto-approved (shift+tab to cycle)",
+                                        "Plan mode: research & plan only (shift+tab to cycle)",
+                                        "Best-of-N mode: fork into parallel arms and pick a winner (shift+tab to cycle)"]
 
     /// Whether the rows under a harness's composer are set in. agy draws its status line from the first
     /// column (the pane's own line, `dojo statusline agy`, and any line of the owner's); Claude Code and
