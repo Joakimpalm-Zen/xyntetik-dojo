@@ -683,6 +683,27 @@ class AgyHookTest(unittest.TestCase):
         finally:
             shutil.rmtree(home)
 
+    def test_install_hands_agy_the_plugin_again_only_when_it_changed(self):
+        home, env = self.agy_home()
+        try:
+            run = lambda: subprocess.run([sys.executable, SHIM, "install"], capture_output=True, text=True, env=env, timeout=20)
+            run()
+            # what agy plugin install leaves: a copy in agy's own folder
+            src = os.path.join(home, ".dojo", "agy", "dojo")
+            shutil.copytree(src, os.path.join(home, ".gemini", "config", "plugins", "dojo"))
+            r = run()
+            self.assertIn("already has Dojo's plugin", r.stdout)
+            with open(os.path.join(home, "agy-calls")) as f:
+                self.assertEqual(f.read().count("install"), 1, "agy was asked once")
+            # a copy that differs (an older Dojo) is replaced
+            with open(os.path.join(home, ".gemini", "config", "plugins", "dojo", "hooks.json"), "w") as f:
+                f.write("{}")
+            run()
+            with open(os.path.join(home, "agy-calls")) as f:
+                self.assertEqual(f.read().count("install"), 2)
+        finally:
+            shutil.rmtree(home)
+
     def test_install_leaves_agy_alone_where_it_is_not_set_up(self):
         home, env = self.agy_home(with_gemini=False)
         try:
