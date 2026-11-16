@@ -56,8 +56,8 @@ import Testing
         rig.wait(10)
         #expect(rig.enters == 1)
         #expect(rig.bus.info("worker")?.noComposer == false)
-        rig.send("second")
         rig.io.screen = Self.claude("❯", "  ⏵⏵ bypass permissions on · 2 shells")
+        rig.send("second")
         rig.wait(5)
         #expect(rig.io.typed.contains("second"), "later messages are not blocked")
     }

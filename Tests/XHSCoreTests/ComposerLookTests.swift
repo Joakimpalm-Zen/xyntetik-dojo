@@ -113,6 +113,33 @@ import Testing
         #expect(!Composer.wasThere("", "⏵⏵ bypass permissions on"))
     }
 
+    /// The rows are matched one for one, in their order: a row that was added is new even when it reads
+    /// like a part of an old one, and the harness's own hint stands in the place of one row from before.
+    @Test func theRowsUnderTheComposerAreMatchedOneForOne() {
+        let before = ["GPT-6.1-Sol · Full Access", "← for agents · ? for shortcuts"]
+        #expect(Composer.footerUnchanged(before, since: before, kind: .codex))
+        #expect(Composer.footerUnchanged(["GPT-6.1-Sol · Full Access"], since: before, kind: .codex), "a row less")
+        #expect(Composer.footerUnchanged(["GPT-6.1-Sol · Full Access", "tab to queue message"], since: before, kind: .codex))
+        #expect(Composer.footerUnchanged(["tab to queue message"], since: before, kind: .codex))
+        #expect(Composer.footerUnchanged([], since: before, kind: .codex))
+        // added rows
+        #expect(!Composer.footerUnchanged(["GPT-6.1-Sol · Full Access", "Full Access", "← for agents · ? for shortcuts"], since: before, kind: .codex))
+        #expect(!Composer.footerUnchanged(["GPT-6.1-Sol · Full Access", "Full Access"], since: ["GPT-6.1-Sol · Full Access"], kind: .codex))
+        #expect(!Composer.footerUnchanged(["GPT-6.1-Sol", "Full Access"], since: ["GPT-6.1-Sol · Full Access"], kind: .codex), "one old row cannot be two")
+        #expect(!Composer.footerUnchanged(before + ["tab to queue message"], since: before, kind: .codex), "the hint takes a row's place, it is not one more")
+        // out of their order
+        #expect(!Composer.footerUnchanged(before.reversed(), since: before, kind: .codex))
+        // the other harness's hint is not this one's
+        #expect(!Composer.footerUnchanged(["GPT-6.1-Sol · Full Access", "paste again to expand"], since: before, kind: .codex))
+    }
+
+    /// A limit, stated in the guide: the parts of a row are divided at a middle dot and at a gap, so a
+    /// folder whose name holds one of those and then a key hint reads as a hint, and holds the pane.
+    @Test func aFolderNamedWithASeparatorAndAHintHoldsThePane() {
+        #expect(Composer.hasKeyHint("GPT-6.1-Sol · ~/project  press enter · Full Access"))
+        #expect(Composer.hasKeyHint("GPT-6.1-Sol · ~/project · press enter · Full Access"))
+    }
+
     /// A composer that already shows a stand-in holds a paste that is not the bus's: typing there would add
     /// to it, and at the Enter the stand-in could not be told from the bus's own.
     @Test func aComposerThatAlreadyShowsAStandInIsNotTypedInto() {
@@ -220,14 +247,14 @@ import Testing
     }
 
     /// The owner empties the composer in the moment before the bus's Enter, or presses Enter there and the
-    /// text is gone from a composer that is on the screen: the bus's Enter is dropped, and none is owed.
+    /// composer on the screen is empty: the bus's Enter is dropped, and none is owed.
     @Test func anEnterTheOwnerMadeNeedlessIsDroppedAndRecorded() {
         for key in [Bus.OwnerKey.submit, .clear] {
             let rig = Rig(kind: .claude, submitDelay: 0.15)
             rig.send("first")
             rig.clock += 0.05
             rig.bus.noteOwnerInput("worker", key)
-            if key == .submit { rig.io.screen = MockIO.screen(.claude, holding: "") }   // the owner's Enter sent it
+            if key == .submit { rig.io.screen = MockIO.emptied(.claude) }   // the owner's Enter sent it
             rig.fire()
             #expect(rig.enters == 0, "the text is gone")
             let enter = rig.recorded("enter")
@@ -235,27 +262,39 @@ import Testing
             #expect(enter.first?["outcome"] as? String == "dropped")
             #expect(enter.first?["why"] as? String == (key == .submit ? "the owner pressed Enter" : "the owner emptied the composer"))
             #expect(rig.bus.info("worker")?.noComposer == false)
+            #expect(rig.bus.info("worker")?.draft == false)
         }
     }
 
-    /// The owner's Enter over the bus's text sent it when a hook says so, whatever the screen still shows.
-    @Test func aSubmitHookAfterThePasteIsEvidenceThatTheOwnersEnterSentIt() {
+    /// The owner's Enter over the bus's text sent it when a hook reports a submission that carries that text,
+    /// whatever the screen still shows. A hook that carries other text, or none, says nothing: it can be an
+    /// earlier prompt's, come late.
+    @Test func aSubmitHookThatCarriesThePastedTextIsEvidenceThatTheOwnersEnterSentIt() {
         let rig = Rig(kind: .claude, submitDelay: 0.15)
         rig.send("first")
         rig.clock += 0.05
         rig.bus.noteOwnerInput("worker", .submit)
-        rig.clock += 0.01
-        rig.hook("UserPromptSubmit")
+        rig.hook("UserPromptSubmit", ["prompt": "[from: fable] first"])
         rig.fire()
         #expect(rig.enters == 0)
         #expect(rig.recorded("enter").first?["why"] as? String == "the owner pressed Enter")
-        // and without the owner's Enter the same hook drops nothing: it is for an earlier prompt
-        let other = Rig(kind: .claude, submitDelay: 0.15)
-        other.send("first")
-        other.clock += 0.06
-        other.hook("UserPromptSubmit")
-        other.fire()
-        #expect(other.enters == 1)
+        for extra in [["prompt": "something the owner sent before"], [:]] as [[String: Any]] {
+            let other = Rig(kind: .claude, submitDelay: 0.15)
+            other.send("first")
+            other.clock += 0.05
+            other.bus.noteOwnerInput("worker", .submit)
+            other.hook("UserPromptSubmit", extra)
+            other.fire()
+            #expect(other.recorded("enter").first?["outcome"] as? String == "owed", "\(extra)")
+            other.wait(5)
+            #expect(other.enters == 1, "the text is still in the composer and gets its Enter: \(extra)")
+        }
+        // and with no Enter of the owner's, a hook drops nothing
+        let quiet = Rig(kind: .claude, submitDelay: 0.15)
+        quiet.send("first")
+        quiet.hook("UserPromptSubmit", ["prompt": "[from: fable] first"])
+        quiet.fire()
+        #expect(quiet.enters == 1)
     }
 
     /// Enter in a harness can accept a completion and leave the text where it is. With no evidence that the
@@ -298,6 +337,38 @@ import Testing
         rig.wait(5)
         #expect(rig.enters == 1)
         #expect(rig.bus.info("worker")?.noComposer == false)
+    }
+
+    /// The way back for an owed Enter is only for a footer that changed in place and shows no sign of a
+    /// dialog: a row with a number, a frame or a key hint in the place of an old row is never taken for the
+    /// footer, however long it stays.
+    @Test func aDialogSignInTheFootersPlaceNeverBecomesTheFooter() {
+        for row in ["  1. Yes", "  ╭──────────╮", "  enter select · esc back"] {
+            let rig = Rig(kind: .claude, submitDelay: 0.15)
+            rig.io.screen = D102314ReviewTests.claude("❯", "  ⏵⏵ bypass permissions on · 1 shell")
+            rig.send("status?")
+            rig.io.screen = D102314ReviewTests.claude("❯ [from: fable] status?", row)
+            rig.fire()
+            rig.wait(30)
+            #expect(rig.enters == 0, "\(row)")
+            #expect(rig.bus.info("worker")?.noComposer == true, "\(row)")
+        }
+    }
+
+    /// The footer must have read the same for the owner-quiet interval: one that keeps changing is not
+    /// taken, and the Enter goes out once it has stood still.
+    @Test func aFooterThatKeepsChangingIsNotTakenUntilItStandsStill() {
+        let rig = Rig(kind: .claude, submitDelay: 0.15)
+        rig.io.screen = D102314ReviewTests.claude("❯", "  ⏵⏵ bypass permissions on · 1 shell")
+        rig.send("status?")
+        for words in ["two shells", "three shells", "four shells", "five shells", "six shells", "seven shells"] {
+            rig.io.screen = D102314ReviewTests.claude("❯ [from: fable] status?", "  ⏵⏵ bypass permissions on · " + words)
+            if rig.pending.isEmpty { rig.wait(1) } else { rig.fire() }
+            rig.wait(1)
+        }
+        #expect(rig.enters == 0, "it changed every two seconds")
+        rig.wait(5)
+        #expect(rig.enters == 1, "it stood still for the owner-quiet interval")
     }
 
     /// A dialog under the bus's own paste, through the bus, with rows that a footer could have: held by the

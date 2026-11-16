@@ -93,7 +93,8 @@ public enum Composer {
     ///   composer that stays on the screen. A row is not new when it is one that was there, each run of
     ///   digits read as one sign (a status line counts on), or that row with whole parts taken away (a hint
     ///   row loses a part when text arrives), or one of the harness's own hint rows after a paste, word for
-    ///   word. A row that has gained anything is new.
+    ///   word. A row that has gained anything is new. The rows are matched one for one, in their order, so
+    ///   a row that was added is new whatever it says.
     /// - Where the terminal says which line its cursor is on (`cursorLine`), the cursor must be on the
     ///   composer: a dialog moves it. Whether a harness keeps its cursor there has to be seen in a real pane
     ///   first, so the bus passes it only for the harnesses it is told to (`Bus.cursorEvidence`).
@@ -115,8 +116,42 @@ public enum Composer {
         read(kind: kind, lines: lines, cursorLine: cursorLine, afterPaste: false, pasted: nil, before: nil)
     }
 
+    /// The composer as it stands holding what the bus pasted, with the rows under it as they are now; nil
+    /// when it does not hold that, or the rows under it show a dialog. The rows are not held against the
+    /// look before the paste here: `footerUnchanged` does that.
+    public static func holding(kind: HarnessKind, lines: [String], cursorLine: Int?, pasted: String, before: Look?) -> Look? {
+        read(kind: kind, lines: lines, cursorLine: cursorLine, afterPaste: true, pasted: pasted, before: before, compareFooter: false)
+    }
+
+    /// Whether the rows under the composer are the ones from before the paste, one for one: each row now is
+    /// a different row from before (`wasThere`), in their order, so there cannot be more of them than
+    /// before. One of the harness's own hint rows after a paste stands in the place of one row from before.
+    /// A row that was added holds the Enter even when it reads like part of an old one.
+    public static func footerUnchanged(_ now: [String], since before: [String], kind: HarnessKind) -> Bool {
+        let hints = hintsAfterAPaste(for: kind)
+        var next = 0
+        for row in now {
+            if hints.contains(row) {
+                guard next < before.count else { return false }
+                next += 1
+            } else if let found = before[next...].firstIndex(where: { wasThere(row, $0) }) {
+                next = found + 1
+            } else {
+                return false
+            }
+        }
+        return true
+    }
+
+    /// Whether two texts are the same but for their blanks and line breaks, which a harness lays out as it
+    /// likes.
+    public static func sameText(_ a: String, _ b: String) -> Bool {
+        func bare(_ text: String) -> [Unicode.Scalar] { text.unicodeScalars.filter { !$0.properties.isWhitespace } }
+        return bare(a) == bare(b)
+    }
+
     private static func read(kind: HarnessKind, lines: [String], cursorLine: Int?, afterPaste: Bool, pasted: String?,
-                             before: Look?) -> Look? {
+                             before: Look?, compareFooter: Bool = true) -> Look? {
         guard let rule = rule(for: kind) else { return nil }
         let blank = CharacterSet.whitespaces.union(CharacterSet(charactersIn: "\u{a0}")).union(.newlines)
         var lines = lines
@@ -172,9 +207,8 @@ public enum Composer {
             // set in as a footer is, not a choice, not the frame of a dialog, and without a dialog's key hints
             row.setIn && !isNumberedChoice(row.text) && !startsWithBoxDrawing(row.text) && !hasKeyHint(row.text)
         }) else { return nil }
-        if afterPaste, let before {
-            let hints = hintsAfterAPaste(for: kind)
-            guard under.allSatisfy({ row in hints.contains(row.text) || before.under.contains { wasThere(row.text, $0) } }) else { return nil }
+        if afterPaste, compareFooter, let before {
+            guard footerUnchanged(under.map(\.text), since: before.under, kind: kind) else { return nil }
         }
         return Look(composer: first, under: under.map(\.text))
     }
@@ -189,8 +223,7 @@ public enum Composer {
     /// about this paste, so it counts only when the composer's row has changed.
     static func arrived(_ pasted: String, rows: [String], standIn: String, before: Look?) -> Bool {
         if rows.count == 1, isStandIn(rows[0], standIn) { return rows[0] != before?.composer }
-        func bare(_ text: String) -> [Unicode.Scalar] { text.unicodeScalars.filter { !$0.properties.isWhitespace } }
-        return bare(rows.joined()) == bare(pasted)
+        return sameText(rows.joined(), pasted)
     }
 
     static func isStandIn(_ row: String, _ standIn: String) -> Bool { row.hasPrefix(standIn) && row.hasSuffix("]") }

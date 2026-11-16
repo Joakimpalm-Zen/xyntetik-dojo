@@ -41,6 +41,15 @@ final class MockIO: PaneIO {
     /// Everything typed so far as one string.
     var typed: String { String(decoding: written.flatMap { $0 }, as: UTF8.self) }
 
+    /// A harness's screen with an empty composer: what a pane shows once the text in it was sent.
+    static func emptied(_ kind: HarnessKind) -> String {
+        switch kind {
+        case .claude: return "──────────────────────────────\n❯\u{a0}\n──────────────────────────────\n  status\n"
+        case .codex: return "\n› Ask Codex to do anything\n\n  status · line\n"
+        case .pi, .runner, .shell: return ""
+        }
+    }
+
     /// A harness's screen with `text` in its composer, as the two harnesses draw it: Claude Code between two
     /// ruled lines with a stand-in for a paste of several lines, Codex after an empty row with later rows set
     /// in. With nothing typed the composer holds a word, so that it is a composer and not an empty one, which
