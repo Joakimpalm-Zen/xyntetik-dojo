@@ -3,10 +3,10 @@ import Foundation
 /// The harness a pane runs. `runner` is the local model server the pi panes talk to, not a harness:
 /// messages are never sent to it. `shell` exists only for the launch smoke test.
 public enum HarnessKind: String, Codable, CaseIterable, Sendable {
-    case claude, codex, pi, runner, shell
+    case claude, codex, pi, agy, runner, shell
 
     /// The coding agents the picker offers in its first row; Runner has a row of its own.
-    public static let pickable: [HarnessKind] = [.claude, .codex, .pi]
+    public static let pickable: [HarnessKind] = [.claude, .codex, .pi, .agy]
 
     /// A coding agent, which a coordinator's roles apply to (D21.2); Runner and the shell are not.
     public var isAgent: Bool { HarnessKind.pickable.contains(self) }
@@ -16,6 +16,7 @@ public enum HarnessKind: String, Codable, CaseIterable, Sendable {
         case .claude: return "Claude"
         case .codex: return "Codex"
         case .pi: return "pi"
+        case .agy: return "Antigravity"
         case .runner: return "Runner"
         case .shell: return "Shell"
         }
@@ -43,18 +44,18 @@ public enum SessionId {
     }
 }
 
-/// What a pane may do without asking (D21.1). Claude and Codex have permission prompts of their own,
+/// What a pane may do without asking (D21.1). Claude, Codex and agy have permission prompts of their own,
 /// which a pane keeps unless the owner ticks "Skip permission prompts" in the picker. pi has none: it
 /// runs its tools without asking, so a pi pane is unrestricted whatever the tick says. Runner and the
 /// shell are not agents.
 public enum Permissions {
     /// The harness has permission prompts the tick can switch off.
-    public static func canAsk(_ kind: HarnessKind) -> Bool { kind == .claude || kind == .codex }
+    public static func canAsk(_ kind: HarnessKind) -> Bool { kind == .claude || kind == .codex || kind == .agy }
 
     /// The pane acts without the harness asking first; its header says so.
     public static func unrestricted(_ kind: HarnessKind, ticked: Bool) -> Bool {
         switch kind {
-        case .claude, .codex: return ticked
+        case .claude, .codex, .agy: return ticked
         case .pi: return true
         case .runner, .shell: return false
         }

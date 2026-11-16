@@ -54,7 +54,8 @@ final class MockIO: PaneIO {
         switch kind {
         case .claude: return "──────────────────────────────\n❯\u{a0}\n──────────────────────────────\n  status\n"
         case .codex: return "\n› Ask Codex to do anything\n\n  status · line\n"
-        case .pi, .runner, .shell: return ""
+        // agy's composer is read off its real screens (D38), not guessed
+        case .pi, .agy, .runner, .shell: return ""
         }
     }
 
@@ -70,7 +71,7 @@ final class MockIO: PaneIO {
             return "──────────────────────────────\n❯ \(shown)\n──────────────────────────────\n  status\n"
         case .codex:
             return "\n› " + rows.joined(separator: "\n  ") + "\n\n  status · line\n"
-        case .pi, .runner, .shell:
+        case .pi, .agy, .runner, .shell:
             return ""
         }
     }

@@ -39,7 +39,7 @@ TOOLS = [
     {
         "name": "panes",
         "description": "List the terminals in the Xyntetik Dojo window: "
-        "name, kind (claude, codex, pi, or runner for the model server), host, state (starting, running, idle, prompt, exited) "
+        "name, kind (claude, codex, pi, agy for the Antigravity CLI, or runner for the model server), host, state (starting, running, idle, prompt, exited) "
         "and queued messages. The field 'you' is your own terminal.",
         "inputSchema": {"type": "object", "properties": {}},
     },
@@ -597,6 +597,61 @@ def audit(argv, out, err, home=None, now=None):
     return 1 if problems else 0
 
 
+# ---------------------------------------------------------------- agy's hooks (D38)
+# The Antigravity CLI (agy 1.5.9) has six hook events and sends camelCase JSON: hookEventName,
+# conversationId, modelName, lastUserInput, invocationNum. Read off its bundled hooks.md and a probe on
+# 2026-11-16. The bus knows Claude Code's words, so the events it uses are posted in those. agy has no
+# event for a permission ask or a question: a dialog is seen on the screen only.
+
+AGY_RULE_VARIABLE = "DOJO_PEER_RULE"
+
+
+def agy_hook(event, env):
+    """What to post to the bus for one of agy's hook events (None: nothing), and what to print to agy."""
+    name = event.get("hookEventName")
+    posted = None
+    if name in ("SessionStart", "PostToolUse", "Stop"):
+        posted = {"hook_event_name": name}
+    elif name == "PreInvocation":
+        # Before every model call. The first of a turn (invocationNum 0, which protojson may leave out) is the
+        # prompt the turn answers; a later one follows tool calls, and says only that work goes on.
+        if not event.get("invocationNum"):
+            posted = {"hook_event_name": "UserPromptSubmit"}
+            if isinstance(event.get("lastUserInput"), str):
+                posted["prompt"] = event["lastUserInput"]
+        else:
+            posted = {"hook_event_name": "PostToolUse"}
+    if posted is not None:
+        if isinstance(event.get("conversationId"), str):
+            posted["session_id"] = event["conversationId"]
+        if isinstance(event.get("modelName"), str):
+            posted["model"] = event["modelName"]
+    reply = {}
+    # The pane's peer rule, as a system step at the start of the conversation: agy takes no system prompt on
+    # its command line. Only in a pane, where the launch line set the variable.
+    rule = env.get(AGY_RULE_VARIABLE)
+    if name == "SessionStart" and rule and env.get("DOJO_TOKEN"):
+        reply = {"injectSteps": [{"systemMessage": {"systemMessage": rule}}]}
+    return posted, reply
+
+
+def agy_hook_cli(stdin, out):
+    """`dojo hook agy`: agy waits for every hook and reads one JSON object from it, so it gets one whatever
+    happens here. Outside a pane, nothing is posted and nothing is injected."""
+    reply = {}
+    try:
+        event = json.loads(stdin.read(1 << 20) or "{}")
+        if isinstance(event, dict):
+            posted, reply = agy_hook(event, os.environ)
+            if posted is not None and os.environ.get("DOJO_TOKEN"):
+                bus_call("hook", posted, timeout=1)
+    except Exception:
+        pass
+    out.write(json.dumps(reply) + "\n")
+    out.flush()
+    return 0
+
+
 # ---------------------------------------------------------------- CLI
 
 USAGE = """usage: dojo panes | send <pane> <text...> | send <pane> - (text on stdin) | read <pane> [lines] | state <pane> | watch <pane> | label [text...] | relay <words...> | hook | install | audit [--pane P] [--since WHEN]"""
@@ -607,6 +662,8 @@ def cli(argv, out=sys.stdout, err=sys.stderr, stdin=sys.stdin):
         err.write(USAGE + "\n")
         return 2
     cmd, rest = argv[0], argv[1:]
+    if cmd == "hook" and rest == ["agy"]:
+        return agy_hook_cli(stdin, out)
     if cmd == "hook":
         try:
             event = json.loads(stdin.read(1 << 20) or "{}")

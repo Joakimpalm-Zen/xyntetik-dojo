@@ -319,7 +319,8 @@ import Testing
     @Test func everyLevelSplitsTheSameForFishAsForSh() throws {
         let folders: [String?] = [nil, "/srv/plain", "/srv/two words", "/srv/it's", "/srv/end\\", "/srv/a\\\\b", "/srv/répo", "~/my repo",
                                   "%self", "%self/work", "50%"]
-        for kind in [HarnessKind.claude, .codex, .pi, .runner, .shell] {
+        // agy (D38): its launch carries the peer rule as one KEY=value word for env
+        for kind in [HarnessKind.claude, .codex, .pi, .agy, .runner, .shell] {
             for folder in folders {
                 let what = "\(kind), folder \(folder ?? "none")"
                 let local = Launcher.plan(kind: kind, paneName: "\(kind)-1", host: "user@box", port: 7788, token: "tok",

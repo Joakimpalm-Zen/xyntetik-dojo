@@ -23,7 +23,7 @@ public enum Composer {
         switch kind {
         case .codex: return Rule(marks: ["›"], placeholders: ["Ask Codex to do anything", "Ask a follow-up question", "Waiting for startup"])
         case .claude: return Rule(marks: ["❯", ">"], placeholders: [])
-        case .pi, .runner, .shell: return nil
+        case .pi, .agy, .runner, .shell: return nil
         }
     }
 
@@ -48,7 +48,7 @@ public enum Composer {
         switch kind {
         case .claude: return ["paste again to expand"]
         case .codex: return ["tab to queue message"]
-        case .pi, .runner, .shell: return []
+        case .pi, .agy, .runner, .shell: return []
         }
     }
 
@@ -221,7 +221,7 @@ public enum Composer {
                 end = at + 1
             }
             block = end
-        case .pi, .runner, .shell:
+        case .pi, .agy, .runner, .shell:
             return nil
         }
         block = max(block, at + 1)
