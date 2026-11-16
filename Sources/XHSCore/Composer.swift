@@ -18,14 +18,22 @@ public enum Composer {
     }
 
     /// Codex 0.166.0: the composer is `› ` and its placeholders are in the binary. Claude Code: `❯` and a
-    /// no-break space, and nothing after it.
+    /// no-break space, and nothing after it. agy 1.5.9 (D38, read off its screens in a pty): `> `, between
+    /// two ruled lines as Claude Code's, with no placeholder; its dialogs and its question take the
+    /// composer's place, their highlighted choice marked `> 1.`.
     static func rule(for kind: HarnessKind) -> Rule? {
         switch kind {
         case .codex: return Rule(marks: ["›"], placeholders: ["Ask Codex to do anything", "Ask a follow-up question", "Waiting for startup"])
         case .claude: return Rule(marks: ["❯", ">"], placeholders: [])
-        case .pi, .agy, .runner, .shell: return nil
+        case .agy: return Rule(marks: [">"], placeholders: [])
+        case .pi, .runner, .shell: return nil
         }
     }
+
+    /// Whether the rows under a harness's composer are set in. agy draws its status line from the first
+    /// column (the pane's own line, `dojo statusline agy`, and any line of the owner's); Claude Code and
+    /// Codex set theirs in.
+    static func footerSetIn(_ kind: HarnessKind) -> Bool { kind != .agy }
 
     /// The composer sits at the foot of the screen, under the transcript.
     static let footRows = 12
@@ -85,7 +93,7 @@ public enum Composer {
     ///   is. A dialog's highlighted choice carries the same mark, so a row that reads as a numbered choice
     ///   ("1. Yes", or "1." where a narrow pane cut it) is not a composer. Rows set in, such as the later
     ///   rows of a long message, are never taken for a mark.
-    /// - Claude Code draws its composer between two ruled lines; Codex draws it after an empty row.
+    /// - Claude Code and agy draw their composer between two ruled lines; Codex draws it after an empty row.
     /// - Before the bus has typed anything, the composer is one row, and it does not already hold a paste.
     /// - After it has pasted (`afterPaste`), the composer must hold what it pasted: `pasted` itself, row by
     ///   row, or the harness's stand-in for a long paste ("[Pasted text #3 +4 lines]", "[Pasted Content 1200
@@ -94,7 +102,8 @@ public enum Composer {
     ///   look before the paste (`before`). A composer that holds anything else, or nothing yet, is not
     ///   pressed Enter on: the text has not arrived there, or something else has.
     /// - Under the composer stand at most `footerRows` rows, every one set in as both harnesses set their
-    ///   status and hint rows, none a numbered choice, none the frame of a dialog, none with a dialog's key
+    ///   status and hint rows (agy's status line stands in the first column: `footerSetIn`), none a numbered
+    ///   choice, none the frame of a dialog, none with a dialog's key
     ///   hint as whole words outside a path. The rows themselves cannot be known word for word: the status line is the owner's own, and
     ///   the hint row changes.
     /// - After the paste, no row under the composer may be new since `before`: a dialog can open under a
@@ -198,7 +207,7 @@ public enum Composer {
         let end: Int        // the first row under the composer: its footer starts here
         var block: Int      // the first row that is not the composer's own text
         switch kind {
-        case .claude:
+        case .claude, .agy:
             guard at > 0, isRuledLine(foot[at - 1].text),
                   let closing = foot.indices.first(where: { $0 > at && isRuledLine(foot[$0].text) }) else { return nil }
             if afterPaste {
@@ -221,7 +230,7 @@ public enum Composer {
                 end = at + 1
             }
             block = end
-        case .pi, .agy, .runner, .shell:
+        case .pi, .runner, .shell:
             return nil
         }
         block = max(block, at + 1)
@@ -229,7 +238,7 @@ public enum Composer {
         let under = foot[min(end, foot.count)...].filter { !$0.text.isEmpty }
         guard under.count <= footerRows, under.allSatisfy({ row in
             // set in as a footer is, not a choice, not the frame of a dialog, and without a dialog's key hints
-            row.setIn && !isNumberedChoice(row.text) && !startsWithBoxDrawing(row.text) && !hasKeyHint(row.text)
+            (row.setIn || !footerSetIn(kind)) && !isNumberedChoice(row.text) && !startsWithBoxDrawing(row.text) && !hasKeyHint(row.text)
         }) else { return nil }
         if afterPaste, compareFooter, let before {
             guard footerUnchanged(under.map(\.text), since: before.under, kind: kind) else { return nil }
