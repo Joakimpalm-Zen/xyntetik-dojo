@@ -704,7 +704,8 @@ def agy_hook(event, env):
         posted = {"hook_event_name": name}
     elif name == "PreToolUse":
         # agy's question dialog sets no tool_confirmation_pending (a pty probe on 2026-11-16): its tool is
-        # seen here, before it runs. The next model call (PreInvocation) says the answer is in.
+        # seen here, before it runs. Its own completion, the next model call or the end of the turn ends it
+        # (AgyPane holds it meanwhile against any report of work going on).
         tool = event.get("toolCall") if isinstance(event.get("toolCall"), dict) else {}
         posted = {"hook_event_name": "PermissionRequest" if tool.get("name") == "ask_question" else "PostToolUse"}
     elif name == "PreInvocation":
@@ -818,10 +819,53 @@ def agy_status_line(data):
     return " | ".join([usage, ctx, "Model: %s" % (name if isinstance(name, str) and name else "n/a"), "Thinking: " + effort])
 
 
-def agy_status_record(token):
-    """Where a pane's status line keeps what it last told the bus: one file per pane, by its token."""
-    import tempfile
-    return os.path.join(tempfile.gettempdir(), "dojo-agy-status-" + hashlib.sha256(token.encode()).hexdigest()[:16])
+# The state an event leaves a pane in at the bus (HookMapping).
+AGY_EVENT_STATES = {"SessionStart": "idle", "UserPromptSubmit": "running", "PostToolUse": "running",
+                    "PermissionRequest": "prompt", "Stop": "idle"}
+# What ends a question: the next model call, the end of the turn or a new session, and the question tool's
+# own completion (its PostToolUse, matched by the call's id).
+AGY_QUESTION_ENDS = ("PreInvocation", "Stop", "SessionStart")
+
+
+class AgyPane:
+    """One record per pane, by its token, for its hooks and its status line both: the state they last told
+    the bus, and the question that is open. agy runs the status line about every 300 ms and the hooks as
+    its turn goes; each reads the record, decides, posts and writes it back under one lock, so neither
+    undoes or skips what the other set (the second read of #113 found two records that could)."""
+
+    def __init__(self, token):
+        import tempfile
+        self.path = os.path.join(tempfile.gettempdir(), "dojo-agy-" + hashlib.sha256(token.encode()).hexdigest()[:16])
+
+    def __enter__(self):
+        self.lock = open(self.path + ".lock", "a")
+        try:
+            import fcntl
+            fcntl.flock(self.lock, fcntl.LOCK_EX)
+        except ImportError:
+            pass  # no fcntl (a native Windows Python): agy is not supported there
+        try:
+            with open(self.path) as f:
+                self.record = json.load(f)
+        except (OSError, ValueError):
+            self.record = {}
+        if not isinstance(self.record, dict):
+            self.record = {}
+        return self
+
+    def report(self, event):
+        """Posts `event`; the state it leaves the pane in is kept once it has reached the bus."""
+        bus_call("hook", event, timeout=1)
+        self.record["state"] = AGY_EVENT_STATES.get(event["hook_event_name"], self.record.get("state"))
+
+    def __exit__(self, *exc):
+        try:
+            with open(self.path + ".tmp", "w") as f:
+                json.dump(self.record, f)
+            os.replace(self.path + ".tmp", self.path)
+        finally:
+            self.lock.close()
+        return False
 
 
 def read_text(path):
@@ -845,13 +889,15 @@ def agy_statusline_cli(stdin, out):
         event = agy_status_event(data)
         token = os.environ.get("DOJO_TOKEN")
         if event and token:
-            # agy runs this about every 300 ms, idle or not (a pty probe): the bus hears only a change. It
-            # also keeps a question at prompt, which the status line cannot see, until the next model call.
-            seen = agy_status_record(token)
-            if read_text(seen) != event:
-                bus_call("hook", {"hook_event_name": event}, timeout=1)
-                with open(seen, "w") as f:
-                    f.write(event)
+            with AgyPane(token) as pane:
+                if event == "Stop":
+                    pane.record.pop("question", None)  # the turn is over: no question is open
+                # A question the status line cannot see is open: its running state is no news.
+                if pane.record.get("question") and AGY_EVENT_STATES[event] == "running":
+                    pass
+                # The bus hears a change only, whichever of the two told it the state it has.
+                elif AGY_EVENT_STATES[event] != pane.record.get("state"):
+                    pane.report({"hook_event_name": event})
     except Exception:
         pass
     out.write(agy_status_line(data) + "\n")
@@ -867,8 +913,20 @@ def agy_hook_cli(stdin, out):
         event = json.loads(stdin.read(1 << 20) or "{}")
         if isinstance(event, dict):
             posted, reply = agy_hook(event, os.environ)
-            if posted is not None and os.environ.get("DOJO_TOKEN"):
-                bus_call("hook", posted, timeout=1)
+            token = os.environ.get("DOJO_TOKEN")
+            if token:
+                with AgyPane(token) as pane:
+                    name = event.get("hookEventName")
+                    tool = event.get("toolCall") if isinstance(event.get("toolCall"), dict) else {}
+                    question = pane.record.get("question")
+                    if posted is not None and posted["hook_event_name"] == "PermissionRequest" and name == "PreToolUse":
+                        pane.record["question"] = tool.get("id") or True
+                    elif question and (name in AGY_QUESTION_ENDS or (name == "PostToolUse" and question in (True, tool.get("id")))):
+                        pane.record.pop("question", None)
+                    elif question and posted is not None and AGY_EVENT_STATES.get(posted["hook_event_name"]) == "running":
+                        posted = None  # another tool's end while the question waits: the pane stays at prompt
+                    if posted is not None:
+                        pane.report(posted)
     except Exception:
         pass
     out.write(json.dumps(reply) + "\n")
