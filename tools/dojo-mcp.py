@@ -484,7 +484,90 @@ def install(home=None, out=sys.stdout, windows=None):
                     f.write("\n")
                 f.write(codex_block())
             out.write("dojo install: added the dojo MCP server and hooks to %s\n" % config)
+    install_agy(home, out, windows)
     return 0
+
+
+# ---------------------------------------------------------------- agy's plugin (D38)
+# agy takes hooks and MCP servers only from files, never from its command line (its --settings has no key
+# for them), so "dojo install" gives it Dojo's plugin: the state hooks and the bus in one unit, which the
+# owner can switch off or remove with agy plugin disable / uninstall. The owner's pick on 2026-11-16. The
+# route lives in `register_agy_plugin`: the fallback (agy mcp add and a hooks.json entry) goes there.
+
+AGY_HOOK_COMMAND = 'python3 "$HOME/.dojo/dojo-mcp.py" hook agy'
+
+
+def agy_plugin_files(home):
+    """The plugin's files: its manifest, its hooks (agy 1.5.9's hooks.json: one named hook, flat lists for the
+    events without a tool, a matcher group for the tool events) and the bus as its MCP server. agy runs a
+    hook with sh, which expands $HOME, and starts an MCP server itself, which expands nothing: the server's
+    path is written out for this home."""
+    handler = {"type": "command", "command": AGY_HOOK_COMMAND, "timeout": 5}
+    hooks = {"dojo": {
+        "SessionStart": [handler],
+        "PreInvocation": [handler],
+        "PreToolUse": [{"matcher": "*", "hooks": [handler]}],
+        "PostToolUse": [{"matcher": "*", "hooks": [handler]}],
+        "Stop": [handler],
+    }}
+    return {
+        "plugin.json": {"name": "dojo", "version": "1.0.0",
+                        "description": "Xyntetik Dojo: the bus tools and the pane's state hooks. Does nothing outside a Dojo pane."},
+        "hooks.json": hooks,
+        "mcp_config.json": {"mcpServers": {"dojo": {"command": "python3", "args": [os.path.join(home, ".dojo", "dojo-mcp.py")]}}},
+    }
+
+
+def write_agy_plugin(folder, home):
+    """Writes the plugin for `home` into `folder` (made or replaced) and returns it."""
+    os.makedirs(folder, exist_ok=True)
+    for name, content in agy_plugin_files(home).items():
+        with open(os.path.join(folder, name), "w", encoding="utf-8", newline="\n") as f:
+            f.write(json.dumps(content, indent=2) + "\n")
+    return folder
+
+
+def find_agy(home):
+    """agy on the PATH, or where its installer puts it; the app's own PATH is the system's alone."""
+    found = shutil.which("agy")
+    if found:
+        return found
+    local = os.path.join(home, ".local", "bin", "agy")
+    return local if os.access(local, os.X_OK) else None
+
+
+def register_agy_plugin(agy, folder):
+    """The install route, in one place: agy copies the plugin into its config and records it (agy plugin
+    install replaces an earlier copy, and keeps the owner's enabled or disabled choice)."""
+    import subprocess
+    env = dict(os.environ, BROWSER="/usr/bin/true")
+    return subprocess.run([agy, "plugin", "install", folder], capture_output=True, text=True, env=env, timeout=60,
+                          stdin=subprocess.DEVNULL)
+
+
+def install_agy(home, out, windows):
+    # Only where agy is set up: its folder in this home. A test's home has none, so no test reaches an agy.
+    if not os.path.isdir(os.path.join(home, ".gemini")):
+        return
+    if windows:
+        # agy runs hooks and its status line with cmd.exe there, where "$HOME" is not a variable.
+        out.write("dojo install: agy on Windows is not supported by Dojo yet; no plugin installed\n")
+        return
+    agy = find_agy(home)
+    if not agy:
+        out.write("dojo install: agy was not found (PATH, ~/.local/bin); its plugin is not installed\n")
+        return
+    folder = write_agy_plugin(os.path.join(home, ".dojo", "agy", "dojo"), home)
+    try:
+        done = register_agy_plugin(agy, folder)
+    except Exception as e:
+        out.write("dojo install: agy plugin install failed: %s\n" % e)
+        return
+    if done.returncode == 0:
+        out.write("dojo install: agy plugin install %s (the bus and the state hooks for agy panes)\n" % folder)
+    else:
+        out.write("dojo install: agy plugin install %s failed (%d): %s\n" % (folder, done.returncode,
+                                                                           (done.stderr or done.stdout).strip()[:200]))
 
 
 # ---------------------------------------------------------------- the record (D21.2)
@@ -612,6 +695,11 @@ def agy_hook(event, env):
     posted = None
     if name in ("SessionStart", "PostToolUse", "Stop"):
         posted = {"hook_event_name": name}
+    elif name == "PreToolUse":
+        # agy's question dialog sets no tool_confirmation_pending (a pty probe on 2026-11-16): its tool is
+        # seen here, before it runs. The next model call (PreInvocation) says the answer is in.
+        tool = event.get("toolCall") if isinstance(event.get("toolCall"), dict) else {}
+        posted = {"hook_event_name": "PermissionRequest" if tool.get("name") == "ask_question" else "PostToolUse"}
     elif name == "PreInvocation":
         # Before every model call. The first of a turn (invocationNum 0, which protojson may leave out) is the
         # prompt the turn answers; a later one follows tool calls, and says only that work goes on.
@@ -718,6 +806,20 @@ def agy_status_line(data):
     return " | ".join([usage, ctx, "Model: %s" % (name if isinstance(name, str) and name else "n/a"), "Thinking: " + effort])
 
 
+def agy_status_record(token):
+    """Where a pane's status line keeps what it last told the bus: one file per pane, by its token."""
+    import tempfile
+    return os.path.join(tempfile.gettempdir(), "dojo-agy-status-" + hashlib.sha256(token.encode()).hexdigest()[:16])
+
+
+def read_text(path):
+    try:
+        with open(path) as f:
+            return f.read()
+    except OSError:
+        return None
+
+
 def agy_statusline_cli(stdin, out):
     """`dojo statusline agy`: agy shows what this prints, so it prints the line whatever happens. Outside a
     pane it only prints."""
@@ -729,8 +831,15 @@ def agy_statusline_cli(stdin, out):
         pass
     try:
         event = agy_status_event(data)
-        if event and os.environ.get("DOJO_TOKEN"):
-            bus_call("hook", {"hook_event_name": event}, timeout=1)
+        token = os.environ.get("DOJO_TOKEN")
+        if event and token:
+            # agy runs this about every 300 ms, idle or not (a pty probe): the bus hears only a change. It
+            # also keeps a question at prompt, which the status line cannot see, until the next model call.
+            seen = agy_status_record(token)
+            if read_text(seen) != event:
+                bus_call("hook", {"hook_event_name": event}, timeout=1)
+                with open(seen, "w") as f:
+                    f.write(event)
     except Exception:
         pass
     out.write(agy_status_line(data) + "\n")
