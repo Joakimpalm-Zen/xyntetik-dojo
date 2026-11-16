@@ -73,7 +73,9 @@ import Testing
             let line = Delivery.line(from: "codex-1", text: Delivery.sanitize("ok\n" + later))
             let now = Self.pane(80, line).liveScreen().lines
             print("D103 pane: as sent \(shown.prefix(2).map { $0.debugDescription }), as typed \(now.prefix(2).map { $0.debugDescription })")
-            #expect(now.count > 1 && now[1].hasPrefix(" "), "set in: \(now.prefix(2))")
+            // by its first scalar: a mark after the space is one character with it for Swift, and one cell on the screen
+            #expect(now.count > 1 && now[1].unicodeScalars.first == " ", "set in: \(now.prefix(2))")
+            #expect(shown.count > 1 && shown[1].hasPrefix("[from:"), "as sent it showed as the bus's tag: \(shown.prefix(2))")
         }
     }
 }
