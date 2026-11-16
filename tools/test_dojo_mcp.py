@@ -593,6 +593,43 @@ class AgyHookTest(unittest.TestCase):
         self.hook(self.event("PreInvocation", invocationNum=1, initialNumSteps=12, lastUserInput="x"))
         self.assertEqual(self.posted()[-1]["hook_event_name"], "PostToolUse")
 
+    # The second read of #113 (codex): the hooks and the status line each kept their own record of what they
+    # told the bus, so either could undo or skip what the other had set. Both orderings, as reproduced.
+
+    def test_a_question_opened_before_any_running_report_stays_at_prompt(self):
+        self.statusline(self.status(agent_state="idle"))
+        self.hook(self.event("PreInvocation", invocationNum=0, initialNumSteps=1, lastUserInput="ask me"))
+        self.hook(self.event("PreToolUse", stepIdx=3, toolCall={"id": "q1", "name": "ask_question"}))
+        for state in ("tool_use", "working", "tool_use"):
+            self.statusline(self.status(agent_state=state))
+        self.assertEqual([e["hook_event_name"] for e in self.posted()], ["Stop", "UserPromptSubmit", "PermissionRequest"])
+        # the question is answered: its tool completes
+        self.hook(self.event("PostToolUse", stepIdx=4, toolCall={"id": "q1", "name": "ask_question"}))
+        self.assertEqual(self.posted()[-1]["hook_event_name"], "PostToolUse")
+
+    def test_a_second_confirmation_after_a_tool_finished_is_reported(self):
+        self.statusline(self.status(agent_state="tool_use", tool_confirmation_pending=True))
+        self.hook(self.event("PostToolUse", stepIdx=6, toolCall={"id": "t1", "name": "run_command"}))
+        self.statusline(self.status(agent_state="tool_use", tool_confirmation_pending=True))
+        self.assertEqual([e["hook_event_name"] for e in self.posted()], ["PermissionRequest", "PostToolUse", "PermissionRequest"])
+
+    def test_the_question_holds_until_its_own_tool_completes_or_the_turn_moves_on(self):
+        self.hook(self.event("PreToolUse", stepIdx=3, toolCall={"id": "q1", "name": "ask_question"}))
+        # another tool's completion is not the question's
+        self.hook(self.event("PostToolUse", stepIdx=2, toolCall={"id": "t0", "name": "view_file"}))
+        self.statusline(self.status(agent_state="tool_use"))
+        self.assertEqual([e["hook_event_name"] for e in self.posted()], ["PermissionRequest"])
+        # skipped, and the turn ended: the status line's idle ends the hold, and work after it is reported
+        self.statusline(self.status(agent_state="idle"))
+        self.statusline(self.status(agent_state="working"))
+        self.assertEqual([e["hook_event_name"] for e in self.posted()], ["PermissionRequest", "Stop", "PostToolUse"])
+
+    def test_the_next_model_call_ends_the_question(self):
+        self.hook(self.event("PreToolUse", stepIdx=3, toolCall={"id": "q1", "name": "ask_question"}))
+        self.hook(self.event("PreInvocation", invocationNum=1, initialNumSteps=5, lastUserInput="ask me"))
+        self.statusline(self.status(agent_state="tool_use", tool_confirmation_pending=True))
+        self.assertEqual([e["hook_event_name"] for e in self.posted()], ["PermissionRequest", "PostToolUse", "PermissionRequest"])
+
     def test_what_did_not_reach_the_bus_is_told_again(self):
         self.statusline(self.status(agent_state="idle"), env=dict(self.env, DOJO_PORT="1"))
         self.statusline(self.status(agent_state="idle"))
