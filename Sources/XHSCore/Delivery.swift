@@ -8,6 +8,8 @@ public enum Delivery {
 
     /// Removes everything that could act as a terminal control: ESC, other C0 and C1 controls and DEL.
     /// Keeps line breaks (normalised to \n); tabs become spaces. Trims surrounding whitespace.
+    /// The characters that turn the reading direction around (embeddings, overrides and isolates) go too:
+    /// with one, text can show in another order than it was sent in (D35.3).
     public static func sanitize(_ text: String) -> String {
         var out = String.UnicodeScalarView()
         let normalised = text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
@@ -16,6 +18,7 @@ public enum Delivery {
             case 0x0A, 0x85, 0x2028, 0x2029: out.append("\n")   // line feed, next line, line and paragraph separators
             case 0x09: out.append(" ")
             case 0x00...0x1F, 0x7F...0x9F: continue             // the other C0 and C1 controls
+            case 0x202A...0x202E, 0x2066...0x2069: continue     // direction embeddings, overrides and isolates
             default: out.append(s)
             }
         }
@@ -28,9 +31,31 @@ public enum Delivery {
         // A later line of the text that starts like a tag would read as another sender's message: it is
         // set in by one space, so only the bus writes a line that begins with [from:.
         let body = stripLeadingTags(text).split(separator: "\n", omittingEmptySubsequences: false)
-            .enumerated().map { i, line in i > 0 && line.hasPrefix("[from:") ? " " + line : String(line) }
+            .enumerated().map { i, line in i > 0 ? setIn(line) : String(line) }
             .joined(separator: "\n")
         return "[from: \(sender)] \(body)"
+    }
+
+    static let tagStart = "[from:"
+
+    /// A later line as the bus types it: one that could show as beginning with a tag is set in by one space
+    /// (D35.3). What a terminal does with a character that is not plain ASCII at the start of a line, or
+    /// inside the tag, cannot be known from here: it may draw it into the cell before, give it no column, or
+    /// drop it. So the test asks nothing about widths. It reads the line's start without every character
+    /// that is not printable ASCII, and if what is left begins with a tag the line is set in. Anything
+    /// invisible, combining, dropped or zero-width, before the tag or inside it, ends in an indent. The
+    /// cost is one space a line did not strictly need, for one like "é[from: x]". The characters stay where
+    /// they were: the indent is the protection. A line that begins with a plain space is set in already.
+    /// The limit: a line whose first letter is of a right-to-left script is drawn by the terminal from the
+    /// right, and a tag later in it shows first. A LEFT-TO-RIGHT MARK in front would turn that, but SwiftTerm
+    /// drops the mark before it reaches a cell, so the bus sends none (D103ThirdReviewAppTests).
+    static func setIn(_ line: Substring) -> String {
+        var start = ""
+        for scalar in line.unicodeScalars where scalar.value >= 0x20 && scalar.value <= 0x7E {
+            start.unicodeScalars.append(scalar)
+            if start.unicodeScalars.count == tagStart.unicodeScalars.count { break }
+        }
+        return start == tagStart ? " " + line : String(line)
     }
 
     static func stripLeadingTags(_ text: String) -> String {

@@ -17,6 +17,15 @@ public protocol PaneIO: AnyObject {
     /// step, and which of the terminal's two buffers is showing. A pane that cannot say gives its screen
     /// text row by row, no cursor and no buffer.
     func liveScreen() -> PaneScreen
+    /// How many columns wide the pane is, 0 when that is not known. `read` uses it to find a key that ran
+    /// past the right edge into the next row (D35.4).
+    var columns: Int { get }
+    /// For the last rows of `screenText()`, at least `last` of them that are not empty rows at its end: how
+    /// many of the terminal's cells each uses, up to its last character that is not a blank. The terminal
+    /// knows this and the text does not say it. Nil when the pane cannot tell. Within the pane's width only:
+    /// a row the terminal kept past its right edge after a narrowing is in `screenText()` whole, and its
+    /// count stops at the edge, so a row can have more characters than this says (`Redact.rowsThatReach`).
+    func usedCells(last: Int) -> [Int]?
 }
 
 public struct PaneScreen: Equatable, Sendable {
@@ -36,6 +45,8 @@ public struct PaneScreen: Equatable, Sendable {
 
 public extension PaneIO {
     func liveScreen() -> PaneScreen { PaneScreen(lines: screenText().components(separatedBy: "\n")) }
+    var columns: Int { 0 }
+    func usedCells(last: Int) -> [Int]? { nil }
 }
 
 /// The message bus: pane registry, per-pane state, queued messages and the operations (`handle` lists them).
@@ -377,6 +388,7 @@ public final class Bus {
     /// Delivers what can be delivered now and notices turns that ended without a Stop hook.
     /// The app calls this once a second.
     public func tick() {
+        noteUnknownCallersLeftOut()
         for p in panes {
             if p.state == .running || p.state == .starting { watchQuiet(p) }
             flush(p)
@@ -522,7 +534,9 @@ public final class Bus {
             return true
         }
         guard let token, let sender = panes.first(where: { $0.token == token }) else {
-            return refuse(error(401, "unknown or missing X-Dojo-Token"))
+            let result = unknownCaller(line, error(401, "unknown or missing X-Dojo-Token"))
+            reply(result.status, result.body)
+            return true
         }
         line["from"] = sender.name
         guard case .success(let path) = program else {
@@ -565,7 +579,7 @@ public final class Bus {
             return outside(op, token: token, expected: expected, body: body)
         }
         guard let token, let sender = panes.first(where: { $0.token == token }) else {
-            return recorded(["op": op], error(401, "unknown or missing X-Dojo-Token"))
+            return unknownCaller(["op": op], error(401, "unknown or missing X-Dojo-Token"))
         }
         let args: [String: Any]
         if body.isEmpty {
@@ -606,9 +620,10 @@ public final class Bus {
 
     /// D15 (b): `/outside/send`, and nothing else. The sender is the route's, never the caller's.
     private func outside(_ op: String, token: String?, expected: String, body: Data) -> (status: Int, body: Data) {
-        var line: [String: Any] = ["op": op == "outside/send" ? "send" : op, "from": Outside.sender, "via": "outside"]
+        // The route has one operation; any other path is recorded as that, not in the caller's words (D35.6).
+        var line: [String: Any] = ["op": op == "outside/send" ? "send" : "outside/other", "from": Outside.sender, "via": "outside"]
         guard let token, Outside.same(token, expected) else {
-            return recorded(line, error(401, "unknown or missing X-Dojo-Outside-Token"))
+            return unknownCaller(line, error(401, "unknown or missing X-Dojo-Outside-Token"))
         }
         guard op == "outside/send" else { return recorded(line, error(404, "the outside route only sends: /outside/send")) }
         guard let args = (body.isEmpty ? [:] : (try? JSONSerialization.jsonObject(with: body))) as? [String: Any] else {
@@ -627,6 +642,47 @@ public final class Bus {
         let result = send(from: outsider, args, &line)
         if result.status == 200 { outsideSent.append(now()) }
         return recorded(line, result)
+    }
+
+    /// The operations a caller can name. A request that names anything else is recorded as `unknown`.
+    static let operations: Set<String> = ["panes", "send", "read", "state", "watch", "label", "hook", "relay", "outside/other"]
+    /// Lines a minute the record takes from callers with no valid token, all of them together.
+    public static let unknownCallerLinesPerMinute = 6
+    private var unknownCallerLines: [Date] = []
+    private var unknownCallersLeftOut = 0
+
+    /// Records a request that came with no valid token (D35.6). Any process on this Mac can make one, with a
+    /// path of its own choosing and as often as it likes, so the record takes the operation only when it is
+    /// one the bus has, and a few such lines a minute. What was left out is counted, and the count goes into
+    /// the record once there is room again. The caller gets the same answer either way.
+    private func unknownCaller(_ line: [String: Any], _ result: (status: Int, body: Data)) -> (status: Int, body: Data) {
+        let minute = now().addingTimeInterval(-60)
+        unknownCallerLines.removeAll { $0 < minute }
+        guard unknownCallerLines.count < Bus.unknownCallerLinesPerMinute else {
+            unknownCallersLeftOut += 1
+            return result
+        }
+        unknownCallerLines.append(now())
+        var line = line
+        if let op = line["op"] as? String, !Bus.operations.contains(op) { line["op"] = "unknown" }
+        if unknownCallersLeftOut > 0 {
+            line["left_out"] = unknownCallersLeftOut
+            unknownCallersLeftOut = 0
+        }
+        return recorded(line, result)
+    }
+
+    /// Once a minute has room again, the count of unknown callers the record left out, if no other such
+    /// line has carried it.
+    private func noteUnknownCallersLeftOut() {
+        guard unknownCallersLeftOut > 0 else { return }
+        let minute = now().addingTimeInterval(-60)
+        unknownCallerLines.removeAll { $0 < minute }
+        guard unknownCallerLines.count < Bus.unknownCallerLinesPerMinute else { return }
+        unknownCallerLines.append(now())
+        note(["op": "unknown", "outcome": "refused", "status": 401, "left_out": unknownCallersLeftOut,
+              "reason": "requests with no valid token that the record left out"])
+        unknownCallersLeftOut = 0
     }
 
     /// Records one operation with its outcome, and returns the result unchanged.
@@ -692,8 +748,10 @@ public final class Bus {
         }
         guard !text.isEmpty else { return error(400, "text is empty") }
         guard text.count <= Bus.maxMessageLength else { return error(413, "text is longer than \(Bus.maxMessageLength) characters") }
-        // The owner's choice (D21.2): the record keeps the text of each send.
-        line["text"] = text
+        // The owner's choice (D21.2): the record keeps the text of each send. With secrets taken out, as on
+        // any route out of the bus (D35.5): the record stays on disk for 30 days. What is typed into the
+        // target is the text as sent.
+        line["text"] = Redact.apply(text, tokens: panes.map(\.token)).text
         line["chars"] = text.count
         let before = target.queue.count
         target.queue.append((sender: sender, text: text))
@@ -724,9 +782,13 @@ public final class Bus {
         guard let target = target(args) else { return noPane(args) }
         let requested = (args["lines"] as? NSNumber)?.intValue ?? 40
         let lines = min(max(requested, 1), Bus.maxReadLines)
-        let screen = Bus.lastLines(target.io?.screenText() ?? "", lines)
+        // the rows and, for each, how many of the terminal's cells it uses within the width: two calls, since
+        // the terminal gives no row's cells past its width (see `PaneIO.usedCells`). Redact counts a row by
+        // the larger of that and its characters, so output between the two calls can only join more rows.
+        let picked = Bus.lastRows(target.io?.screenText() ?? "", cells: target.io?.usedCells(last: lines), lines)
+        let screen = picked.text
         // D21.2: secrets are taken out of what leaves the bus, always; the pane's own screen is untouched.
-        let clean = Redact.apply(screen, tokens: panes.map(\.token))
+        let clean = Redact.apply(screen, tokens: panes.map(\.token), width: target.io?.columns ?? 0, cells: picked.cells)
         line["lines"] = screen.isEmpty ? 0 : screen.components(separatedBy: "\n").count
         line["redacted"] = clean.count
         return ok(["pane": target.name, "state": target.state.rawValue, "text": clean.text, "redacted": clean.count])
@@ -1080,13 +1142,27 @@ public final class Bus {
 
     /// The last `count` lines, trailing blanks removed.
     public static func lastLines(_ text: String, _ count: Int) -> String {
-        var lines = text.components(separatedBy: "\n").map { line in
+        lastRows(text, cells: nil, count).text
+    }
+
+    /// The last `count` rows of a pane's text, without the blanks at each row's end and the empty rows at
+    /// the text's end, and for each of them its used cells where the pane gave them. `cells` is for the
+    /// last rows of the text, however many the pane counted: the two are lined up from the end. A pane's
+    /// text ends each row with a line break, which leaves one empty piece after the last row; it is not a
+    /// row. Nil cells when any of the rows picked has none.
+    public static func lastRows(_ text: String, cells: [Int]?, _ count: Int) -> (text: String, cells: [Int]?) {
+        var pieces = text.components(separatedBy: "\n")
+        if text.hasSuffix("\n") { pieces.removeLast() }
+        var rows: [(text: String, cells: Int?)] = pieces.enumerated().map { i, line in
             var l = Substring(line)
             while let c = l.last, c == " " || c == "\r" || c == "\t" { l = l.dropLast() }
-            return String(l)
+            let from = cells.map { i - (pieces.count - $0.count) }
+            return (String(l), from.flatMap { $0 >= 0 ? cells?[$0] : nil })
         }
-        while let last = lines.last, last.isEmpty { lines.removeLast() }
-        return lines.suffix(count).joined(separator: "\n")
+        while let last = rows.last, last.text.isEmpty { rows.removeLast() }
+        let picked = rows.suffix(count)
+        let used = picked.compactMap(\.cells)
+        return (picked.map(\.text).joined(separator: "\n"), cells != nil && used.count == picked.count ? used : nil)
     }
 
     static func newToken() -> String {
