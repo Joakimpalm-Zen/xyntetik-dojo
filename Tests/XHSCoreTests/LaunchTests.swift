@@ -319,7 +319,7 @@ import Testing
         #expect(plan.executable == "/bin/zsh")
         #expect(plan.environment == ["DOJO_PANE": "agy-1", "DOJO_PORT": "7788", "DOJO_TOKEN": "tok"])
         let rule = "DOJO_PEER_RULE=" + PeerRule.launchPrompt(paneName: "agy-1")
-        #expect(shellArgs(plan.args[3], home: home) == ["env", "PATH=/home/tester/.dojo/bin:/usr/bin:/bin", rule, "agy"])
+        #expect(shellArgs(plan.args[3]) == ["env", "PATH=/home/tester/.dojo/bin:/usr/bin:/bin", rule, "agy"])
         let id = "d38d38d3-8d38-4d38-8d38-d38d38d38d38"
         #expect(words(.agy, unrestricted: false, session: id) == [.literal(rule), .literal("agy"), .literal("--conversation"), .literal(id)])
         #expect(words(.agy, unrestricted: true) == [.literal(rule), .literal("agy"), .literal("--dangerously-skip-permissions")])
@@ -329,7 +329,7 @@ import Testing
         #expect(Launcher.reportsHooks.contains(.agy))
         let remote = Launcher.plan(kind: .agy, paneName: "agy-2", host: "user@box", port: 7788, token: "tok",
                                    runnerModel: nil, loginShell: "/bin/zsh")
-        let inner = shellArgs(shellArgs(remote.args[3], home: home)[9], home: "/remote/home")[4]
+        let inner = shellArgs(shellArgs(remote.args[3])[9], home: "/remote/home")[4]
         #expect(reachArgs(inner, home: "/remote/home")?.last == Launcher.reachCheck)
         #expect(Array(harnessArgs(inner, home: "/remote/home").suffix(2))
                     == ["DOJO_PEER_RULE=" + PeerRule.launchPrompt(paneName: "agy-2"), "agy"])
