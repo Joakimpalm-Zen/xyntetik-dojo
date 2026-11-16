@@ -763,10 +763,11 @@ public final class Bus {
             pane.hasDraft = false
             onChange?()
         }
-        // A submission the hook names: evidence only when it carries the text the bus pasted. When the hook
-        // came says nothing, since a hook of an earlier prompt can come late.
+        // A submission the hook names: evidence for the owner's Enter only when it carries the text the bus
+        // pasted AND comes after that Enter. A hook of an earlier prompt can come late, and an earlier prompt
+        // can have had the very same text: a hook that was here before the Enter proves nothing about it.
         if let name = event["hook_event_name"] as? String,
-           name == "UserInputSubmitted" || (name == "UserPromptSubmit" && pane.kind != .pi),
+           name == "UserInputSubmitted" || (name == "UserPromptSubmit" && pane.kind != .pi), pane.ownerEnterAfterPaste,
            let prompt = event["prompt"] as? String, let pasted = pane.pasted, Composer.sameText(prompt, pasted) {
             pane.hookCarriedThePaste = true
         }
@@ -928,11 +929,12 @@ public final class Bus {
     /// What the owner's Enter after the bus's paste did (D35.1). Enter alone does not say: in a harness it
     /// can accept a completion, or answer a dialog.
     private enum OwnersEnter {
-        /// It sent the bus's text: a hook reported a submission that carried that text, or a free composer
-        /// on the screen is empty.
+        /// It sent the bus's text: a free composer on the screen is empty, or shows the harness's own row
+        /// for a message it has queued; or, where the screen does not show that the text is another's now, a
+        /// hook after that Enter reported a submission that carried the text.
         case sentIt
         /// A free composer holds other text: a completion edited what the bus pasted. It is the owner's
-        /// draft now.
+        /// draft now, whatever a hook said.
         case leftADraft
         /// The composer still holds the bus's text, or there is no composer on the screen (a dialog): nothing
         /// is known, and the bus's Enter stays owed.
@@ -940,15 +942,19 @@ public final class Bus {
     }
 
     private func ownersEnter(_ p: Pane, _ io: PaneIO) -> OwnersEnter {
-        if p.hookCarriedThePaste { return .sentIt }
         // For a harness with no composer rule Enter is all there is, as before.
         guard Composer.rule(for: p.kind) != nil, let text = p.pasted else { return .sentIt }
+        // The screen first. Where it shows no free composer (a dialog, the other buffer, text over several
+        // rows), or one that still holds the bus's text, only a hook can say the text was sent.
+        let hook: OwnersEnter = p.hookCarriedThePaste ? .sentIt : .unknown
         let screen = io.liveScreen()
-        if let home = p.harnessBuffer, let alternate = screen.alternate, alternate != home { return .unknown }
+        if let home = p.harnessBuffer, let alternate = screen.alternate, alternate != home { return hook }
         let cursor = cursorEvidence.contains(p.kind) ? screen.cursorLine : nil
-        guard Composer.look(kind: p.kind, lines: screen.lines, cursorLine: cursor) != nil else { return .unknown }
+        guard let free = Composer.look(kind: p.kind, lines: screen.lines, cursorLine: cursor) else { return hook }
         if Composer.shownEmpty(kind: p.kind, screen: screen.lines.joined(separator: "\n")) { return .sentIt }
-        if Composer.holding(kind: p.kind, lines: screen.lines, cursorLine: cursor, pasted: text, before: p.look) != nil { return .unknown }
+        // The harness's own row in a composer that holds no typed text: the pasted text has left it.
+        if Composer.rowsOfAComposerTheTextLeft(for: p.kind).contains(free.composer) { return .sentIt }
+        if Composer.holding(kind: p.kind, lines: screen.lines, cursorLine: cursor, pasted: text, before: p.look) != nil { return hook }
         return .leftADraft
     }
 

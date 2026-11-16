@@ -52,6 +52,14 @@ public enum Composer {
         }
     }
 
+    /// What a harness writes in a free composer that holds no typed text, where that is not an empty one by
+    /// `shownEmpty`: Claude Code's row once a message is queued behind the turn it is working on, read off a
+    /// pane on 2026-11-15. It is known only where the bus asks what the owner's Enter did with the text it
+    /// pasted; a draft hold ends on an empty composer as before.
+    static func rowsOfAComposerTheTextLeft(for kind: HarnessKind) -> [String] {
+        kind == .claude ? ["Press up to edit queued messages"] : []
+    }
+
     /// What the bus saw of a composer when it typed into it: what the composer's row said after its mark, and
     /// the rows under it. The Enter is pressed against this.
     public struct Look: Equatable, Sendable {
