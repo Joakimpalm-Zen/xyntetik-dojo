@@ -42,14 +42,14 @@ import Testing
         let plan = Launcher.plan(kind: .codex, paneName: "codex-2", host: "user@box", port: 7788, token: "tok",
                                  runnerModel: nil, loginShell: "/bin/zsh")
         let ssh = shellArgs(plan.args[3], home: home)
-        #expect(Array(ssh.prefix(9)) == ["ssh", "-t", "-R", "127.0.0.1:7788:127.0.0.1:7788", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=3", "user@box"])
+        #expect(Array(ssh.prefix(9)) == ["ssh", "-t", "-R", "7788:127.0.0.1:7788", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=3", "user@box"])
         #expect(ssh.count == 10)
         // On the remote host: the login shell, then the pane's check of its way to the bus (D35.2), then env
         // with the pane's variables, then the harness.
         let remote = shellArgs(ssh[9], home: "/remote/home")
         #expect(Array(remote.prefix(4)) == ["/bin/remote-shell", "-l", "-i", "-c"])
         #expect(reachArgs(remote[4], home: "/remote/home") == ["env", "DOJO_PANE=codex-2", "DOJO_PORT=7788", "DOJO_TOKEN=tok",
-                                                               "PATH=/remote/home/.dojo/bin:/usr/bin:/bin", "sh", "-c", Launcher.reachCheck])
+                                                               "PATH=/remote/home/.dojo/bin:/usr/bin:/bin", "/bin/sh", "-c", Launcher.reachCheck])
         let harness = harnessArgs(remote[4], home: "/remote/home")
         #expect(Array(harness.prefix(6)) == ["env", "DOJO_PANE=codex-2", "DOJO_PORT=7788", "DOJO_TOKEN=tok",
                                              "PATH=/remote/home/.dojo/bin:/usr/bin:/bin", "codex"])
@@ -66,7 +66,7 @@ import Testing
     @Test func remoteUsesTheConfiguredPort() {
         let plan = Launcher.plan(kind: .pi, paneName: "pi-1", host: "box", port: 9001, token: "t",
                                  runnerModel: nil, loginShell: "/bin/bash")
-        #expect(shellArgs(plan.args[3]).prefix(4) == ["ssh", "-t", "-R", "127.0.0.1:9001:127.0.0.1:9001"])
+        #expect(shellArgs(plan.args[3]).prefix(4) == ["ssh", "-t", "-R", "9001:127.0.0.1:9001"])
     }
 
     @Test func piUsesRunnerProviderAndTheFirstModel() throws {
@@ -92,7 +92,7 @@ import Testing
         let windows = Launcher.plan(kind: .claude, paneName: "claude-3", host: "me@box", port: 7788, token: "tok",
                                     runnerModel: nil, loginShell: "/bin/zsh", remoteShell: .windows)
         let ssh = shellArgs(windows.args[3], home: home)
-        #expect(Array(ssh.prefix(9)) == ["ssh", "-t", "-R", "127.0.0.1:7788:127.0.0.1:7788", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=3", "me@box"])
+        #expect(Array(ssh.prefix(9)) == ["ssh", "-t", "-R", "7788:127.0.0.1:7788", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=3", "me@box"])
         #expect(ssh.count == 10)
         let remote = ssh[9]
         let head = #"set MSYS2_PATH_TYPE=inherit&& C:\msys64\usr\bin\bash.exe -lc "eval \"$^(echo "#
@@ -108,8 +108,12 @@ import Testing
         let posixInner = shellArgs(shellArgs(posix.args[3], home: home)[9], home: "/remote/home")[4]
         let windowsInner = try #require(Launcher.windowsInnerCommand(remote))
         #expect(harnessArgs(windowsInner, home: "/c/Users/me") == harnessArgs(posixInner, home: "/c/Users/me"))
-        #expect(reachArgs(windowsInner, home: "/c/Users/me") == reachArgs(posixInner, home: "/c/Users/me"))
-        #expect(reachArgs(windowsInner, home: "/c/Users/me")?.last == Launcher.reachCheck)
+        // the check is the same but for the shell that reads it: by its full path on a POSIX host
+        let windowsCheck = try #require(reachArgs(windowsInner, home: "/c/Users/me"))
+        let posixCheck = try #require(reachArgs(posixInner, home: "/c/Users/me"))
+        #expect(windowsCheck.filter { $0 != "sh" } == posixCheck.filter { $0 != "/bin/sh" })
+        #expect(windowsCheck.contains("sh") && posixCheck.contains("/bin/sh"))
+        #expect(windowsCheck.last == Launcher.reachCheck)
         let harness = harnessArgs(windowsInner, home: "/c/Users/me")
         #expect(Array(harness.prefix(6)) == ["env", "DOJO_PANE=claude-3", "DOJO_PORT=7788", "DOJO_TOKEN=tok",
                                              "PATH=/c/Users/me/.dojo/bin:/usr/bin:/bin", "claude"])

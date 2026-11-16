@@ -37,16 +37,17 @@ import Testing
         }
     }
 
-    /// D35.2: with no address ssh asks for the loopback listeners of both families and is content when
-    /// either binds. A port taken on IPv4 alone then passed for a tunnel, while the hooks call 127.0.0.1.
-    @Test func theForwardAsksForTheListenerOnIPv4ByName() {
+    /// The forward is asked for as on main, with no address named: a host whose sshd permits listening on
+    /// `localhost` only would refuse 127.0.0.1 by name. What finds a dead tunnel is the pane's check, not
+    /// ssh's complaint.
+    @Test func theForwardIsAskedForAsOnMain() {
         for kind in [HarnessKind.claude, .codex, .pi, .shell, .runner] {
             for shell in [RemoteShell.posix, .windows] {
                 let words = shellArgs(Launcher.plan(kind: kind, paneName: "\(kind)-1", host: "user@box", port: 7788, token: "tok",
                                                     runnerModel: nil, loginShell: "/bin/zsh", remoteShell: shell, remotePort: 50001,
                                                     runnerForward: kind == .runner ? 18081 : nil).args[3])
                 let forward = words.firstIndex(of: "-R").map { words[$0 + 1] }
-                #expect(forward == "127.0.0.1:50001:127.0.0.1:7788", "\(kind) \(shell)")
+                #expect(forward == "50001:127.0.0.1:7788", "\(kind) \(shell)")
                 #expect(words.filter { $0 == "-R" }.count == 1, "\(kind) \(shell)")
                 #expect(words.contains("ServerAliveInterval=30") && words.contains("ServerAliveCountMax=3"), "\(kind) \(shell)")
             }
@@ -78,8 +79,10 @@ import Testing
             for kind in [HarnessKind.claude, .codex, .pi] {
                 let inner = try hostsLine(kind, shell)
                 let check = try #require(reachArgs(inner, home: "/remote/home"), "\(kind) \(shell)")
+                // sh by its full path on a POSIX host: a profile there can leave /bin off the PATH
                 #expect(check == ["env", "DOJO_PANE=\(kind)-1", "DOJO_PORT=50001", "DOJO_TOKEN=tok",
-                                  "PATH=/remote/home/.dojo/bin:/usr/bin:/bin", "sh", "-c", Launcher.reachCheck], "\(kind) \(shell)")
+                                  "PATH=/remote/home/.dojo/bin:/usr/bin:/bin", shell == .posix ? "/bin/sh" : "sh", "-c", Launcher.reachCheck],
+                        "\(kind) \(shell)")
                 // the harness after it is given the same three and the same PATH
                 #expect(Array(harnessArgs(inner, home: "/remote/home").prefix(5)) == Array(check.prefix(5)), "\(kind) \(shell)")
             }
@@ -108,6 +111,16 @@ import Testing
     /// dearly, and it is one line.
     @Test func theCheckIsCheapToQuote() {
         #expect(!Launcher.reachCheck.contains("'") && !Launcher.reachCheck.contains("\\") && !Launcher.reachCheck.contains("\n"))
+    }
+
+    /// The check goes by the pane's token, not its name: a pane renamed while it starts has a good tunnel.
+    /// And it knows every state a bus can give.
+    @Test func theCheckNamesNoPaneAndKnowsEveryState() {
+        #expect(!Launcher.reachCheck.contains("DOJO_PANE"))
+        #expect(Launcher.reachCheck.contains("dojo panes"))
+        for state in [PaneState.starting, .running, .idle, .prompt, .exited] {
+            #expect(Launcher.reachCheck.contains("\" \(state.rawValue) \""), "\(state)")
+        }
     }
 
     @Test func aLocalPaneKeepsTheBusPort() {

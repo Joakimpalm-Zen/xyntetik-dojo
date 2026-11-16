@@ -170,19 +170,18 @@ import Testing
     }
 
     /// Main's command for a remote pane, put together from the parts main's `Launcher.plan` uses, in its order,
-    /// as it was before D32 and D35.2. `since352` gives it the two things D35.2 changes, and nothing else: the
-    /// forward asks for the listener on 127.0.0.1 by name, and a pane that reports hooks first checks its way
-    /// to the bus.
+    /// as it was before D32 and D35.2. `since352` gives it the one thing D35.2 changes, and nothing else: a
+    /// pane that reports hooks first checks its way to the bus.
     static func mainsCommand(kind: HarnessKind, directory: String?, windows: Bool = false, since352: Bool = false) -> String {
         var assignments = ["DOJO_PANE=\(kind)-1", "DOJO_PORT=50001", "DOJO_TOKEN=tok"]
         if kind == .runner { assignments += ["DOJO_RUNNER_PORT=\(Launcher.remoteRunnerPort)", "DOJO_RUNNER_TRAY=off"] }
         let harness = Launcher.harnessWords(kind: kind, paneName: "\(kind)-1", port: 50001, runnerModel: nil)
         let env: [ShellWord] = [.literal("env")] + assignments.map { ShellWord.literal($0) } + [.raw(#"PATH="$HOME/.dojo/bin:$PATH""#)]
         let reach = since352 && Launcher.reportsHooks.contains(kind)
-            ? Shell.line(env + [.literal("sh"), .literal("-c"), .literal(Launcher.reachCheck)]) + " && " : ""
+            ? Shell.line(env + [.literal(windows ? "sh" : "/bin/sh"), .literal("-c"), .literal(Launcher.reachCheck)]) + " && " : ""
         let inner = (directory.map { "cd " + Shell.homeQuoted($0) + " && " } ?? "") + reach + "exec " + Shell.line(env + harness)
         let remote = windows ? Launcher.windowsRemoteCommand(inner: inner) : #"exec "$SHELL" -l -i -c "# + Shell.quote(inner)
-        var ssh: [ShellWord] = [.literal("ssh"), .literal("-t"), .literal("-R"), .literal((since352 ? "127.0.0.1:" : "") + "50001:127.0.0.1:7788")]
+        var ssh: [ShellWord] = [.literal("ssh"), .literal("-t"), .literal("-R"), .literal("50001:127.0.0.1:7788")]
         if kind == .runner {
             ssh += [.literal("-L"), .literal("18081:127.0.0.1:\(Launcher.remoteRunnerPort)"), .literal("-o"), .literal("ExitOnForwardFailure=yes")]
         }
@@ -192,19 +191,18 @@ import Testing
     }
 
     /// A Windows host's command is read by cmd.exe and MSYS2 bash, never by fish. D32 did not touch it, and
-    /// D35.2 changes two things in it and nothing else: character for character it is main's with the
-    /// listener asked for on 127.0.0.1 and, for a pane that reports hooks, the check of its way to the bus.
-    @Test func aWindowsHostsCommandIsMainsToTheLetterButForTheForwardAndTheCheck() {
+    /// D35.2 changes one thing in it and nothing else: character for character it is main's with, for a
+    /// pane that reports hooks, the check of its way to the bus.
+    @Test func aWindowsHostsCommandIsMainsToTheLetterButForTheCheck() {
         for kind in [HarnessKind.claude, .codex, .pi, .runner, .shell] {
             for folder in [nil, #"C:\Users\me\it's here"#] as [String?] {
                 let now = Launcher.plan(kind: kind, paneName: "\(kind)-1", host: "user@box", port: 7788, token: "tok",
                                         runnerModel: nil, loginShell: "/bin/zsh", remoteShell: .windows, directory: folder,
                                         remotePort: 50001, runnerForward: kind == .runner ? 18081 : nil).args[3]
                 #expect(now == Self.mainsCommand(kind: kind, directory: folder, windows: true, since352: true), "\(kind), folder \(folder ?? "none")")
-                // a pane without hooks differs from main in the forward only
+                // a pane without hooks is main's to the letter
                 if !Launcher.reportsHooks.contains(kind) {
-                    #expect(now.replacingOccurrences(of: "-R 127.0.0.1:50001:", with: "-R 50001:")
-                            == Self.mainsCommand(kind: kind, directory: folder, windows: true), "\(kind), folder \(folder ?? "none")")
+                    #expect(now == Self.mainsCommand(kind: kind, directory: folder, windows: true), "\(kind), folder \(folder ?? "none")")
                 }
             }
         }
