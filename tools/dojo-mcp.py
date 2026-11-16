@@ -560,6 +560,11 @@ def install_agy(home, out, windows):
         out.write("dojo install: agy was not found (PATH, ~/.local/bin); its plugin is not installed\n")
         return
     folder = write_agy_plugin(os.path.join(home, ".dojo", "agy", "dojo"), home)
+    # The app runs this at every start: agy is asked only when its copy is not this plugin.
+    installed = os.path.join(home, ".gemini", "config", "plugins", "dojo")
+    if all(read_text(os.path.join(installed, name)) == read_text(os.path.join(folder, name)) for name in agy_plugin_files(home)):
+        out.write("dojo install: agy already has Dojo's plugin (%s)\n" % installed)
+        return
     try:
         done = register_agy_plugin(agy, folder)
     except Exception as e:
