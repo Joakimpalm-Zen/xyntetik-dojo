@@ -15,6 +15,11 @@ public enum Composer {
         var marks: [String]
         /// What the harness shows in an empty composer. Taken from the harness itself, not guessed.
         var placeholders: Set<String>
+        /// The harness draws a hint at the right edge of its composer's row, after its placeholder and its
+        /// own padding (Codex near a usage limit), so a placeholder followed by two spaces is still empty.
+        /// Only where that was seen: for any other harness the owner's text after a placeholder is a draft
+        /// (the second read of #113, on agy's mode sentences).
+        var hintAfterPlaceholder = false
     }
 
     /// Codex 0.166.0: the composer is `› ` and its placeholders are in the binary. Claude Code: `❯` and a
@@ -23,7 +28,8 @@ public enum Composer {
     /// composer's place, their highlighted choice marked `> 1.`.
     static func rule(for kind: HarnessKind) -> Rule? {
         switch kind {
-        case .codex: return Rule(marks: ["›"], placeholders: ["Ask Codex to do anything", "Ask a follow-up question", "Waiting for startup"])
+        case .codex: return Rule(marks: ["›"], placeholders: ["Ask Codex to do anything", "Ask a follow-up question", "Waiting for startup"],
+                                 hintAfterPlaceholder: true)
         case .claude: return Rule(marks: ["❯", ">"], placeholders: [])
         case .agy: return Rule(marks: [">"], placeholders: agyModes)
         case .pi, .runner, .shell: return nil
@@ -356,7 +362,7 @@ public enum Composer {
         // Codex draws a hint at the right edge of the same row when a usage limit is near ("4 on 17 Nov ·
         // /status"). A placeholder is only drawn in an empty composer, so one followed by the harness's own
         // padding is still empty; a single space and more words is the owner's text.
-        let padded = rule.placeholders.contains { rest.hasPrefix($0 + "  ") }
+        let padded = rule.hintAfterPlaceholder && rule.placeholders.contains { rest.hasPrefix($0 + "  ") }
         guard rest.isEmpty || rule.placeholders.contains(rest) || padded else { return false }
         // A draft that goes on in the next row is not empty, however its first row looks.
         guard at + 1 < foot.count else { return true }
