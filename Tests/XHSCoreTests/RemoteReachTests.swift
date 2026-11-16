@@ -16,6 +16,8 @@ import Testing
         case answers = "printf '%s\\n' '  fable        claude local          idle     queued=0 claude-fable-5-2' '* claude-1     claude box            starting queued=0 '; exit 0"
         /// The pane was renamed while it started: the bus knows it by its token, under another name.
         case renamed = "printf '%s\\n' '* new-name     claude box            starting queued=0 '; exit 0"
+        /// D38: the caller is an Antigravity pane, a kind the bus gives since then.
+        case agyAnswers = "printf '%s\\n' '* agy-1        agy    box            starting queued=0 '; exit 0"
         /// Nothing listens on the pane's port: the real shim's words.
         case notReachable = "echo 'dojo: bus not reachable on 127.0.0.1:50001: <urlopen error [Errno 61] Connection refused>' >&2; exit 1"
         /// Another Mac's bus answers, and does not know this pane's token: the real shim's words.
@@ -74,7 +76,7 @@ import Testing
         /// cases that are recognised by their own sign as a host that has no hooks today either.
         var starts: Bool {
             switch self {
-            case .answers, .renamed, .aBannerBeforeTheAnswer, .aLabelThatSaysQueued, .old, .noPython, .noPythonInAShellsWords,
+            case .answers, .renamed, .agyAnswers, .aBannerBeforeTheAnswer, .aLabelThatSaysQueued, .old, .noPython, .noPythonInAShellsWords,
                  .noPythonBehindAWrapper: return true
             default: return false
             }

@@ -310,6 +310,43 @@ import Testing
                     .contains(.literal("--dangerously-bypass-approvals-and-sandbox")))
     }
 
+    /// D38: the Antigravity CLI. Its --settings takes no hooks ("unknown setting") and it has no flag for a
+    /// system prompt, so the pane's peer rule goes into its environment, where the SessionStart hook of Dojo's
+    /// plugin hands it to agy (`dojo hook agy`). A conversation is resumed by its id, the tick is agy's own flag.
+    @Test func agyGetsThePeerRuleThroughItsEnvironmentAndResumesByConversation() throws {
+        let plan = Launcher.plan(kind: .agy, paneName: "agy-1", host: nil, port: 7788, token: "tok",
+                                 runnerModel: nil, loginShell: "/bin/zsh")
+        #expect(plan.executable == "/bin/zsh")
+        #expect(plan.environment == ["DOJO_PANE": "agy-1", "DOJO_PORT": "7788", "DOJO_TOKEN": "tok"])
+        let rule = "DOJO_PEER_RULE=" + PeerRule.launchPrompt(paneName: "agy-1")
+        #expect(shellArgs(plan.args[3], home: home) == ["env", "PATH=/home/tester/.dojo/bin:/usr/bin:/bin", rule, "agy"])
+        let id = "d38d38d3-8d38-4d38-8d38-d38d38d38d38"
+        #expect(words(.agy, unrestricted: false, session: id) == [.literal(rule), .literal("agy"), .literal("--conversation"), .literal(id)])
+        #expect(words(.agy, unrestricted: true) == [.literal(rule), .literal("agy"), .literal("--dangerously-skip-permissions")])
+        #expect(words(.agy, unrestricted: true, session: id).suffix(3)
+                    == [.literal("--conversation"), .literal(id), .literal("--dangerously-skip-permissions")])
+        // on a host the same words, after the pane's check of its way to the bus
+        #expect(Launcher.reportsHooks.contains(.agy))
+        let remote = Launcher.plan(kind: .agy, paneName: "agy-2", host: "user@box", port: 7788, token: "tok",
+                                   runnerModel: nil, loginShell: "/bin/zsh")
+        let inner = shellArgs(shellArgs(remote.args[3], home: home)[9], home: "/remote/home")[4]
+        #expect(reachArgs(inner, home: "/remote/home")?.last == Launcher.reachCheck)
+        #expect(Array(harnessArgs(inner, home: "/remote/home").suffix(2))
+                    == ["DOJO_PEER_RULE=" + PeerRule.launchPrompt(paneName: "agy-2"), "agy"])
+    }
+
+    @Test func agyIsInThePickerWithItsOwnPrompts() {
+        #expect(HarnessKind.pickable == [.claude, .codex, .pi, .agy])
+        #expect(HarnessKind.agy.title == "Antigravity" && HarnessKind.agy.isAgent)
+        #expect(PaneNames.next(for: .agy, taken: ["agy-1"]) == "agy-2")
+        #expect(Permissions.canAsk(.agy))
+        #expect(!Permissions.unrestricted(.agy, ticked: false) && Permissions.unrestricted(.agy, ticked: true))
+        let f = FileManager.default.temporaryDirectory.appendingPathComponent("unrestricted-\(UUID().uuidString)")
+        #expect(Permissions.remember(.agy, ticked: true, in: f) == [.agy])
+        #expect(Permissions.remembered(f) == [.agy])
+        try? FileManager.default.removeItem(at: f)
+    }
+
     @Test func piHasNoPromptsSoItsPaneIsUnrestrictedEitherWay() {
         #expect(words(.pi, unrestricted: true) == words(.pi, unrestricted: false))
         #expect(!Permissions.canAsk(.pi) && Permissions.unrestricted(.pi, ticked: false))

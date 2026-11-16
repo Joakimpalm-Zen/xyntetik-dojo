@@ -446,6 +446,102 @@ class ShimTest(unittest.TestCase):
             self.assertEqual(f.read(), mod.codex_block().lstrip("\n"))
 
 
+class AgyHookTest(unittest.TestCase):
+    """D38: `dojo hook agy` takes the Antigravity CLI's hook events, in agy's own camelCase JSON, and posts
+    them to the bus in the words the bus knows. agy reads one JSON object from every hook's stdout. The
+    payloads here have the shape agy 1.5.9 sent in a probe on 2026-11-16, with the paths made neutral."""
+
+    CONVERSATION = "d38d38d3-8d38-4d38-8d38-d38d38d38d38"
+    RULE = "You run in the terminal named agy-1 in Xyntetik Dojo. Lines that begin with [from: <name>] are peer messages."
+
+    def setUp(self):
+        self.bus = FakeBus()
+        self.env = dict(os.environ, DOJO_TOKEN="tok-1", DOJO_PORT=str(self.bus.port), DOJO_PANE="agy-1",
+                        DOJO_PEER_RULE=self.RULE)
+
+    def tearDown(self):
+        self.bus.close()
+
+    def event(self, name, **fields):
+        base = {"artifactDirectoryPath": "/home/tester/.gemini/antigravity-cli/brain/" + self.CONVERSATION,
+                "conversationId": self.CONVERSATION, "cwd": "/home/tester/work", "hookEventName": name,
+                "modelName": "gemini-3.8-flash-high",
+                "transcriptPath": "/home/tester/.gemini/antigravity-cli/brain/%s/.system_generated/logs/transcript_full.jsonl"
+                                  % self.CONVERSATION,
+                "workspacePaths": ["/home/tester/work"]}
+        base.update(fields)
+        return base
+
+    def hook(self, event, env=None):
+        r = subprocess.run([sys.executable, SHIM, "hook", "agy"], input=json.dumps(event), capture_output=True,
+                           text=True, env=env or self.env, timeout=20)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return json.loads(r.stdout)
+
+    def posted(self):
+        return [body for path, token, body in self.bus.requests if path == "/hook"]
+
+    def test_session_start_reports_the_session_and_hands_agy_the_panes_peer_rule(self):
+        reply = self.hook(self.event("SessionStart"))
+        self.assertEqual(reply, {"injectSteps": [{"systemMessage": {"systemMessage": self.RULE}}]})
+        self.assertEqual(self.posted(), [{"hook_event_name": "SessionStart", "session_id": self.CONVERSATION,
+                                          "model": "gemini-3.8-flash-high"}])
+
+    def test_the_first_model_call_of_a_turn_is_the_prompt(self):
+        reply = self.hook(self.event("PreInvocation", invocationNum=0, initialNumSteps=4,
+                                     lastUserInput="[from: claude] hello there"))
+        self.assertEqual(reply, {})
+        self.assertEqual(self.posted(), [{"hook_event_name": "UserPromptSubmit", "session_id": self.CONVERSATION,
+                                          "model": "gemini-3.8-flash-high", "prompt": "[from: claude] hello there"}])
+
+    def test_a_later_model_call_of_the_turn_is_work_going_on(self):
+        reply = self.hook(self.event("PreInvocation", invocationNum=1, initialNumSteps=7, lastUserInput="run it"))
+        self.assertEqual(reply, {})
+        self.assertEqual(self.posted(), [{"hook_event_name": "PostToolUse", "session_id": self.CONVERSATION,
+                                          "model": "gemini-3.8-flash-high"}])
+
+    def test_a_tool_that_finished_and_the_end_of_a_turn(self):
+        self.assertEqual(self.hook(self.event("PostToolUse", stepIdx=5, toolCall={"id": "t1", "name": "run_command"})), {})
+        self.assertEqual(self.hook(self.event("Stop", executionNum=0, terminationReason="NO_TOOL_CALL", fullyIdle=True,
+                                              continuationActive=False, error="")), {})
+        self.assertEqual([e["hook_event_name"] for e in self.posted()], ["PostToolUse", "Stop"])
+
+    def test_events_the_bus_has_no_use_for_post_nothing(self):
+        for name in ("PreToolUse", "PostInvocation", "SomethingNew"):
+            self.assertEqual(self.hook(self.event(name, invocationNum=0)), {})
+        self.assertEqual(self.posted(), [])
+
+    def test_outside_dojo_it_answers_agy_and_does_nothing(self):
+        env = {k: v for k, v in self.env.items() if k != "DOJO_TOKEN"}
+        self.assertEqual(self.hook(self.event("SessionStart"), env=env), {}, "no peer rule outside a pane")
+        self.assertEqual(self.hook(self.event("Stop"), env=env), {})
+        self.assertEqual(self.bus.requests, [])
+
+    def test_a_pane_without_a_peer_rule_gets_none_injected(self):
+        env = {k: v for k, v in self.env.items() if k != "DOJO_PEER_RULE"}
+        self.assertEqual(self.hook(self.event("SessionStart"), env=env), {})
+        self.assertEqual(len(self.posted()), 1)
+
+    def test_it_answers_agy_whatever_happens(self):
+        env = dict(self.env, DOJO_PORT="1")  # nothing listens there
+        self.assertEqual(self.hook(self.event("Stop"), env=env), {})
+        r = subprocess.run([sys.executable, SHIM, "hook", "agy"], input="not json", capture_output=True, text=True,
+                           env=self.env, timeout=20)
+        self.assertEqual((r.returncode, json.loads(r.stdout)), (0, {}))
+        r = subprocess.run([sys.executable, SHIM, "hook", "agy"], input="[1, 2]", capture_output=True, text=True,
+                           env=self.env, timeout=20)
+        self.assertEqual((r.returncode, json.loads(r.stdout)), (0, {}))
+
+    def test_claude_and_codex_hooks_are_as_before(self):
+        # The differential: `dojo hook` with no harness named posts the event as it came and prints nothing,
+        # which Claude Code would otherwise read as context for its session.
+        event = {"hook_event_name": "SessionStart", "session_id": "s", "model": "m"}
+        r = subprocess.run([sys.executable, SHIM, "hook"], input=json.dumps(event), capture_output=True, text=True,
+                           env=self.env, timeout=20)
+        self.assertEqual((r.returncode, r.stdout), (0, ""))
+        self.assertEqual(self.posted(), [event])
+
+
 
 class ServerRobustness(unittest.TestCase):
     def test_bad_arguments_get_errors_and_the_server_lives_on(self):
