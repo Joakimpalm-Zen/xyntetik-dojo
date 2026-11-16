@@ -75,7 +75,7 @@ You need macOS 14 or later, `python3` on every host that runs a harness, and `cl
 ## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> Add a pane
 
 <p align="center">
-  <img src="packaging/readme/picker.png" alt="The picker: Claude, Codex and pi with host, folder and name and an Open button, the Skip permission prompts box with what it does; under them the local model card with Runner's state, a Start Runner button and a popup of the models that fit" width="540">
+  <img src="packaging/readme/picker.png" alt="The picker: Claude, Codex, pi and Antigravity with host, folder and name and an Open button, the Skip permission prompts box with what it does; under them the local model card with Runner's state and a Start Runner button" width="540">
 </p>
 
 Press plus, pick Claude, Codex, pi or Antigravity, and press Open. Fill in a host to run it on another machine, a folder to start in, or a name if `claude-1` is not it. A pane keeps its harness's own permission prompts unless you tick **Skip permission prompts**, and the picker remembers that per agent. The Runner card below starts the local model the pi panes use.

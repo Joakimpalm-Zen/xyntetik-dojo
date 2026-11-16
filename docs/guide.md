@@ -21,7 +21,7 @@ Everything the [README](../README.md) leaves out: what each part of the window d
 
 - macOS 14 or later. Built and tested on macOS 27 (Apple Silicon) with the Swift 6.4 Command Line Tools.
 - `python3` on every host that runs a harness (the bus shim uses only the standard library).
-- `claude`, `codex` and `pi` on your login shell's PATH, each already logged in.
+- `claude`, `codex`, `agy` and `pi` on your login shell's PATH, each already logged in.
 - For pi: [Xyntetik Runner](https://github.com/Joakimpalm-Zen/xyntetik-runner) serving a model at `http://127.0.0.1:8080/v1`. A Runner pane sets that up (next section); if you already run Runner, or another server that answers `GET /v1/models` on that port (llama-server, for one), pi uses it as it is. The picker names that server, and a Runner pane steps aside while it holds the port.
 
 <a id="first-run"></a>
@@ -47,10 +47,10 @@ What needs you, once:
 ## Adding a pane
 
 <p align="center">
-  <img src="../packaging/readme/picker.png" alt="The picker: Claude, Codex and pi with host, folder and name and an Open button, the Skip permission prompts box with what it does; under them the local model card with Runner's state, a Start Runner button and a popup of the models that fit" width="540">
+  <img src="../packaging/readme/picker.png" alt="The picker: Claude, Codex, pi and Antigravity with host, folder and name and an Open button, the Skip permission prompts box with what it does; under them the local model card with Runner's state and a Start Runner button" width="540">
 </p>
 
-Press plus, pick Claude, Codex or pi, fill in the host, folder and name as you like and press Open (or Return). Tick "Skip permission prompts" for a pane that should act without asking; unticked, the harness asks first (see "What needs you, once" above). The box comes back the way you last left it for that agent. Runner, the local model server, has a card of its own below with its state, its button and the model it serves. Leave the host empty for this Mac. A pane starts in the folder you give (type it, press Choose, or pick a recent one from the clock at the field's edge), or in your home directory. With a host set, the folder is on that host, typed as it is there; Choose and the recent folders are this Mac's, so they step aside. It runs in your login shell (`$SHELL -l -i`), so PATH is the one your terminal has. A pane never inherits `CLAUDE*` variables from the process that opened the app (so `make run` from inside a Claude Code session does not make the pane's Claude a child session). Close a pane with its x button; that ends the harness.
+Press plus, pick Claude, Codex, pi or Antigravity, fill in the host, folder and name as you like and press Open (or Return). Tick "Skip permission prompts" for a pane that should act without asking; unticked, the harness asks first (see "What needs you, once" above). The box comes back the way you last left it for that agent. Runner, the local model server, has a card of its own below with its state, its button and the model it serves. Leave the host empty for this Mac. A pane starts in the folder you give (type it, press Choose, or pick a recent one from the clock at the field's edge), or in your home directory. With a host set, the folder is on that host, typed as it is there; Choose and the recent folders are this Mac's, so they step aside. It runs in your login shell (`$SHELL -l -i`), so PATH is the one your terminal has. A pane never inherits `CLAUDE*` variables from the process that opened the app (so `make run` from inside a Claude Code session does not make the pane's Claude a child session). Close a pane with its x button; that ends the harness.
 
 A local pi pane first asks Runner for its models (`GET /v1/models`), starts pi with the first one and shows it in the header. If Runner does not answer, the pane says so and pi is not started.
 
@@ -84,7 +84,7 @@ Then press plus and enter `user@box` as the host (or pick it from the clock at t
 ssh -t -R <the pane's port>:127.0.0.1:7788 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 user@box '<harness in the remote login shell>'
 ```
 
-The harness runs in the remote login shell (`$SHELL -l -i`), so it needs to be on the PATH that shell sets. That shell can be sh, bash, zsh, dash, ksh or fish, and so can this Mac's: the command is quoted in a way all of them read alike. A csh or tcsh login shell does not work: it takes no `-l` together with a command. The reverse tunnel lets the shim on the remote host reach the bus at that port of `127.0.0.1` there. Before a Claude, Codex or pi pane starts its harness it asks the bus through that tunnel whether it knows this pane (`dojo panes`, with the pane's own port and token), and starts only on an answer that shows a bus that does: without the tunnel the harness could not report its state, and the bus would never learn of a prompt there. The remote host's own keys, logins and tokens are used; the app stores none. Use key-based SSH; a password prompt shows up in the pane. A remote pi uses the Runner on that host, which a Runner pane there can start (see Runner on a host above).
+The harness runs in the remote login shell (`$SHELL -l -i`), so it needs to be on the PATH that shell sets. That shell can be sh, bash, zsh, dash, ksh or fish, and so can this Mac's: the command is quoted in a way all of them read alike. A csh or tcsh login shell does not work: it takes no `-l` together with a command. The reverse tunnel lets the shim on the remote host reach the bus at that port of `127.0.0.1` there. Before a Claude, Codex, pi or Antigravity pane starts its harness it asks the bus through that tunnel whether it knows this pane (`dojo panes`, with the pane's own port and token), and starts only on an answer that shows a bus that does: without the tunnel the harness could not report its state, and the bus would never learn of a prompt there. The remote host's own keys, logins and tokens are used; the app stores none. Use key-based SSH; a password prompt shows up in the pane. A remote pi uses the Runner on that host, which a Runner pane there can start (see Runner on a host above).
 
 ### Windows hosts
 
