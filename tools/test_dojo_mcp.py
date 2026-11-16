@@ -509,11 +509,13 @@ class AgyHookTest(unittest.TestCase):
                                               continuationActive=False, error="")), {})
         self.assertEqual([e["hook_event_name"] for e in self.posted()], ["PostToolUse", "Stop"])
 
-    def test_a_question_puts_the_pane_at_prompt_and_any_other_tool_is_work(self):
-        # agy's question dialog sets no tool_confirmation_pending: its tool is seen before it runs
-        self.assertEqual(self.hook(self.event("PreToolUse", stepIdx=9, toolCall={"id": "t2", "name": "ask_question"})), {})
-        self.assertEqual(self.hook(self.event("PreToolUse", stepIdx=6, toolCall={"id": "t1", "name": "run_command"})), {})
-        self.assertEqual([e["hook_event_name"] for e in self.posted()], ["PermissionRequest", "PostToolUse"])
+    def test_a_question_puts_the_pane_at_prompt_and_is_let_through(self):
+        # agy's question dialog sets no tool_confirmation_pending: its tool is seen before it runs. A PreToolUse
+        # answer without a decision stops the tool (a live run on 2026-11-16 had the dojo tool refused that
+        # way), so the question is let through, and the plugin asks for no other tool.
+        self.assertEqual(self.hook(self.event("PreToolUse", stepIdx=9, toolCall={"id": "t2", "name": "ask_question"})),
+                         {"decision": "allow"})
+        self.assertEqual([e["hook_event_name"] for e in self.posted()], ["PermissionRequest"])
 
     def test_events_the_bus_has_no_use_for_post_nothing(self):
         for name in ("PostInvocation", "SomethingNew"):
@@ -669,8 +671,10 @@ class AgyHookTest(unittest.TestCase):
             command = 'python3 "$HOME/.dojo/dojo-mcp.py" hook agy'
             for event in ("SessionStart", "PreInvocation", "Stop"):
                 self.assertEqual([h["command"] for h in hooks[event]], [command], event)
-            for event in ("PreToolUse", "PostToolUse"):
-                self.assertEqual([(g["matcher"], [h["command"] for h in g["hooks"]]) for g in hooks[event]], [("*", [command])], event)
+            # PreToolUse for the question alone: an answer without a decision would stop any other tool
+            self.assertEqual([(g["matcher"], [h["command"] for h in g["hooks"]]) for g in hooks["PreToolUse"]],
+                             [("ask_question", [command])])
+            self.assertEqual([(g["matcher"], [h["command"] for h in g["hooks"]]) for g in hooks["PostToolUse"]], [("*", [command])])
             with open(os.path.join(plugin, "mcp_config.json")) as f:
                 self.assertEqual(json.load(f), {"mcpServers": {"dojo": {"command": "python3",
                                                                        "args": [os.path.join(home, ".dojo", "dojo-mcp.py")]}}})
