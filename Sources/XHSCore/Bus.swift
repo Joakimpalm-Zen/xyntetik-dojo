@@ -49,7 +49,7 @@ public extension PaneIO {
     func usedCells(last: Int) -> [Int]? { nil }
 }
 
-/// The message bus: pane registry, per-pane state, queued messages and the four operations.
+/// The message bus: pane registry, per-pane state, queued messages and the operations (`handle` lists them).
 /// Every request carries a pane's token; the token tells the bus who is asking.
 @MainActor
 public final class Bus {

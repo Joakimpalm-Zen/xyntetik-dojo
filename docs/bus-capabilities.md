@@ -118,7 +118,9 @@ Redaction is a backstop. A pattern list misses things, so the primary control is
   (choice 3). Since D35.5 it is kept with secrets taken out, as `read` does; since D35.6 a caller with no
   valid token gets a line with the operation in the bus's words only, a few a minute. A `read` records who read whom and how many lines, never the screen. A hook is the pane
   reporting on itself, so the record keeps the change of state it causes, not the hook.
-- Each line carries the SHA-256 of the line before it, so a removed or edited line shows.
+- Each line carries the SHA-256 of the line before it, so a line removed or edited in the middle shows.
+  Lines cut from the end, days removed from the start and a record written again with new hashes do not:
+  the chain has no key and nothing outside the folder to compare with.
 - Kept for 30 days (choice 3).
 - The owner reads it with `dojo audit` (by pane, by time). It is not a bus route, so no pane can ask the bus
   for it; a harness running as the owner could still open the files with its own tools.
