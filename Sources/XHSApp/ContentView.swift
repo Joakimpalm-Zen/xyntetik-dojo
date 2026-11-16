@@ -28,7 +28,7 @@ struct ContentView: View {
                     Text("Dojo")
                         .font(.system(size: 15, weight: .medium))
                         .foregroundStyle(Color(Theme.muted))
-                    Text("Press + to add Claude, Codex or pi, here or on another machine.")
+                    Text("Press + to add Claude, Codex, pi or Antigravity, here or on another machine.")
                         .font(.callout)
                         .foregroundStyle(Color(Theme.muted))
                         .padding(.top, 10)
@@ -574,7 +574,7 @@ struct TerminalHost: NSViewRepresentable {
     func updateNSView(_ nsView: TerminalPane, context: Context) {}
 }
 
-/// The plus button's picker: Claude, Codex or pi, an optional host and an optional name.
+/// The plus button's picker: Claude, Codex, pi or Antigravity, an optional host and an optional name.
 final class PickerForm: ObservableObject {
     /// The agent chosen in the segmented control; Open starts it.
     @Published var kind: HarnessKind = .claude
@@ -809,6 +809,9 @@ struct PickerSheet: View {
                 + "sandbox. Remembered for Codex."
         case .pi:
             return "pi has no permission prompts: it runs its tools without asking, ticked or not."
+        case .agy:
+            return "Unticked, Antigravity keeps its own permission prompts. Ticked, it approves every tool request "
+                + "without asking. Remembered for Antigravity."
         case .runner, .shell:
             return ""
         }

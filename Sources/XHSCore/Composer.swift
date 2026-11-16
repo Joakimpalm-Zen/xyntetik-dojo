@@ -15,17 +15,38 @@ public enum Composer {
         var marks: [String]
         /// What the harness shows in an empty composer. Taken from the harness itself, not guessed.
         var placeholders: Set<String>
+        /// The harness draws a hint at the right edge of its composer's row, after its placeholder and its
+        /// own padding (Codex near a usage limit), so a placeholder followed by two spaces is still empty.
+        /// Only where that was seen: for any other harness the owner's text after a placeholder is a draft
+        /// (the second read of #113, on agy's mode sentences).
+        var hintAfterPlaceholder = false
     }
 
     /// Codex 0.166.0: the composer is `› ` and its placeholders are in the binary. Claude Code: `❯` and a
-    /// no-break space, and nothing after it.
+    /// no-break space, and nothing after it. agy 1.5.9 (D38, read off its screens in a pty): `> `, between
+    /// two ruled lines as Claude Code's, with its mode as the placeholder (`agyModes`); its dialogs and its question take the
+    /// composer's place, their highlighted choice marked `> 1.`.
     static func rule(for kind: HarnessKind) -> Rule? {
         switch kind {
-        case .codex: return Rule(marks: ["›"], placeholders: ["Ask Codex to do anything", "Ask a follow-up question", "Waiting for startup"])
+        case .codex: return Rule(marks: ["›"], placeholders: ["Ask Codex to do anything", "Ask a follow-up question", "Waiting for startup"],
+                                 hintAfterPlaceholder: true)
         case .claude: return Rule(marks: ["❯", ">"], placeholders: [])
+        case .agy: return Rule(marks: [">"], placeholders: agyModes)
         case .pi, .runner, .shell: return nil
         }
     }
+
+    /// What agy writes in its empty composer in each mode but its plain one: Auto, its own default, shows
+    /// until the first prompt (a pty on 2026-11-16); the others are in agy 1.5.9's binary.
+    static let agyModes: Set<String> = ["Auto mode: edits & safe commands auto-approved (shift+tab to cycle)",
+                                        "Accept-edits mode: file edits auto-approved (shift+tab to cycle)",
+                                        "Plan mode: research & plan only (shift+tab to cycle)",
+                                        "Best-of-N mode: fork into parallel arms and pick a winner (shift+tab to cycle)"]
+
+    /// Whether the rows under a harness's composer are set in. agy draws its status line from the first
+    /// column (the pane's own line, `dojo statusline agy`, and any line of the owner's); Claude Code and
+    /// Codex set theirs in.
+    static func footerSetIn(_ kind: HarnessKind) -> Bool { kind != .agy }
 
     /// The composer sits at the foot of the screen, under the transcript.
     static let footRows = 12
@@ -48,7 +69,7 @@ public enum Composer {
         switch kind {
         case .claude: return ["paste again to expand"]
         case .codex: return ["tab to queue message"]
-        case .pi, .runner, .shell: return []
+        case .pi, .agy, .runner, .shell: return []
         }
     }
 
@@ -85,7 +106,7 @@ public enum Composer {
     ///   is. A dialog's highlighted choice carries the same mark, so a row that reads as a numbered choice
     ///   ("1. Yes", or "1." where a narrow pane cut it) is not a composer. Rows set in, such as the later
     ///   rows of a long message, are never taken for a mark.
-    /// - Claude Code draws its composer between two ruled lines; Codex draws it after an empty row.
+    /// - Claude Code and agy draw their composer between two ruled lines; Codex draws it after an empty row.
     /// - Before the bus has typed anything, the composer is one row, and it does not already hold a paste.
     /// - After it has pasted (`afterPaste`), the composer must hold what it pasted: `pasted` itself, row by
     ///   row, or the harness's stand-in for a long paste ("[Pasted text #3 +4 lines]", "[Pasted Content 1200
@@ -94,7 +115,8 @@ public enum Composer {
     ///   look before the paste (`before`). A composer that holds anything else, or nothing yet, is not
     ///   pressed Enter on: the text has not arrived there, or something else has.
     /// - Under the composer stand at most `footerRows` rows, every one set in as both harnesses set their
-    ///   status and hint rows, none a numbered choice, none the frame of a dialog, none with a dialog's key
+    ///   status and hint rows (agy's status line stands in the first column: `footerSetIn`), none a numbered
+    ///   choice, none the frame of a dialog, none with a dialog's key
     ///   hint as whole words outside a path. The rows themselves cannot be known word for word: the status line is the owner's own, and
     ///   the hint row changes.
     /// - After the paste, no row under the composer may be new since `before`: a dialog can open under a
@@ -198,7 +220,7 @@ public enum Composer {
         let end: Int        // the first row under the composer: its footer starts here
         var block: Int      // the first row that is not the composer's own text
         switch kind {
-        case .claude:
+        case .claude, .agy:
             guard at > 0, isRuledLine(foot[at - 1].text),
                   let closing = foot.indices.first(where: { $0 > at && isRuledLine(foot[$0].text) }) else { return nil }
             if afterPaste {
@@ -229,7 +251,7 @@ public enum Composer {
         let under = foot[min(end, foot.count)...].filter { !$0.text.isEmpty }
         guard under.count <= footerRows, under.allSatisfy({ row in
             // set in as a footer is, not a choice, not the frame of a dialog, and without a dialog's key hints
-            row.setIn && !isNumberedChoice(row.text) && !startsWithBoxDrawing(row.text) && !hasKeyHint(row.text)
+            (row.setIn || !footerSetIn(kind)) && !isNumberedChoice(row.text) && !startsWithBoxDrawing(row.text) && !hasKeyHint(row.text)
         }) else { return nil }
         if afterPaste, compareFooter, let before {
             guard footerUnchanged(under.map(\.text), since: before.under, kind: kind) else { return nil }
@@ -340,7 +362,7 @@ public enum Composer {
         // Codex draws a hint at the right edge of the same row when a usage limit is near ("4 on 17 Nov ·
         // /status"). A placeholder is only drawn in an empty composer, so one followed by the harness's own
         // padding is still empty; a single space and more words is the owner's text.
-        let padded = rule.placeholders.contains { rest.hasPrefix($0 + "  ") }
+        let padded = rule.hintAfterPlaceholder && rule.placeholders.contains { rest.hasPrefix($0 + "  ") }
         guard rest.isEmpty || rule.placeholders.contains(rest) || padded else { return false }
         // A draft that goes on in the next row is not empty, however its first row looks.
         guard at + 1 < foot.count else { return true }

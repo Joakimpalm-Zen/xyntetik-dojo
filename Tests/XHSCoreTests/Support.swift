@@ -54,6 +54,8 @@ final class MockIO: PaneIO {
         switch kind {
         case .claude: return "──────────────────────────────\n❯\u{a0}\n──────────────────────────────\n  status\n"
         case .codex: return "\n› Ask Codex to do anything\n\n  status · line\n"
+        // agy 1.5.9 (D38): its composer between two ruled lines, its status line in the first column under it
+        case .agy: return MockIO.agyRule + "\n>\n" + MockIO.agyRule + "\nUsage: 5h 90% left, resets at 13:00 · week 90% left\n"
         case .pi, .runner, .shell: return ""
         }
     }
@@ -70,10 +72,16 @@ final class MockIO: PaneIO {
             return "──────────────────────────────\n❯ \(shown)\n──────────────────────────────\n  status\n"
         case .codex:
             return "\n› " + rows.joined(separator: "\n  ") + "\n\n  status · line\n"
+        case .agy:
+            // later rows set in by two spaces, a long paste as its stand-in, which counts every row
+            let shown = rows.count > 4 ? ["[Pasted text #1 +\(rows.count) lines]"] : [rows[0]] + rows.dropFirst().map { "  " + $0 }
+            return agyRule + "\n> " + shown.joined(separator: "\n") + "\n" + agyRule + "\nUsage: 5h 90% left, resets at 13:00 · week 90% left\n"
         case .pi, .runner, .shell:
             return ""
         }
     }
+
+    static let agyRule = String(repeating: "─", count: 40)
 }
 
 func json(_ data: Data) -> [String: Any] {

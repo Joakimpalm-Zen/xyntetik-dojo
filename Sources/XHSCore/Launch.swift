@@ -183,6 +183,17 @@ public enum Launcher {
         ]]
     }
 
+    /// The variable an agy pane carries its peer rule in, for `dojo hook agy` to inject at SessionStart.
+    public static let agyRuleVariable = "DOJO_PEER_RULE"
+
+    /// agy settings passed with --settings, for the session only (agy never saves them): Dojo's own status
+    /// line. agy has no hook for a permission ask; its status-line command gets tool_confirmation_pending
+    /// while a confirmation dialog shows, and `dojo statusline agy` reports that to the bus. It prints one
+    /// plain line like the other panes.
+    public static func agySettings() -> [String: Any] {
+        ["statusLine": ["type": "command", "command": #"python3 "$HOME/.dojo/dojo-mcp.py" statusline agy"#]]
+    }
+
     /// Claude Code MCP config passed with --mcp-config.
     public static func claudeMCP() -> [String: Any] {
         ["mcpServers": ["dojo": ["command": "sh", "args": ["-c", shimCommand]]]]
@@ -194,7 +205,7 @@ public enum Launcher {
     }
 
     /// The harness command line, the same locally and remotely.
-    /// `unrestricted` is the picker's "Skip permission prompts" tick (D21.1): Claude runs with
+    /// `unrestricted` is the picker's "Skip permission prompts" tick (D21.1): Claude and agy run with
     /// --dangerously-skip-permissions, Codex with no approvals and no sandbox. Off by default, so a pane
     /// keeps the harness's own permission prompts unless the owner ticks it. pi has no permission prompts
     /// to skip (see `Permissions`), so the tick changes nothing there.
@@ -230,6 +241,17 @@ public enum Launcher {
             // in regular mode pi draws from the top of the pane down and leaves the rest empty.
             return words + [.literal("--tui-mode"), .literal("fullscreen"), .literal("--tools"), .literal(piTools),
                             .literal("--append-system-prompt"), .literal(prompt + " " + piReplyHint)]
+        case .agy:
+            // D38: the Antigravity CLI. Its --settings takes no hooks (agy 1.5.9: "unknown setting") and it has no
+            // flag for a system prompt: its hooks and the bus come from Dojo's plugin, which "dojo install" puts
+            // in agy's config, and the plugin's SessionStart hook hands agy this pane's rule from the environment
+            // (`dojo hook agy`). A resumed conversation fires no SessionStart; it keeps the rule it was given at
+            // its start. The tick is agy's own flag, which approves every tool request. --settings carries the
+            // pane's status line, which reports a permission dialog (`agySettings`).
+            return [.literal(agyRuleVariable + "=" + prompt), .literal("agy")] +
+                   (session.map { [.literal("--conversation"), .literal($0)] } ?? []) +
+                   (unrestricted ? [.literal("--dangerously-skip-permissions")] : []) +
+                   [.literal("--settings"), .literal(json(agySettings()))]
         case .runner:
             // Finds or fetches Runner, picks a model that fits this machine and serves it (tools/runner-start.sh).
             return [.literal("/bin/sh"), .raw(#""$HOME/.dojo/runner-start.sh""#)]
@@ -303,7 +325,7 @@ public enum Launcher {
     }
 
     /// The harnesses that report their state to the bus by hooks, and so need the way to it.
-    public static let reportsHooks: Set<HarnessKind> = [.claude, .codex, .pi]
+    public static let reportsHooks: Set<HarnessKind> = [.claude, .codex, .pi, .agy]
 
     /// D35.2: what a remote pane runs on its host before its harness, with the pane's own DOJO_PORT and
     /// DOJO_TOKEN. Without its way to the bus a harness starts with no hooks, so the bus never learns of a
@@ -347,7 +369,7 @@ public enum Launcher {
             + #"while :; do cells=${cells#"${cells%%[! ]*}"}; case $cells in "") break;; esac; word=${cells%%" "*}; n=$((n+1)); "#
             + #"case $n in 2) name=$word;; 3) kind=$word;; esac; case $cells in *" "*) cells=${cells#*" "};; *) break;; esac; done; "#
             + #"case $n in 5) case $word in starting|running|idle|prompt|exited) "#
-            + #"case $kind in claude|codex|pi|runner|shell) "#
+            + #"case $kind in claude|codex|pi|agy|runner|shell) "#
             + #"case $name in None) ;; *) known=yes;; esac;; esac;; esac;; esac;; "#
             // the shim's own words, for the reason the pane gives
             + #""dojo: "*) case $said in "") said=$line;; esac;; esac; "#

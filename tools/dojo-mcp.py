@@ -39,7 +39,7 @@ TOOLS = [
     {
         "name": "panes",
         "description": "List the terminals in the Xyntetik Dojo window: "
-        "name, kind (claude, codex, pi, or runner for the model server), host, state (starting, running, idle, prompt, exited) "
+        "name, kind (claude, codex, pi, agy for the Antigravity CLI, or runner for the model server), host, state (starting, running, idle, prompt, exited) "
         "and queued messages. The field 'you' is your own terminal.",
         "inputSchema": {"type": "object", "properties": {}},
     },
@@ -484,7 +484,97 @@ def install(home=None, out=sys.stdout, windows=None):
                     f.write("\n")
                 f.write(codex_block())
             out.write("dojo install: added the dojo MCP server and hooks to %s\n" % config)
+    install_agy(home, out, windows)
     return 0
+
+
+# ---------------------------------------------------------------- agy's plugin (D38)
+# agy takes hooks and MCP servers only from files, never from its command line (its --settings has no key
+# for them), so "dojo install" gives it Dojo's plugin: the state hooks and the bus in one unit, which the
+# owner can switch off or remove with agy plugin disable / uninstall. The owner's pick on 2026-11-16. The
+# route lives in `register_agy_plugin`: the fallback (agy mcp add and a hooks.json entry) goes there.
+
+AGY_HOOK_COMMAND = 'python3 "$HOME/.dojo/dojo-mcp.py" hook agy'
+
+
+def agy_plugin_files(home):
+    """The plugin's files: its manifest, its hooks (agy 1.5.9's hooks.json: one named hook, flat lists for the
+    events without a tool, a matcher group for the tool events) and the bus as its MCP server. agy runs a
+    hook with sh, which expands $HOME, and starts an MCP server itself, which expands nothing: the server's
+    path is written out for this home."""
+    handler = {"type": "command", "command": AGY_HOOK_COMMAND, "timeout": 5}
+    hooks = {"dojo": {
+        "SessionStart": [handler],
+        "PreInvocation": [handler],
+        # The question alone: agy stops a tool whose PreToolUse hook answers without a decision (a live run
+        # on 2026-11-16 had the dojo tool refused so), and Dojo has no say over any other tool.
+        "PreToolUse": [{"matcher": "ask_question", "hooks": [handler]}],
+        "PostToolUse": [{"matcher": "*", "hooks": [handler]}],
+        "Stop": [handler],
+    }}
+    return {
+        "plugin.json": {"name": "dojo", "version": "1.0.0",
+                        "description": "Xyntetik Dojo: the bus tools and the pane's state hooks. Does nothing outside a Dojo pane."},
+        "hooks.json": hooks,
+        "mcp_config.json": {"mcpServers": {"dojo": {"command": "python3", "args": [os.path.join(home, ".dojo", "dojo-mcp.py")]}}},
+    }
+
+
+def write_agy_plugin(folder, home):
+    """Writes the plugin for `home` into `folder` (made or replaced) and returns it."""
+    os.makedirs(folder, exist_ok=True)
+    for name, content in agy_plugin_files(home).items():
+        with open(os.path.join(folder, name), "w", encoding="utf-8", newline="\n") as f:
+            f.write(json.dumps(content, indent=2) + "\n")
+    return folder
+
+
+def find_agy(home):
+    """agy on the PATH, or where its installer puts it; the app's own PATH is the system's alone."""
+    found = shutil.which("agy")
+    if found:
+        return found
+    local = os.path.join(home, ".local", "bin", "agy")
+    return local if os.access(local, os.X_OK) else None
+
+
+def register_agy_plugin(agy, folder):
+    """The install route, in one place: agy copies the plugin into its config and records it (agy plugin
+    install replaces an earlier copy, and keeps the owner's enabled or disabled choice)."""
+    import subprocess
+    env = dict(os.environ, BROWSER="/usr/bin/true")
+    return subprocess.run([agy, "plugin", "install", folder], capture_output=True, text=True, env=env, timeout=60,
+                          stdin=subprocess.DEVNULL)
+
+
+def install_agy(home, out, windows):
+    # Only where agy is set up: its folder in this home. A test's home has none, so no test reaches an agy.
+    if not os.path.isdir(os.path.join(home, ".gemini")):
+        return
+    if windows:
+        # agy runs hooks and its status line with cmd.exe there, where "$HOME" is not a variable.
+        out.write("dojo install: agy on Windows is not supported by Dojo yet; no plugin installed\n")
+        return
+    agy = find_agy(home)
+    if not agy:
+        out.write("dojo install: agy was not found (PATH, ~/.local/bin); its plugin is not installed\n")
+        return
+    folder = write_agy_plugin(os.path.join(home, ".dojo", "agy", "dojo"), home)
+    # The app runs this at every start: agy is asked only when its copy is not this plugin.
+    installed = os.path.join(home, ".gemini", "config", "plugins", "dojo")
+    if all(read_text(os.path.join(installed, name)) == read_text(os.path.join(folder, name)) for name in agy_plugin_files(home)):
+        out.write("dojo install: agy already has Dojo's plugin (%s)\n" % installed)
+        return
+    try:
+        done = register_agy_plugin(agy, folder)
+    except Exception as e:
+        out.write("dojo install: agy plugin install failed: %s\n" % e)
+        return
+    if done.returncode == 0:
+        out.write("dojo install: agy plugin install %s (the bus and the state hooks for agy panes)\n" % folder)
+    else:
+        out.write("dojo install: agy plugin install %s failed (%d): %s\n" % (folder, done.returncode,
+                                                                           (done.stderr or done.stdout).strip()[:200]))
 
 
 # ---------------------------------------------------------------- the record (D21.2)
@@ -597,6 +687,253 @@ def audit(argv, out, err, home=None, now=None):
     return 1 if problems else 0
 
 
+# ---------------------------------------------------------------- agy's hooks (D38)
+# The Antigravity CLI (agy 1.5.9) has six hook events and sends camelCase JSON: hookEventName,
+# conversationId, modelName, lastUserInput, invocationNum. Read off its bundled hooks.md and a probe on
+# 2026-11-16. The bus knows Claude Code's words, so the events it uses are posted in those. agy has no
+# event for a permission ask or a question: a dialog is seen on the screen only.
+
+AGY_RULE_VARIABLE = "DOJO_PEER_RULE"
+
+
+def agy_hook(event, env):
+    """What to post to the bus for one of agy's hook events (None: nothing), and what to print to agy."""
+    name = event.get("hookEventName")
+    posted = None
+    if name in ("SessionStart", "PostToolUse", "Stop"):
+        posted = {"hook_event_name": name}
+    elif name == "PreToolUse":
+        # agy's question dialog sets no tool_confirmation_pending (a pty probe on 2026-11-16): its tool is
+        # seen here, before it runs. Its own completion, the next model call or the end of the turn ends it
+        # (AgyPane holds it meanwhile against any report of work going on).
+        tool = event.get("toolCall") if isinstance(event.get("toolCall"), dict) else {}
+        posted = {"hook_event_name": "PermissionRequest" if tool.get("name") == "ask_question" else "PostToolUse"}
+    elif name == "PreInvocation":
+        # Before every model call. The first of a turn (invocationNum 0, which protojson may leave out) is the
+        # prompt the turn answers; a later one follows tool calls, and says only that work goes on.
+        if not event.get("invocationNum"):
+            posted = {"hook_event_name": "UserPromptSubmit"}
+            if isinstance(event.get("lastUserInput"), str):
+                posted["prompt"] = event["lastUserInput"]
+        else:
+            posted = {"hook_event_name": "PostToolUse"}
+    if posted is not None:
+        if isinstance(event.get("conversationId"), str):
+            posted["session_id"] = event["conversationId"]
+        if isinstance(event.get("modelName"), str):
+            posted["model"] = event["modelName"]
+    reply = {}
+    if name == "PreToolUse" and posted and posted["hook_event_name"] == "PermissionRequest":
+        # An answer without a decision stops the tool: the question is let through, as agy would. Never any
+        # other tool: the plugin asks about the question alone, and an allow here would skip the owner's
+        # permission prompt. Should another tool come, the answer stays empty, which stops it.
+        reply = {"decision": "allow"}
+    # The pane's peer rule, as a system step at the start of the conversation: agy takes no system prompt on
+    # its command line. Only in a pane, where the launch line set the variable.
+    rule = env.get(AGY_RULE_VARIABLE)
+    if name == "SessionStart" and rule and env.get("DOJO_TOKEN"):
+        reply = {"injectSteps": [{"systemMessage": {"systemMessage": rule}}]}
+    return posted, reply
+
+
+# agy has no hook for a permission ask, but its status-line command gets the session's state on every
+# change, at most every 300 ms (agy docs, cli/statusline): tool_confirmation_pending while a tool
+# confirmation dialog shows (left out otherwise), and agent_state. An agy pane runs this command for its
+# session only (Launcher.agySettings). It reports the state in the bus's words and prints the pane's line.
+AGY_RUNNING_STATES = ("working", "tool_use", "reviewing")
+
+
+def agy_status_event(data):
+    """The bus's word for the state a status-line payload shows; None when it says nothing about the turn
+    (initializing, authenticating, error, a state a later agy brings)."""
+    if data.get("tool_confirmation_pending") is True:
+        return "PermissionRequest"
+    state = data.get("agent_state")
+    if state == "idle":
+        return "Stop"
+    if state in AGY_RUNNING_STATES:
+        return "PostToolUse"
+    return None
+
+
+def _get(d, *path):
+    for key in path:
+        if not isinstance(d, dict) or key not in d:
+            return None
+        d = d[key]
+    return d
+
+
+def _tokens(n):
+    try:
+        n = float(n)
+    except (TypeError, ValueError):
+        return None
+    return "%.0fk" % (n / 1000) if n >= 1000 else str(int(n))
+
+
+def _left(bucket):
+    try:
+        return "%.0f%%" % (max(0.0, min(1.0, float(bucket["remaining_fraction"]))) * 100)
+    except (TypeError, ValueError, KeyError):
+        return None
+
+
+def _reset_hhmm(bucket):
+    """The local time a quota bucket resets, from reset_time or else reset_in_seconds."""
+    import datetime as dt
+    value = bucket.get("reset_time") if isinstance(bucket, dict) else None
+    if isinstance(value, str) and value.strip():
+        try:
+            when = dt.datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+            if when.tzinfo is None:
+                when = when.replace(tzinfo=dt.timezone.utc)
+            return when.astimezone().strftime("%H:%M")
+        except ValueError:
+            pass
+    try:
+        secs = float(bucket.get("reset_in_seconds")) if isinstance(bucket, dict) else None
+        return (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=secs)).astimezone().strftime("%H:%M")
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def agy_status_line(data):
+    """One plain line, in the order and words of the Claude Code panes' line: usage, context, model,
+    effort. Anything missing reads n/a."""
+    five, week = _get(data, "quota", "gemini-5h"), _get(data, "quota", "gemini-weekly")
+    five_left = _left(five) if isinstance(five, dict) else None
+    week_left = _left(week) if isinstance(week, dict) else None
+    reset = (_reset_hhmm(five) if isinstance(five, dict) else None) or "n/a"
+    usage = "Usage: 5h %s, resets at %s · %s" % (five_left + " left" if five_left else "n/a", reset,
+                                                  "week " + week_left + " left" if week_left else "week n/a")
+    size, pct = _get(data, "context_window", "context_window_size"), _get(data, "context_window", "used_percentage")
+    try:
+        used = _tokens(float(size) * float(pct) / 100) if size and pct is not None else None
+    except (TypeError, ValueError):
+        used = None
+    ctx = "Ctx: %s / %s" % (used, _tokens(size)) if used is not None and _tokens(size) else "Ctx: n/a"
+    name = _get(data, "model", "display_name")
+    effort = _get(data, "model", "effort")
+    effort = effort.strip().upper() if isinstance(effort, str) and effort.strip() else "n/a"
+    return " | ".join([usage, ctx, "Model: %s" % (name if isinstance(name, str) and name else "n/a"), "Thinking: " + effort])
+
+
+# The state an event leaves a pane in at the bus (HookMapping).
+AGY_EVENT_STATES = {"SessionStart": "idle", "UserPromptSubmit": "running", "PostToolUse": "running",
+                    "PermissionRequest": "prompt", "Stop": "idle"}
+# What ends a question: the next model call, the end of the turn or a new session, and the question tool's
+# own completion (its PostToolUse, matched by the call's id).
+AGY_QUESTION_ENDS = ("PreInvocation", "Stop", "SessionStart")
+
+
+class AgyPane:
+    """One record per pane, by its token, for its hooks and its status line both: the state they last told
+    the bus, and the question that is open. agy runs the status line about every 300 ms and the hooks as
+    its turn goes; each reads the record, decides, posts and writes it back under one lock, so neither
+    undoes or skips what the other set (the second read of #113 found two records that could)."""
+
+    def __init__(self, token):
+        import tempfile
+        self.path = os.path.join(tempfile.gettempdir(), "dojo-agy-" + hashlib.sha256(token.encode()).hexdigest()[:16])
+
+    def __enter__(self):
+        self.lock = open(self.path + ".lock", "a")
+        try:
+            import fcntl
+            fcntl.flock(self.lock, fcntl.LOCK_EX)
+        except ImportError:
+            pass  # no fcntl (a native Windows Python): agy is not supported there
+        try:
+            with open(self.path) as f:
+                self.record = json.load(f)
+        except (OSError, ValueError):
+            self.record = {}
+        if not isinstance(self.record, dict):
+            self.record = {}
+        return self
+
+    def report(self, event):
+        """Posts `event`; the state it leaves the pane in is kept once it has reached the bus."""
+        bus_call("hook", event, timeout=1)
+        self.record["state"] = AGY_EVENT_STATES.get(event["hook_event_name"], self.record.get("state"))
+
+    def __exit__(self, *exc):
+        try:
+            with open(self.path + ".tmp", "w") as f:
+                json.dump(self.record, f)
+            os.replace(self.path + ".tmp", self.path)
+        finally:
+            self.lock.close()
+        return False
+
+
+def read_text(path):
+    try:
+        with open(path) as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def agy_statusline_cli(stdin, out):
+    """`dojo statusline agy`: agy shows what this prints, so it prints the line whatever happens. Outside a
+    pane it only prints."""
+    data = {}
+    try:
+        parsed = json.loads(stdin.read(1 << 20) or "{}")
+        data = parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        pass
+    try:
+        event = agy_status_event(data)
+        token = os.environ.get("DOJO_TOKEN")
+        if event and token:
+            with AgyPane(token) as pane:
+                if event == "Stop":
+                    pane.record.pop("question", None)  # the turn is over: no question is open
+                # A question the status line cannot see is open: its running state is no news.
+                if pane.record.get("question") and AGY_EVENT_STATES[event] == "running":
+                    pass
+                # The bus hears a change only, whichever of the two told it the state it has.
+                elif AGY_EVENT_STATES[event] != pane.record.get("state"):
+                    pane.report({"hook_event_name": event})
+    except Exception:
+        pass
+    out.write(agy_status_line(data) + "\n")
+    out.flush()
+    return 0
+
+
+def agy_hook_cli(stdin, out):
+    """`dojo hook agy`: agy waits for every hook and reads one JSON object from it, so it gets one whatever
+    happens here. Outside a pane, nothing is posted and nothing is injected."""
+    reply = {}
+    try:
+        event = json.loads(stdin.read(1 << 20) or "{}")
+        if isinstance(event, dict):
+            posted, reply = agy_hook(event, os.environ)
+            token = os.environ.get("DOJO_TOKEN")
+            if token:
+                with AgyPane(token) as pane:
+                    name = event.get("hookEventName")
+                    tool = event.get("toolCall") if isinstance(event.get("toolCall"), dict) else {}
+                    question = pane.record.get("question")
+                    if posted is not None and posted["hook_event_name"] == "PermissionRequest" and name == "PreToolUse":
+                        pane.record["question"] = tool.get("id") or True
+                    elif question and (name in AGY_QUESTION_ENDS or (name == "PostToolUse" and question in (True, tool.get("id")))):
+                        pane.record.pop("question", None)
+                    elif question and posted is not None and AGY_EVENT_STATES.get(posted["hook_event_name"]) == "running":
+                        posted = None  # another tool's end while the question waits: the pane stays at prompt
+                    if posted is not None:
+                        pane.report(posted)
+    except Exception:
+        pass
+    out.write(json.dumps(reply) + "\n")
+    out.flush()
+    return 0
+
+
 # ---------------------------------------------------------------- CLI
 
 USAGE = """usage: dojo panes | send <pane> <text...> | send <pane> - (text on stdin) | read <pane> [lines] | state <pane> | watch <pane> | label [text...] | relay <words...> | hook | install | audit [--pane P] [--since WHEN]"""
@@ -607,6 +944,10 @@ def cli(argv, out=sys.stdout, err=sys.stderr, stdin=sys.stdin):
         err.write(USAGE + "\n")
         return 2
     cmd, rest = argv[0], argv[1:]
+    if cmd == "hook" and rest == ["agy"]:
+        return agy_hook_cli(stdin, out)
+    if cmd == "statusline" and rest == ["agy"]:
+        return agy_statusline_cli(stdin, out)
     if cmd == "hook":
         try:
             event = json.loads(stdin.read(1 << 20) or "{}")
