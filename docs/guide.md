@@ -119,7 +119,7 @@ dojo send fable --type report repo=xyntetik-dojo pr=92 head=e07bd8a checks=ci=pa
 Four kinds of message have a typed form: `assign`, `report`, `merged` and `bug`. The bus checks the fields, refuses a message that is wrong with what is wrong, and types a card the other side reads as plain lines; `dojo audit --type report` lists them later. The fields of each are in [the bus note](bus-capabilities.md#typed-messages-d215).
 
 <p align="center">
-  <img src="../packaging/readme/window.png" alt="Claude Code asks Codex and pi to reply over the bus; both replies land in its pane as green [from: name] lines" width="900">
+  <img src="../packaging/readme/window.png" alt="Three panes in one window: Claude Code coordinates, Codex reviews a function and Antigravity runs the tests; the review and the typed report land in the coordinator's pane as [from: name] lines" width="900">
 </p>
 
 `watch` replaces waiting and polling. A pane asks once and gets one `[from: codex-1] Bus notice: codex-1 finished its turn.` line, delivered like any message. The notice says it comes from the bus, since the target did not write it, and it says what it rests on: `finished its turn` when a hook reported that, `looks idle` when the screen has been still for 15 seconds but no hook has reported the end of the turn, which may still be going, and `is idle` for a pane with no hook-reported turn. Any of them ends the request; read the pane or watch again, and a real finish after `looks idle` still reaches you. A target that closes ends the request with a line, and so do 12 hours with no news. Remote hosts need `make remote-setup` once for the new command.

@@ -93,7 +93,7 @@ dojo read codex-1 60               # the last 60 lines of codex-1's screen
 ```
 
 <p align="center">
-  <img src="packaging/readme/window.png" alt="Claude Code asks Codex and pi to reply over the bus; both replies land in its pane as green [from: name] lines" width="900">
+  <img src="packaging/readme/window.png" alt="Three panes in one window: Claude Code coordinates, Codex reviews a function and Antigravity runs the tests; the review and the typed report land in the coordinator's pane as [from: name] lines" width="900">
 </p>
 
 Mark one pane as the coordinator (right-click its name) and the others become workers that read only the panes you allow. [Every operation, hook and rule](docs/guide.md#how-harnesses-talk).
