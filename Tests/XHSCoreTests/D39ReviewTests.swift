@@ -223,6 +223,43 @@ import Testing
         #expect(rig.enters == 2)
     }
 
+    /// The second read of #116 asked whether a draft hold can outlast Claude Code's queue, or sit under a
+    /// suggestion in an idle pane. Read off real panes on 2026-11-17, cut to their foot: while a message waits
+    /// behind the turn, the composer's row is "❯ Press up to edit queued messages"; once Claude Code has taken
+    /// it, the composer is empty again, the turn still running; and an idle pane after its turn shows "❯ ",
+    /// with no suggestion. So the hold ends when the queue does: at the empty composer after it.
+    static let claudeRule = String(repeating: "─", count: 125)
+    static let claudeFoot = ["  Usage: 5h n/a, resets at n/a · week 96% left | Ctx: 633k / 1000k | Model: Opus 5.5 | Thinking: XHIGH",
+                             "  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt · ← 4 agents"]
+    static let claudeQueued = (["❯ [from: claude] a line, read off this pane while it waits", "  ⎿  Queued · ctrl+enter to send now", "",
+                                "✽ Working… (19m 25s · ↓ 48.3k tokens)", "", claudeRule, "❯ Press up to edit queued messages", claudeRule]
+                               + claudeFoot).joined(separator: "\n")
+    static let claudeTaken = (["✽ Working… (19m 30s · ↓ 48.9k tokens)", "", claudeRule, "❯\u{a0}", claudeRule] + claudeFoot)
+        .joined(separator: "\n")
+    static let claudeIdle = (["✻ Baked for 1m 1s · done 9:44 AM", "", String(repeating: "─", count: 112) + " supervisor ─", "❯\u{a0}",
+                              claudeRule, "  Usage: 5h n/a, resets at n/a · week 96% left | Ctx: 313k / 1000k | Model: Fable 5.2 | Thinking: HIGH",
+                              "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← 4 agents"]).joined(separator: "\n")
+
+    @Test func aDraftHoldEndsWhenClaudeCodesQueueDoes() {
+        #expect(!Composer.shownEmpty(kind: .claude, screen: Self.claudeQueued))
+        #expect(Composer.shownEmpty(kind: .claude, screen: Self.claudeTaken))
+        #expect(Composer.shownEmpty(kind: .claude, screen: Self.claudeIdle))
+        // the owner's text, sent while the turn runs: Claude Code queues it, and its hook comes later
+        let rig = Rig(kind: .claude)
+        rig.hook("UserPromptSubmit")
+        rig.io.screen = Self.claudeQueued
+        rig.bus.noteOwnerInput("worker", .text)
+        rig.bus.noteOwnerInput("worker", .submit)
+        rig.send("status?")
+        rig.wait(5)
+        #expect(rig.io.written.isEmpty, "held while the queue shows")
+        rig.hook("UserPromptSubmit", ["prompt": "the owner's text"])
+        rig.io.screen = Self.claudeTaken
+        rig.wait(5)
+        #expect(rig.io.typed.contains("[from: fable] status?"), "the hold ended with the queue")
+        #expect(rig.bus.info("worker")?.draft == false)
+    }
+
     // MARK: D41. A message taller than Claude Code's composer
 
     /// Live on 2026-11-17: a 279-character message sat in a Claude pane's composer, its Enter owed ("no
