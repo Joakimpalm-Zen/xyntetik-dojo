@@ -132,9 +132,11 @@ import Testing
             rig.wait(1)
             #expect(rig.enters == 1, "\(kind)")
             #expect(rig.bus.info("worker")?.noComposer == false, "\(kind)")
-            // and a second message is typed as any other
+            // and a second message is typed as any other, after a look of the screen that follows the Enter
+            // (the second read of #116)
             rig.io.screen = empty
             rig.send("again?")
+            rig.wait(1)
             #expect(rig.io.typed.hasSuffix("[from: fable] again?"), "\(kind)")
         }
     }
@@ -147,8 +149,10 @@ import Testing
             rig.fire()
             #expect(rig.enters == 1, "\(kind)")
             #expect(rig.recorded("enter").last?["outcome"] as? String == "sent", "\(kind)")
-            // several lines, with bracketed paste on: Claude Code shows a stand-in, Codex the rows
+            // several lines, with bracketed paste on: Claude Code shows a stand-in, Codex the rows; after a
+            // look of the screen that follows the first Enter (the second read of #116)
             rig.io.bracketedPasteEnabled = true
+            rig.wait(1)
             rig.send("one\n› 1. Yes\n\nfour")
             rig.fire()
             #expect(rig.enters == 2, "\(kind)")

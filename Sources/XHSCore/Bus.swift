@@ -129,6 +129,8 @@ public final class Bus {
         var enterOwed = false
         /// When the owed text went into the composer.
         var pastedAt: Date?
+        /// When the bus last pressed Enter in this pane (the second read of #116).
+        var enterSentAt: Date?
         /// The owner may have unsent text in the composer: set by any key that can add text, cleared by
         /// Ctrl-C or by the harness reporting a submission that nothing was typed after.
         var hasDraft = false
@@ -220,6 +222,9 @@ public final class Bus {
     public var submitDelay: TimeInterval = 0.15
     /// The bus does not type into a pane the owner typed into this recently.
     public var ownerQuietInterval: TimeInterval = 3
+    /// How long after its own Enter the bus waits before it types the next message: the harness takes the
+    /// Enter, and the screen shows what it did, a moment later (the second read of #116).
+    public var enterSettleInterval: TimeInterval = 0.5
     /// A `running` pane whose screen has not changed for this long is idle again: its turn ended without
     /// a Stop hook (an API error, a lost hook). Every harness animates a spinner while it works.
     public var idleAfterQuiet: TimeInterval = 15
@@ -278,6 +283,8 @@ public final class Bus {
     public func remove(_ name: String) {
         let gone = pane(named: name)
         if gone != nil { note(["op": "close", "pane": name]) }
+        // a queue elsewhere can still hold it as a sender: it is no pane to type into any more
+        gone?.state = .exited
         panes.removeAll { $0.name == name }
         for p in panes { p.watchers.removeAll { $0.asker === gone } }
         if let gone { for p in panes { p.mayRead.removeAll { $0 == ObjectIdentifier(gone) } } }
@@ -745,7 +752,7 @@ public final class Bus {
             case .success(let typed):
                 text = Delivery.sanitize(typed.text)
                 // Kept apart for `dojo audit --type`, with secrets taken out as on any route out of the bus.
-                let tokens = panes.map(\.token)
+                let tokens = secretTokens
                 line["type"] = type
                 line["fields"] = typed.fields.mapValues { Redact.apply($0, tokens: tokens).text }
             }
@@ -757,7 +764,7 @@ public final class Bus {
         // The owner's choice (D21.2): the record keeps the text of each send. With secrets taken out, as on
         // any route out of the bus (D35.5): the record stays on disk for 30 days. What is typed into the
         // target is the text as sent.
-        line["text"] = Redact.apply(text, tokens: panes.map(\.token)).text
+        line["text"] = Redact.apply(text, tokens: secretTokens).text
         line["chars"] = text.count
         let before = target.queue.count
         target.queue.append((sender: sender, text: text))
@@ -794,7 +801,7 @@ public final class Bus {
         let picked = Bus.lastRows(target.io?.screenText() ?? "", cells: target.io?.usedCells(last: lines), lines)
         let screen = picked.text
         // D21.2: secrets are taken out of what leaves the bus, always; the pane's own screen is untouched.
-        let clean = Redact.apply(screen, tokens: panes.map(\.token), width: target.io?.columns ?? 0, cells: picked.cells)
+        let clean = Redact.apply(screen, tokens: secretTokens, width: target.io?.columns ?? 0, cells: picked.cells)
         line["lines"] = screen.isEmpty ? 0 : screen.components(separatedBy: "\n").count
         line["redacted"] = clean.count
         return ok(["pane": target.name, "state": target.state.rawValue, "text": clean.text, "redacted": clean.count])
@@ -827,7 +834,7 @@ public final class Bus {
         // queued turn, while a new draft is already present.
         if let name = event["hook_event_name"] as? String,
            name == "UserInputSubmitted" || (name == "UserPromptSubmit" && pane.kind != .pi),
-           pane.hasDraft, !pane.typedSinceSubmit {
+           pane.hasDraft, !pane.typedSinceSubmit, composerTookTheDraft(pane, prompt: event["prompt"] as? String) {
             pane.hasDraft = false
             onChange?()
         }
@@ -866,6 +873,25 @@ public final class Bus {
         if let attention { onAttention?(pane.name, attention) }
     }
 
+    /// Every token of the bus's that a screen or a message may show: the panes', and the outside route's
+    /// while it is on (D39, an outside read: it left the bus as it was).
+    private var secretTokens: [String] { panes.map(\.token) + (outsideToken.map { [$0] } ?? []) }
+
+    /// Whether a submission hook may end the draft hold (D39, an outside read). No text keys since the
+    /// owner's last Enter is not enough: an Enter that accepts a completion leaves the draft unsent, and the
+    /// hook can be for a message the harness had queued, the bus's own among them. Where the bus can read the
+    /// composer, it must show it empty, or still show the prompt the hook names (the harness draws it again
+    /// a moment later); otherwise the hold stays, and the composer showing empty ends it later (`flush`). A
+    /// harness with no composer rule has only the hook, as before.
+    private func composerTookTheDraft(_ p: Pane, prompt: String?) -> Bool {
+        guard Composer.rule(for: p.kind) != nil, let io = p.io else { return true }
+        let screen = io.liveScreen()
+        if let home = p.harnessBuffer, let alternate = screen.alternate, alternate != home { return false }
+        if Composer.shownEmpty(kind: p.kind, screen: screen.lines.joined(separator: "\n")) { return true }
+        guard let prompt, !prompt.isEmpty, let look = Composer.look(kind: p.kind, lines: screen.lines, cursorLine: nil) else { return false }
+        return Composer.sameText(look.composer, prompt)
+    }
+
     /// Types the whole queue as one input if the pane is idle or running and the owner is not typing
     /// there and has nothing unsent. A running harness keeps the input in its own queue and reads it
     /// when its current step ends, which is sooner than the end of its turn.
@@ -877,6 +903,11 @@ public final class Bus {
         }
         guard p.state == .idle || p.state == .running, !p.queue.isEmpty, !p.enterPending, let io = p.io else { return }
         if let last = p.lastOwnerInput, now().timeIntervalSince(last) < ownerQuietInterval { return }
+        // The bus's own Enter came just before: what it did (a turn, a dialog) is on the screen a moment later,
+        // and the next message is looked at against that screen, not the one from before. A message that came
+        // during another's submit delay went in right behind its Enter, on main as well (the second read of
+        // #116); a tick later the screen has caught up.
+        if let sent = p.enterSentAt, now().timeIntervalSince(sent) < enterSettleInterval { return }
         // A hook ends a draft hold, but a turn the harness refuses fires none, and the owner's text is gone
         // from the composer all the same. The screen showing it empty ends the hold too (D18). Only after the
         // owner has been quiet, so a key not yet drawn cannot be missed.
@@ -884,7 +915,11 @@ public final class Bus {
             // By the live screen, whose rows end at the pane's width (D37). The pane's whole text also gives
             // back what a wider pane once had beyond its right edge: words after the mark there made an
             // empty composer read as a draft, and the hold lasted until the owner next sent something.
-            guard Composer.shownEmpty(kind: p.kind, screen: io.liveScreen().lines.joined(separator: "\n")) else { return }
+            // Only in the buffer the harness draws itself in: a pager or an editor in the other one shows no
+            // composer of the harness's, whatever its rows look like (D39).
+            let screen = io.liveScreen()
+            if let home = p.harnessBuffer, let alternate = screen.alternate, alternate != home { return }
+            guard Composer.shownEmpty(kind: p.kind, screen: screen.lines.joined(separator: "\n")) else { return }
             p.hasDraft = false
             p.typedSinceSubmit = false
         }
@@ -901,17 +936,14 @@ public final class Bus {
         p.queue.removeAll()
         p.pasted = message
         io.write(Delivery.bytes(message, bracketedPaste: io.bracketedPasteEnabled))
-        if p.kind != .shell, p.state != .running {
-            p.state = .running
-            p.stateSince = now()
-        }
         if submitDelay > 0 {
             // Enter comes a moment later, and only if nothing changed meanwhile: a prompt that opened, or
             // owner keys typed after the paste, would make Enter send the wrong thing.
             p.enterPending = true
             let pasted = now()
             schedule(submitDelay) { [weak self, weak p, weak io] in
-                guard let self, let p else { return }
+                // a pane closed meanwhile gets nothing more, and the record says nothing of it after its close (D39)
+                guard let self, let p, self.panes.contains(where: { $0 === p }) else { return }
                 p.enterPending = false
                 let cancelled = p.enterCancelled
                 p.enterCancelled = false
@@ -933,6 +965,7 @@ public final class Bus {
                     io.write(Delivery.enter)
                     self.nothingWaits(p)
                     self.note(["op": "enter", "pane": p.name, "outcome": "sent"])
+                    self.enterStartedATurn(p)
                 } else {
                     // A prompt opened, the composer left the screen or something new stands under it (a dialog
                     // with no hook, D35.1), or the owner pressed a key that adds no text: the Enter waits for the guard to clear (D26). Before, it
@@ -951,8 +984,19 @@ public final class Bus {
             p.pasted = nil
             p.look = nil
             note(["op": "enter", "pane": p.name, "outcome": "sent"])
+            enterStartedATurn(p)
         }
         onChange?()
+    }
+
+    /// The bus's Enter went out: the harness has a prompt, so the pane is running (a shell has no turns). Only
+    /// then, and through setState, so the record has the change (D39, an outside read: the paste set it, with
+    /// no record, and a dropped Enter left the pane running till its screen had been still for 15 seconds).
+    private func enterStartedATurn(_ p: Pane) {
+        // with no submit delay (the tests' own setting) the Enter goes with the paste and the bus reads no
+        // screen between them, as before; with one, the next message waits for the screen after this Enter
+        if submitDelay > 0 { p.enterSentAt = now() }
+        if p.kind != .shell { setState(p.name, .running) }
     }
 
     /// The Enter the bus owed is pressed, or no longer its to press: nothing of its waits in the composer,
@@ -1090,10 +1134,38 @@ public final class Bus {
             note(["op": "enter", "pane": p.name, "outcome": "dropped", "why": "the owner typed after the paste"])
             return
         }
+        // Once the owner has been quiet: the screen has caught up with their keys by then. A hook that comes
+        // right after their Enter, while a dialog they answered is still drawn, cannot settle what the Enter
+        // did before the composer is back (D39: the pane's change to running at that hook flushes it).
+        if let last = p.lastOwnerInput, now().timeIntervalSince(last) < ownerQuietInterval { return }
         // The owner pressed Enter over the bus's text, and it is gone, or no longer the bus's.
         if p.ownerEnterAfterPaste, ownersEnterSettledIt(p, io) { return }
         guard p.state == .idle || p.state == .running, !p.hasDraft else { return }
-        if let last = p.lastOwnerInput, now().timeIntervalSince(last) < ownerQuietInterval { return }
+        // What is left of the paste (D39, an outside read): keys that add no text, Backspace or Escape, take
+        // it out of the composer, or part of it, and the owner's own Enter is not the only way it goes. Gone,
+        // there is nothing to press Enter on, and an Enter owed for it held every later message for good;
+        // edited, it is the owner's draft now. Read as after the owner's Enter, and only where the owner's keys
+        // came after the paste: without them an empty composer is one the harness has not drawn the text in yet.
+        if Composer.rule(for: p.kind) != nil, let keys = p.lastOwnerInput, let pasted = p.pastedAt, keys > pasted {
+            switch ownersEnter(p, io) {
+            case .sentIt:
+                p.enterOwed = false
+                nothingWaits(p)
+                note(["op": "enter", "pane": p.name, "outcome": "dropped", "why": "the composer no longer holds the paste"])
+                onChange?()
+                return
+            case .leftADraft:
+                p.enterOwed = false
+                nothingWaits(p)
+                p.hasDraft = true
+                p.typedSinceSubmit = true
+                note(["op": "enter", "pane": p.name, "outcome": "dropped", "why": "the owner edited the paste"])
+                onChange?()
+                return
+            case .unknown:
+                break
+            }
+        }
         guard composerShown(p, io, afterPaste: true, record: false) || footerSettled(p, io) else { return }
         let unproven = p.ownerEnterAfterPaste
         p.enterOwed = false
@@ -1106,8 +1178,8 @@ public final class Bus {
             p.hasDraft = true
             p.typedSinceSubmit = false
         }
-        if p.kind != .shell { p.state = .running }
         note(["op": "enter", "pane": p.name, "outcome": "sent", "late": true])
+        enterStartedATurn(p)
         onChange?()
     }
 

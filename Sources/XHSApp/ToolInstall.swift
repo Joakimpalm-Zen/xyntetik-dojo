@@ -16,8 +16,9 @@ enum ToolInstall {
         return fm.fileExists(atPath: source.appendingPathComponent("dojo-mcp.py").path) ? source : nil
     }
 
-    /// Returns a problem to show, or nil.
-    static func run() -> String? {
+    /// Puts the tools in ~/.dojo, which is quick, and what the app reads next comes from there. Returns a
+    /// problem to show, or nil. "dojo install" comes after, off the main thread (`install`).
+    static func copy() -> String? {
         let fm = FileManager.default
         guard let source = sourceDirectory() else { return "The dojo tools were not found in the app bundle." }
         let target = fm.homeDirectoryForCurrentUser.appendingPathComponent(".dojo")
@@ -29,16 +30,32 @@ enum ToolInstall {
                 if fm.fileExists(atPath: destination.path) { try fm.removeItem(at: destination) }
                 try fm.copyItem(at: source.appendingPathComponent(file), to: destination)
             }
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-            process.arguments = ["python3", target.appendingPathComponent("dojo-mcp.py").path, "install"]
-            process.standardOutput = FileHandle.nullDevice
-            try process.run()
-            process.waitUntilExit()
-            if process.terminationStatus != 0 { return "dojo install failed; run python3 ~/.dojo/dojo-mcp.py install" }
             return moved
         } catch {
             return "Could not install the dojo tools in ~/.dojo: \(error.localizedDescription)"
+        }
+    }
+
+    /// Runs "dojo install" (the dojo command, the Codex entries, the agy plugin) off the main thread, and
+    /// calls `done` on the main queue with a problem to show, or nil. D39, an outside read: it ran on the main
+    /// thread before the bus started, and it waits up to 60 seconds for `agy plugin install`, so an agy that
+    /// did not answer held the app's start that long. Its stdin is /dev/null: nothing it runs reads the
+    /// terminal Dojo may have been started from (D38 found a shell stopped on one).
+    static func install(script: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".dojo/dojo-mcp.py"),
+                        done: @escaping @Sendable (String?) -> Void) {
+        DispatchQueue.global(qos: .utility).async {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            process.arguments = ["python3", script.path, "install"]
+            process.standardInput = FileHandle.nullDevice
+            process.standardOutput = FileHandle.nullDevice
+            let failed = "dojo install failed; run python3 ~/.dojo/dojo-mcp.py install"
+            var problem: String? = failed
+            if (try? process.run()) != nil {
+                process.waitUntilExit()
+                problem = process.terminationStatus == 0 ? nil : failed
+            }
+            DispatchQueue.main.async { done(problem) }
         }
     }
 

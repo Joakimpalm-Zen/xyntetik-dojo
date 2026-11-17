@@ -85,6 +85,12 @@ class FakeBus:
         self.server.server_close()
 
 
+def read_file(path):
+    """A file's text, the file closed again (D39: open().read() left them to the garbage collector)."""
+    with open(path) as f:
+        return f.read()
+
+
 def load_shim():
     import importlib.util
     spec = importlib.util.spec_from_file_location("dojo_mcp", SHIM)
@@ -137,6 +143,8 @@ class ShimTest(unittest.TestCase):
         self.assertEqual(m.tool_payload("send", {"pane": "p", "type": "merged", "fields": {"repo": "r", "pr": 92, "sha": "abcdef1"}}),
                          {"pane": "p", "type": "merged", "fields": {"repo": "r", "pr": "92", "sha": "abcdef1"}})
         self.assertEqual(m.tool_payload("send", {"pane": "p", "text": "hi"}), {"pane": "p", "text": "hi"})
+        # D39: a text of null is no text, not the word None
+        self.assertNotEqual(m.tool_payload("send", {"pane": "p", "text": None}).get("text"), "None")
         with self.assertRaises(ValueError):
             m.tool_payload("send", {"pane": "p", "type": "bug", "fields": "not an object"})
         send = next(t for t in m.TOOLS if t["name"] == "send")
@@ -611,8 +619,12 @@ class AgyHookTest(unittest.TestCase):
         self.assertEqual(self.posted()[-1]["hook_event_name"], "PostToolUse")
 
     def test_a_second_confirmation_after_a_tool_finished_is_reported(self):
+        # D39: only the status line sees a confirmation dialog, and agy runs it on every change of the session's
+        # state, the dialog's closing among them; a tool's own end while the status line still says pending
+        # tells the bus nothing (it may be another tool's, run meanwhile), and the status line says the rest
         self.statusline(self.status(agent_state="tool_use", tool_confirmation_pending=True))
         self.hook(self.event("PostToolUse", stepIdx=6, toolCall={"id": "t1", "name": "run_command"}))
+        self.statusline(self.status(agent_state="tool_use"))
         self.statusline(self.status(agent_state="tool_use", tool_confirmation_pending=True))
         self.assertEqual([e["hook_event_name"] for e in self.posted()], ["PermissionRequest", "PostToolUse", "PermissionRequest"])
 
@@ -856,6 +868,30 @@ class AgyHookTest(unittest.TestCase):
             self.statusline(self.status(agent_state="working"), env=env)
         self.assertEqual(self.bus.requests, [])
 
+    # D39 (an outside read at 9e022af): a confirmation dialog is up, the status line has put the pane at
+    # prompt, and another tool agy runs meanwhile reports through its hooks: the pane went back to running
+    # until the next status-line refresh put it at prompt again, a second prompt for the same dialog.
+
+    def test_another_tools_hooks_while_a_confirmation_waits_leave_the_pane_at_prompt(self):
+        self.statusline(self.status(agent_state="tool_use", tool_confirmation_pending=True))
+        self.hook(self.event("PreToolUse", toolCall={"id": "call_2", "name": "view_file"}))
+        self.hook(self.event("PostToolUse", toolCall={"id": "call_2", "name": "view_file"}))
+        self.statusline(self.status(agent_state="tool_use", tool_confirmation_pending=True))
+        self.assertEqual([e["hook_event_name"] for e in self.posted()], ["PermissionRequest"])
+        # the owner answered: the status line no longer says pending, and the work goes on
+        self.statusline(self.status(agent_state="tool_use"))
+        self.assertEqual([e["hook_event_name"] for e in self.posted()], ["PermissionRequest", "PostToolUse"])
+
+    def test_a_confirmation_ends_with_its_turn(self):
+        # the second read of #116: the turn ends with the dialog's flag still set (no status-line refresh in
+        # between), and the next turn's prompt and work were held against it
+        self.statusline(self.status(agent_state="tool_use", tool_confirmation_pending=True))
+        self.hook(self.event("Stop", terminationReason="NO_TOOL_CALL"))
+        self.hook(self.event("PreInvocation", invocationNum=0, lastUserInput="next"))
+        self.hook(self.event("PostToolUse", toolCall={"id": "call_3", "name": "view_file"}))
+        self.assertEqual([e["hook_event_name"] for e in self.posted()],
+                         ["PermissionRequest", "Stop", "UserPromptSubmit", "PostToolUse"])
+
     def test_what_the_agy_pane_posts_says_it_is_agys(self):
         self.hook(self.event("Stop"))
         self.statusline(self.status(agent_state="working"))
@@ -941,7 +977,7 @@ x = true
                 f.write(self.OLD)
             out = io.StringIO()
             self.assertEqual(mod.install(home=home, out=out, windows=False), 0)
-            text = open(config).read()
+            text = read_file(config)
             self.assertNotIn("xhs", text)
             self.assertNotIn("Harness Supervisor", text)
             self.assertIn('[projects."/x"]', text)
@@ -951,12 +987,12 @@ x = true
             self.assertEqual(parsed["features"], {"x": True})
             self.assertEqual(len(parsed["hooks"]["Stop"]), 2)
             self.assertEqual(len(parsed["hooks"]["Interrupt"]), 1)
-            self.assertEqual(open(config + ".before-dojo").read(), self.OLD)
+            self.assertEqual(read_file(config + ".before-dojo"), self.OLD)
             self.assertIn("removed the old xhs block", out.getvalue())
             # A second install leaves the file alone.
             out = io.StringIO()
             mod.install(home=home, out=out, windows=False)
-            self.assertEqual(open(config).read(), text)
+            self.assertEqual(read_file(config), text)
 
     MIXED = (
         "# my fast profile\r\n"
@@ -1018,7 +1054,7 @@ x = true
             with open(config, "w") as f:
                 f.write(tricky)
             self.assertEqual(mod.install(home=home, out=io.StringIO(), windows=False), 0)
-            text = open(config).read()
+            text = read_file(config)
             parsed = tomllib.loads(text)
             self.assertIn("[mcp_servers.xhs]\nin a string", parsed["notes"]["example"], "the string is untouched")
             self.assertEqual(list(parsed["mcp_servers"]), ["dojo"], "the real old table, inline comment and all, is gone")
@@ -1045,7 +1081,7 @@ x = true
             with open(config, "w") as f:
                 f.write(top)
             self.assertEqual(mod.install(home=home, out=io.StringIO(), windows=False), 0)
-            parsed = tomllib.loads(open(config).read())
+            parsed = tomllib.loads(read_file(config))
             self.assertIn("[mcp_servers.xhs]\nand is gone now.", parsed["developer_instructions"])
             self.assertEqual(list(parsed["mcp_servers"]), ["dojo"])
 
@@ -1071,7 +1107,7 @@ x = true
             with open(config, "w") as f:
                 f.write(top)
             self.assertEqual(mod.install(home=home, out=io.StringIO(), windows=False), 0)
-            parsed = tomllib.loads(open(config).read())
+            parsed = tomllib.loads(read_file(config))
             self.assertIn("[notes.example]\nx = 1", parsed["developer_instructions"])
             self.assertNotIn("notes", parsed)
             self.assertEqual(list(parsed["mcp_servers"]), ["dojo"])
@@ -1143,7 +1179,7 @@ x = true
             with open(config, "w") as f:
                 f.write(top)
             self.assertEqual(mod.install(home=home, out=io.StringIO(), windows=False), 0)
-            parsed = tomllib.loads(open(config).read())
+            parsed = tomllib.loads(read_file(config))
             self.assertEqual(parsed["model"], "gpt-x")
             self.assertEqual(parsed["approval_policy"], "never")
             self.assertEqual(list(parsed["mcp_servers"]), ["dojo"])

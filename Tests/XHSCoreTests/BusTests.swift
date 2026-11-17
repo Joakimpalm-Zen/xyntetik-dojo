@@ -300,7 +300,9 @@ import Testing
         for _ in 15...19 { clock = clock.addingTimeInterval(1); bus.tick() }
         #expect(bus.info("codex-1")?.state == .running)
         clock = clock.addingTimeInterval(1); bus.tick()
-        #expect(bus.info("codex-1")?.state == .idle || bus.info("codex-1")?.state == .running)
+        // second 20: the screen has been still for 15 seconds since its last change at second 5 (D39: this
+        // took either state, so a rule a second later or sooner passed it)
+        #expect(bus.info("codex-1")?.state == .idle)
         clock = clock.addingTimeInterval(1); bus.tick()
         #expect(targetIO.typed.contains("[from: claude-1] hi"))
         #expect(bus.info("codex-1")?.queued == 0)
@@ -424,12 +426,14 @@ import Testing
         clock += 60; bus.tick()
         #expect(targetIO.written.isEmpty, "a newline typed as kitty Ctrl-J is text")
         bus.noteOwnerInput("codex-1", OwnerInput.key([0x0D]))
+        targetIO.screen = MockIO.emptied(.codex)   // with its composer empty (D39: the hook alone is not enough)
         hook(targetToken, "UserPromptSubmit")   // the harness confirms the submission
         clock += 60; bus.tick()
         #expect(targetIO.typed == "[from: claude-1] two\r")
         targetIO.written = []
         hook(targetToken, "Stop")
-        // A pasted tab becomes several spaces: two Backspaces leave text.
+        // A pasted tab becomes several spaces: two Backspaces leave text, which the composer shows.
+        targetIO.screen = MockIO.screen(.codex, holding: "a  ")
         bus.noteOwnerInput("codex-1", OwnerInput.key(Array("\u{1b}[200~a\tb\u{1b}[201~".utf8)[...]))
         for _ in 0..<2 { bus.noteOwnerInput("codex-1", OwnerInput.key([0x7F])) }
         _ = call("send", ["pane": "codex-1", "text": "three"])
@@ -455,6 +459,7 @@ import Testing
         _ = call("send", ["pane": "codex-1", "text": "wait"])
         clock += 60; bus.tick()
         #expect(targetIO.written.isEmpty)
+        targetIO.screen = MockIO.emptied(.codex)   // and its composer is empty (D39: the hook alone is not enough)
         hook(targetToken, "UserPromptSubmit")
         #expect(bus.info("codex-1")?.draft == false, "the harness reported the prompt submitted")
         hook(targetToken, "Stop")
@@ -486,6 +491,7 @@ import Testing
         clock += 60; bus.tick()
         #expect(targetIO.written.isEmpty)
         bus.noteOwnerInput("codex-1", OwnerInput.key([0x0D]))
+        targetIO.screen = MockIO.emptied(.codex)   // Codex took B: its composer is empty (D39: the hook alone is not enough)
         hook(targetToken, "UserPromptSubmit")   // B's hook
         #expect(bus.info("codex-1")?.draft == false)
         hook(targetToken, "Stop")
@@ -536,6 +542,8 @@ import Testing
 
     @Test func enterWaitsForTheDelayAndIsDroppedIfAPromptOpensMeanwhile() {
         var fire: (() -> Void)?
+        var clock = Date(timeIntervalSince1970: 1_000)
+        bus.now = { clock }
         bus.schedule = { _, work in fire = work }
         bus.submitDelay = 0.15
         hook(targetToken, "SessionStart")
@@ -546,9 +554,13 @@ import Testing
         #expect(targetIO.typed == "[from: claude-1] one")
         #expect(bus.info("codex-1")?.queued == 1)
         fire?()
+        // and then for a look of the screen after that Enter, not the same turn (the second read of #116)
+        #expect(targetIO.typed == "[from: claude-1] one\r")
+        clock += 1; bus.tick()
         #expect(targetIO.typed == "[from: claude-1] one\r[from: claude-1] two")
         fire?()
         #expect(targetIO.typed == "[from: claude-1] one\r[from: claude-1] two\r")
+        clock += 1
         // A prompt that opens between the paste and its Enter: no Enter.
         hook(targetToken, "Stop")
         _ = call("send", ["pane": "codex-1", "text": "three"])

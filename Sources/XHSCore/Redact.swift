@@ -4,8 +4,9 @@ import Foundation
 /// switch. The owner's own view of a pane is never changed; only the text that leaves the bus is.
 ///
 /// Three passes. Every live bus token is replaced exactly, even when the terminal wrapped it across two rows:
-/// the bus knows them all, so that one is a guarantee. Then the keys with a fixed shape that the screen
-/// wrapped at the pane's width (D35.4), and then the known secret shapes in `rules`, the short list below, after
+/// the bus knows them all, so that one is a guarantee. Then the secret shapes the screen wrapped at the
+/// pane's width (D35.4; since D39 every shape, not only keys with a fixed prefix), and then the known secret
+/// shapes in `rules`, the short list below, after
 /// the rule sets of gitleaks and detect-secrets. A pattern list misses things, so this is a backstop; who may
 /// read at all is the primary control (step 3, roles).
 ///
@@ -116,48 +117,66 @@ public enum Redact {
         var rows = text.components(separatedBy: "\n")
         // the passes before this one keep every row break, so the rows are still the ones `reaches` is about
         guard rows.count > 1, reaches.count == rows.count else { return text }
+        /// One hit's part of each row it covers, in the row's own places; the marker goes on the first.
+        typealias Part = (row: Int, lower: Int, upper: Int)
+        var hits: [(parts: [Part], kind: String)] = []
+        /// The hits that cross a row break in rows s...last read as one line, each later row without its
+        /// indent, and not over a part of a hit found before.
+        func look(_ s: Int, _ last: Int) {
+            var joined = ""
+            var starts: [Int] = []
+            var indents: [Int] = []
+            for r in s...last {
+                let row = rows[r] as NSString
+                var indent = 0
+                if r > s { while indent < row.length, row.character(at: indent) == 0x20 { indent += 1 } }
+                starts.append((joined as NSString).length)
+                indents.append(indent)
+                joined += row.substring(from: indent)
+            }
+            let length = (joined as NSString).length
+            for rule in rules where rule.wraps {
+                for m in rule.regex.matches(in: joined, range: NSRange(location: 0, length: length)) {
+                    // what goes: the match, less the part the rule keeps in front of the marker ("NAME=")
+                    let start = rule.keep > 0 ? NSMaxRange(m.range(at: rule.keep)) : m.range.location
+                    let end = m.range.location + m.range.length
+                    // the match crosses a row break, though what goes may stand in one row ("-u bob:" at a
+                    // row's end, the password the whole next row): no rule that reads row by row sees it
+                    guard starts.dropFirst().contains(where: { m.range.location < $0 && $0 < end }), end > start else { continue }
+                    let from = starts.lastIndex(where: { $0 <= start })!
+                    let to = starts.lastIndex(where: { $0 < end })!
+                    let parts: [Part] = (from...to).map { k in
+                        (s + k, max(start, starts[k]) - starts[k] + indents[k],
+                         min(end, k + 1 < starts.count ? starts[k + 1] : length) - starts[k] + indents[k])
+                    }
+                    let taken = hits.contains { hit in
+                        hit.parts.contains { a in parts.contains { b in a.row == b.row && a.lower < b.upper && b.lower < a.upper } }
+                    }
+                    if !taken { hits.append((parts, rule.kind)) }
+                }
+            }
+        }
         var first = 0
         while first < rows.count - 1 {
             guard reaches[first] else { first += 1; continue }
             var last = first
             while last < rows.count - 1, reaches[last] { last += 1 }
-            // rows first...last as one line; where each row's part starts in it, and how much indent it lost
-            var joined = ""
-            var starts: [Int] = []
-            var indents: [Int] = []
-            for r in first...last {
-                let row = rows[r] as NSString
-                var indent = 0
-                if r > first { while indent < row.length, row.character(at: indent) == 0x20 { indent += 1 } }
-                starts.append((joined as NSString).length)
-                indents.append(indent)
-                joined += row.substring(from: indent)
-            }
-            let line = joined as NSString
-            var hits: [(range: NSRange, kind: String)] = []
-            for rule in rules where rule.wraps {
-                for m in rule.regex.matches(in: joined, range: NSRange(location: 0, length: line.length)) {
-                    let end = m.range.location + m.range.length
-                    guard starts.dropFirst().contains(where: { m.range.location < $0 && $0 < end }) else { continue }
-                    guard !hits.contains(where: { NSIntersectionRange($0.range, m.range).length > 0 }) else { continue }
-                    hits.append((m.range, rule.kind))
-                }
-            }
-            // from the last hit back, so the places of the earlier ones hold
-            for hit in hits.sorted(by: { $0.range.location > $1.range.location }) {
-                let end = hit.range.location + hit.range.length
-                let from = starts.lastIndex(where: { $0 <= hit.range.location })!
-                let to = starts.lastIndex(where: { $0 < end })!
-                for k in from...to {
-                    let row = rows[first + k] as NSString
-                    // this row's part of the hit, in the row's own places
-                    let lower = max(hit.range.location, starts[k]) - starts[k] + indents[k]
-                    let upper = min(end, k + 1 < starts.count ? starts[k + 1] : line.length) - starts[k] + indents[k]
-                    rows[first + k] = row.substring(to: lower) + (k == from ? "[redacted: \(hit.kind)]" : "") + row.substring(from: upper)
-                }
-                count += 1
-            }
+            look(first, last)
+            // a row inside the run that starts indented may be a line of its own after a row that only ended
+            // near the edge: read from it too, its indent kept, so a rule that wants a line's start or a blank
+            // there ("  API_KEY=...") sees one (the second read of #116)
+            for r in (first + 1)..<last where rows[r].hasPrefix(" ") { look(r, last) }
             first = last
+        }
+        // each row's parts from its end back, so the places of the earlier ones hold
+        var edits: [(part: Part, marker: String?)] = []
+        for hit in hits {
+            for (i, part) in hit.parts.enumerated() { edits.append((part, i == 0 ? "[redacted: \(hit.kind)]" : nil)) }
+            count += 1
+        }
+        for edit in edits.sorted(by: { ($0.part.row, $0.part.lower) > ($1.part.row, $1.part.lower) }) {
+            let row = rows[edit.part.row] as NSString
+            rows[edit.part.row] = row.substring(to: edit.part.lower) + (edit.marker ?? "") + row.substring(from: edit.part.upper)
         }
         return rows.joined(separator: "\n")
     }
@@ -213,22 +232,22 @@ public enum Redact {
         Rule("slack token", #"\bxox[abposr]-[A-Za-z0-9\-]{10,}"#, wraps: true),
         Rule("slack webhook", #"https://hooks\.slack\.com/(?:services|workflows)/[A-Za-z0-9+/_\-]{20,}"#, wraps: true),
         Rule("jwt", #"\beyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}"#, wraps: true),
-        Rule("bearer token", #"(?i)(\bauthorization\s*[:=]\s*["']?bearer\s+)(?!\[(?:dojo token|redacted))[A-Za-z0-9._~+/=\-]{8,}"#, keep: 1),
-        Rule("url credentials", #"(?i)(\b[a-z][a-z0-9+.\-]{1,20}://)(?!\[(?:dojo token|redacted))[^\s:/@]+:[^\s@/]+(?=@)"#, keep: 1),
+        Rule("bearer token", #"(?i)(\bauthorization\s*[:=]\s*["']?bearer\s+)(?!\[(?:dojo token|redacted))[A-Za-z0-9._~+/=\-]{8,}"#, keep: 1, wraps: true),
+        Rule("url credentials", #"(?i)(\b[a-z][a-z0-9+.\-]{1,20}://)(?!\[(?:dojo token|redacted))[^\s:/@]+:[^\s@/]+(?=@)"#, keep: 1, wraps: true),
         // curl -u name:password, in the forms curl takes: after a blank or attached to -u, with no name, and
         // in quotes, where the password runs to the closing quote and may have blanks in it. Without quotes
         // it ends at a blank or at a shell's separator, which is never taken; a backslash and the character
         // after it are part of it, as the shell reads them ("\;secret" gives curl ";secret"). The name stays.
-        Rule("password", #"(?i)(\bcurl\b[^\n]*?[ \t](?:-u[ \t]*|--user[ \t=]+)'[^':\n]*:)(?!\[(?:dojo token|redacted))[^'\n]+(?=')"#, keep: 1),
-        Rule("password", #"(?i)(\bcurl\b[^\n]*?[ \t](?:-u[ \t]*|--user[ \t=]+)"[^":\n]*:)(?!\[(?:dojo token|redacted))(?:[^"\\\n]|\\.)+(?=")"#, keep: 1),
-        Rule("password", #"(?i)(\bcurl\b[^\n]*?[ \t](?:-u[ \t]*|--user[ \t=]+)[^\s:"']*:)(?!\[(?:dojo token|redacted))(?:\\.|[^\s"';&|)\\])+"#, keep: 1),
+        Rule("password", #"(?i)(\bcurl\b[^\n]*?[ \t](?:-u[ \t]*|--user[ \t=]+)'[^':\n]*:)(?!\[(?:dojo token|redacted))[^'\n]+(?=')"#, keep: 1, wraps: true),
+        Rule("password", #"(?i)(\bcurl\b[^\n]*?[ \t](?:-u[ \t]*|--user[ \t=]+)"[^":\n]*:)(?!\[(?:dojo token|redacted))(?:[^"\\\n]|\\.)+(?=")"#, keep: 1, wraps: true),
+        Rule("password", #"(?i)(\bcurl\b[^\n]*?[ \t](?:-u[ \t]*|--user[ \t=]+)[^\s:"']*:)(?!\[(?:dojo token|redacted))(?:\\.|[^\s"';&|)\\])+"#, keep: 1, wraps: true),
         // NAME=value where the name says what it holds; not MAX_TOKENS, not a bare number (which also ends at
         // a shell's separator, and never takes it). The name may be the word alone (PASSWORD=, API_KEY=): the
         // part in front of it is optional (D35.4). A quoted value is read to its closing quote, whatever
         // blanks it holds; in double quotes a quote after a backslash is not the end.
         Rule("secret",
              #"(?im)((?:^|[ \t])(?:export[ \t]+)?(?:[A-Z_][A-Z0-9_]*)?(?:TOKEN(?!S)|SECRET|PASSWORD|PASSWD|API_?KEY)[A-Z0-9_]*[ \t]*=[ \t]*)(?!\[(?:dojo token|redacted))(?![0-9]+(?:[\s;&|)]|$))(?:"(?:[^"\\\n]|\\.){4,}"|'[^'\n]{4,}'|["']?[^\s"']{4,}["']?)"#,
-             keep: 1),
+             keep: 1, wraps: true),
         // The same names as a YAML or JSON key: `password: value` where the key starts its row, and a quoted
         // `"api_key": "value"` after a brace or a comma. Not `token: String` in the middle of a row of code,
         // and not a type on a row of its own: one bare word of a type's letters that ends its row with a
@@ -236,6 +255,6 @@ public enum Redact {
         // that is exactly such a word passes with them.
         Rule("secret",
              #"(?im)((?:^[ \t]*(?:-[ \t]+)?["']?(?:[A-Z_][A-Z0-9_\-]*)?(?:TOKEN(?!S)|SECRET|PASSWORD|PASSWD|API[_\-]?KEY)[A-Z0-9_\-]*["']?|[{,][ \t]*["'](?:[A-Z_][A-Z0-9_\-]*)?(?:TOKEN(?!S)|SECRET|PASSWORD|PASSWD|API[_\-]?KEY)[A-Z0-9_\-]*["'])[ \t]*:[ \t]*)(?!\[(?:dojo token|redacted))(?![0-9]+(?:[\s,}]|$))(?![A-Za-z0-9_<>\[\]?.]+[,;][ \t]*$)(?!(?:string|str|int|bool|boolean|number|any|bytes|data|optional<[A-Za-z0-9_.]+>)[?!]?[ \t]*$)(?:"(?:[^"\\\n]|\\.){4,}"|'[^'\n]{4,}'|[^\s"',}]{4,})"#,
-             keep: 1),
+             keep: 1, wraps: true),
     ]
 }

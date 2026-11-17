@@ -316,6 +316,7 @@ import Testing
         rig.wait(10)
         #expect(!rig.io.typed.contains("second"))
         #expect(rig.bus.info("worker")?.queued == 1)
+        rig.io.screen = MockIO.emptied(.claude)   // the composer is empty (D39: the hook alone is not enough)
         rig.hook("UserPromptSubmit")
         rig.wait(2)
         #expect(rig.io.typed.contains("second"), "the hook reported the submission")
