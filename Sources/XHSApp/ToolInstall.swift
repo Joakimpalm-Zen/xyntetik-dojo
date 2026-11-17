@@ -31,14 +31,23 @@ enum ToolInstall {
         }
     }
 
-    /// Puts the tools from the bundle folder in the state folder.
+    /// Puts the tools from the bundle folder in the state folder. Each is copied beside its place first and
+    /// renamed over it once all are there: a copy that fails (a full disk, a damaged bundle) leaves every tool
+    /// as it was, and a tool is the old one or the new one at every moment, never absent. D58: each was removed
+    /// and then copied before, so a failure left no shim, and with it no hooks and no dojo command.
     static func place(from source: URL, to target: URL) throws {
         let fm = FileManager.default
         try fm.createDirectory(at: target, withIntermediateDirectories: true)
-        for file in files {
-            let destination = target.appendingPathComponent(file)
-            if fm.fileExists(atPath: destination.path) { try fm.removeItem(at: destination) }
-            try fm.copyItem(at: source.appendingPathComponent(file), to: destination)
+        let staged = files.map { target.appendingPathComponent(".\($0).installing") }
+        defer { for stage in staged { try? fm.removeItem(at: stage) } }
+        for (file, stage) in zip(files, staged) {
+            try? fm.removeItem(at: stage)  // one left by a start that was killed
+            try fm.copyItem(at: source.appendingPathComponent(file), to: stage)
+        }
+        for (file, stage) in zip(files, staged) {
+            guard rename(stage.path, target.appendingPathComponent(file).path) == 0 else {
+                throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+            }
         }
     }
 
