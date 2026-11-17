@@ -61,6 +61,16 @@ public final class BusRecord {
         }
         let handle = try FileHandle(forWritingTo: file)
         defer { try? handle.close() }
+        let endOffset = try handle.seekToEnd()
+        if endOffset > 0 {
+            let reader = try FileHandle(forReadingFrom: file)
+            defer { try? reader.close() }
+            try reader.seek(toOffset: endOffset - 1)
+            if let last = try reader.read(upToCount: 1), last.first != 0x0A {
+                try handle.seekToEnd()
+                try handle.write(contentsOf: Data("\n".utf8))
+            }
+        }
         try handle.seekToEnd()
         try handle.write(contentsOf: data + Data("\n".utf8))
     }
@@ -91,9 +101,15 @@ public final class BusRecord {
         return nil
     }
 
+    private static let utcCalendar: Calendar = {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        return calendar
+    }()
+
     private func prune(today: String) {
         guard let todayDate = BusRecord.dayFormat.date(from: today),
-              let cutoff = Calendar(identifier: .gregorian).date(byAdding: .day, value: -BusRecord.keepDays, to: todayDate)
+              let cutoff = BusRecord.utcCalendar.date(byAdding: .day, value: -BusRecord.keepDays, to: todayDate)
         else { return }
         for file in BusRecord.files(in: directory) {
             let name = file.deletingPathExtension().lastPathComponent
