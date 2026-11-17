@@ -591,6 +591,12 @@ public final class Bus {
         }
         // A hook is the pane reporting on itself; the state change it causes is what the record keeps.
         if op == "hook" {
+            // D38: an event `dojo hook agy` or `dojo statusline agy` posted, from a pane that is not agy's: an agy
+            // run as a tool there, with that pane's token. Refused, and the record says so.
+            if args["harness"] as? String == HarnessKind.agy.rawValue, sender.kind != .agy {
+                return recorded(["op": op, "from": sender.name, "why": "an agy event from a \(sender.kind.rawValue) pane"],
+                                error(403, "agy's hooks report for an agy pane only"))
+            }
             applyHook(sender, args)
             return (200, Data())
         }

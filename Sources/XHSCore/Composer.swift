@@ -107,6 +107,8 @@ public enum Composer {
     ///   ("1. Yes", or "1." where a narrow pane cut it) is not a composer. Rows set in, such as the later
     ///   rows of a long message, are never taken for a mark.
     /// - Claude Code and agy draw their composer between two ruled lines; Codex draws it after an empty row.
+    ///   Under agy's, the commands it runs in the background have a row each, between ruled lines of their
+    ///   own (`afterTaskRows`): they are neither the composer nor its footer.
     /// - Before the bus has typed anything, the composer is one row, and it does not already hold a paste.
     /// - After it has pasted (`afterPaste`), the composer must hold what it pasted: `pasted` itself, row by
     ///   row, or the harness's stand-in for a long paste ("[Pasted text #3 +4 lines]", "[Pasted Content 1200
@@ -216,7 +218,9 @@ public enum Composer {
         let standIn = Composer.standIn(for: kind)
         /// The composer's rows from `at` to `end`, without the mark.
         func rows(to end: Int) -> [String] { [first] + foot[(at + 1)..<max(end, at + 1)].map(\.text) }
-        func arrived(_ rows: [String]) -> Bool { pasted.map { Composer.arrived($0, rows: rows, standIn: standIn, before: before) } ?? true }
+        func arrived(_ rows: [String]) -> Bool {
+            pasted.map { Composer.arrived($0, rows: rows, standIn: standIn, before: before, partial: kind == .agy) } ?? true
+        }
         let end: Int        // the first row under the composer: its footer starts here
         var block: Int      // the first row that is not the composer's own text
         switch kind {
@@ -229,7 +233,7 @@ public enum Composer {
                 return nil
             }
             block = closing
-            end = closing + 1
+            end = kind == .agy ? afterTaskRows(foot, from: closing + 1) : closing + 1
         case .codex:
             guard at == 0 || foot[at - 1].text.isEmpty else { return nil }
             if afterPaste, pasted != nil {
@@ -259,6 +263,26 @@ public enum Composer {
         return Look(composer: first, under: under.map(\.text))
     }
 
+    /// Where the footer under agy's composer starts: after the rows of the commands agy runs in the
+    /// background, one each ("● [07:46:48] sleep 75 running", set in) with a ruled line under them, when they
+    /// are there (D38: live on 2026-11-17 the bus held every message to an idle agy pane with an empty
+    /// composer while a task ran; read off agy 1.5.9 in a pty). `from` when there are none.
+    static func afterTaskRows(_ foot: [(text: String, setIn: Bool)], from: Int) -> Int {
+        var at = from
+        while at < foot.count, foot[at].setIn, isAgyTaskRow(foot[at].text) { at += 1 }
+        guard at > from, at < foot.count, isRuledLine(foot[at].text) else { return from }
+        return at + 1
+    }
+
+    /// "● [07:46:48] " and the command: agy's row for a task it runs in the background, from its start time.
+    static func isAgyTaskRow(_ text: String) -> Bool {
+        guard text.hasPrefix("● ["), let close = text.firstIndex(of: "]") else { return false }
+        let time = text[text.index(text.startIndex, offsetBy: 3)..<close].split(separator: ":", omittingEmptySubsequences: false)
+        let rest = text[text.index(after: close)...]
+        return time.count == 3 && time.allSatisfy { $0.count == 2 && $0.allSatisfy { $0.isASCII && $0.isNumber } }
+            && rest.hasPrefix(" ") && !rest.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
     /// Whether the composer's rows are what the bus pasted, or the harness's stand-in for it. Row breaks and
     /// spaces are not compared: the harness wraps a long line where it likes.
     static func holds(_ pasted: String, rows: [String], standIn: String) -> Bool {
@@ -267,9 +291,62 @@ public enum Composer {
 
     /// `holds`, against the look before the paste: a stand-in that was in the composer already says nothing
     /// about this paste, so it counts only when the composer's row has changed.
-    static func arrived(_ pasted: String, rows: [String], standIn: String, before: Look?) -> Bool {
+    static func arrived(_ pasted: String, rows: [String], standIn: String, before: Look?, partial: Bool = false) -> Bool {
         if rows.count == 1, isStandIn(rows[0], standIn) { return rows[0] != before?.composer }
+        if partial, let shown = shownPart(rows) { return shown.isPart(of: pasted) }
         return sameText(rows.joined(), pasted)
+    }
+
+    /// What a composer taller than the harness lets it be shows of its text: agy (D38, a pty on 2026-11-16)
+    /// writes "↑ N more lines" on the composer's first row and "↓ N more lines" on its last for the rows it
+    /// does not show. Nil when the rows carry neither.
+    struct ShownPart {
+        var rows: [String]
+        var above: Bool
+        var below: Bool
+        var text: String { rows.joined() }
+
+        /// Whether the rows shown are this part of `pasted`, blanks apart: its end when only rows above are
+        /// hidden, its start when only rows below are, somewhere inside it when both are. At least `editedRun`
+        /// characters of it, so that a row or two of punctuation says nothing; a shorter end counts when its
+        /// rows are the paste's last lines, one for one (a message whose last lines are a letter or two, the
+        /// second read of #114).
+        func isPart(of pasted: String) -> Bool {
+            let whole = Composer.bare(pasted), part = Composer.bare(text)
+            guard !part.isEmpty else { return false }
+            switch (above, below) {
+            case (true, false):
+                guard whole.hasSuffix(part) else { return false }
+                if part.count >= Composer.editedRun { return true }
+                let shown = rows.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                let lines = pasted.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                return Array(lines.suffix(shown.count)) == shown
+            case (false, true): return part.count >= Composer.editedRun && whole.hasPrefix(part)
+            default: return part.count >= Composer.editedRun && whole.contains(part)
+            }
+        }
+    }
+
+    static func shownPart(_ rows: [String]) -> ShownPart? {
+        var rows = rows
+        let above = rows.first.map { isMoreLines($0, "↑") } ?? false
+        if above { rows.removeFirst() }
+        let below = rows.last.map { isMoreLines($0, "↓") } ?? false
+        if below { rows.removeLast() }
+        guard above || below else { return nil }
+        return ShownPart(rows: rows, above: above, below: below)
+    }
+
+    /// "↑ 6 more lines", "↓ 1 more line": agy's word for rows of its composer it does not show.
+    static func isMoreLines(_ row: String, _ arrow: String) -> Bool {
+        let words = row.trimmingCharacters(in: .whitespaces).split(separator: " ")
+        return words.count == 4 && words[0] == arrow && words[1].allSatisfy(\.isNumber)
+            && words[2] == "more" && (words[3] == "lines" || words[3] == "line")
+    }
+
+    /// A text without its blanks and line breaks, which a harness lays out as it likes.
+    static func bare(_ text: String) -> String {
+        String(String.UnicodeScalarView(text.unicodeScalars.filter { !$0.properties.isWhitespace }))
     }
 
     static func isStandIn(_ row: String, _ standIn: String) -> Bool { row.hasPrefix(standIn) && row.hasSuffix("]") }

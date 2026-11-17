@@ -183,6 +183,25 @@ public enum Launcher {
         ]]
     }
 
+    /// What an agy pane runs agy with: the pane's rows less one as new lines, then agy (its words follow as
+    /// the script's arguments). agy draws a new session from its cursor down, so a fresh pane had its composer
+    /// near the top; from the last row, agy's first frame stands at the foot and stays there (D38 follow-up,
+    /// read off agy in a pty). The rows come from `stty size` in the pane's own shell, here or on a host; with
+    /// no terminal, no stty or an answer that is no size, no line is printed and agy starts as before. sh
+    /// reads it with nothing but what sh has built in, and stty. No apostrophe and no backslash, which would
+    /// cost bytes in the quoting a fish login shell needs (see `reachCheck`).
+    ///
+    /// It also puts its own pid in DOJO_AGY_PID, which agy keeps, run with exec: Dojo's plugin acts for that
+    /// agy alone, which runs its hook and status-line commands as its own children (a probe on 2026-11-17).
+    /// An agy the pane's agent runs under it (agy -p) inherits the variable, and has a pid of its own (the
+    /// second read of #114).
+    public static let agyFootStart = [
+        #"DOJO_AGY_PID=$$; export DOJO_AGY_PID"#,
+        #"size=$(stty size 2>/dev/null); rows=${size%% *}"#,
+        #"case $rows in ""|*[!0-9]*) ;; *) i=1; while [ "$i" -lt "$rows" ]; do echo; i=$((i+1)); done;; esac"#,
+        #"exec "$@""#,
+    ].joined(separator: "; ")
+
     /// The variable an agy pane carries its peer rule in, for `dojo hook agy` to inject at SessionStart.
     public static let agyRuleVariable = "DOJO_PEER_RULE"
 
@@ -248,7 +267,13 @@ public enum Launcher {
             // (`dojo hook agy`). A resumed conversation fires no SessionStart; it keeps the rule it was given at
             // its start. The tick is agy's own flag, which approves every tool request. --settings carries the
             // pane's status line, which reports a permission dialog (`agySettings`).
-            return [.literal(agyRuleVariable + "=" + prompt), .literal("agy")] +
+            // It starts from the pane's foot (`agyFootStart`): agy draws a new session from its cursor down.
+            // DOJO_HARNESS marks an agy pane, and the script's DOJO_AGY_PID the pane's own agy: Dojo's plugin
+            // reports only for it, not for an agy run as a tool in another pane, which inherits that pane's
+            // DOJO_TOKEN, nor for one run under the pane's own agy, which inherits both.
+            return [.literal(agyRuleVariable + "=" + prompt), .literal("DOJO_HARNESS=agy"), .literal("/bin/sh"), .literal("-c"),
+                    .literal(agyFootStart),
+                    .literal("sh"), .literal("agy")] +
                    (session.map { [.literal("--conversation"), .literal($0)] } ?? []) +
                    (unrestricted ? [.literal("--dangerously-skip-permissions")] : []) +
                    [.literal("--settings"), .literal(json(agySettings()))]
@@ -454,26 +479,152 @@ public enum Launcher {
     }
 
     /// Whether a command's output lists `flag`, run in the login shell as a pane is. No answer in `timeout`
-    /// seconds is a no, so a slow or hanging profile cannot hold a pane back.
+    /// seconds is a no, so a slow or hanging profile cannot hold a pane back, and the shell is ended then
+    /// with all it started.
     public static func helpLists(_ flag: String, command: String, loginShell: String, timeout: TimeInterval = 5) async -> Bool {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: loginShell)
-        process.arguments = ["-l", "-i", "-c", command]
-        process.standardInput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        let out = Pipe()
-        process.standardOutput = out
-        guard (try? process.run()) != nil else { return false }
+        guard let child = Detached(loginShell, ["-l", "-i", "-c", command]) else { return false }
         return await withCheckedContinuation { continuation in
             let answer = Once(continuation)
             DispatchQueue.global().async {
-                let data = out.fileHandleForReading.readDataToEndOfFile()
+                let data = child.output.readDataToEndOfFile()
+                child.outputEnded()
                 answer.give(String(decoding: data, as: UTF8.self).contains(flag))
             }
             DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
-                process.terminate()
+                child.stop()
                 answer.give(false)
             }
+        }
+    }
+
+    /// A program started in a session of its own, so that it has no controlling terminal: stdin /dev/null,
+    /// stdout a pipe, stderr /dev/null or a file (`errors`), nothing else of this process's files, and this
+    /// process's environment unless it is given one. D38: Foundation's Process puts its child
+    /// in a process group of its own; where Dojo has a controlling terminal (started from a terminal, as
+    /// `make smoke` in an agy pane, whose shell tool runs commands on one), that group is a background one,
+    /// and an interactive login shell there is stopped by SIGTTIN until the time runs out. A pane's harness
+    /// never was: it runs in the pane's own terminal, in a session of its own.
+    ///
+    /// The program leads that session, so the session's id is its pid, and whatever it starts is in it, in
+    /// the program's group or, from an interactive shell, in a group of the job's own. A thread of its own
+    /// waits for the program to end without reaping it (the second read of #114): until it is reaped, under
+    /// the lock `stop()` takes, its pid stays its own and no signal can reach another program that got the
+    /// number. It is reaped once its output has ended too, or `stop()` was called: while a program it started
+    /// still holds the output open, it is kept, so that `stop()` can end that program as well.
+    final class Detached: @unchecked Sendable {
+        let pid: pid_t
+        let output: FileHandle
+        private let lock = NSLock()
+        private var exited = false, ended = false, stopped = false, reaped = false
+        private var code: Int32 = 0
+        private let gone = DispatchSemaphore(value: 0)
+        /// For a test: called with the pid once the program has ended, before it is reaped.
+        private let onExit: (@Sendable (pid_t) -> Void)?
+
+        init?(_ executable: String, _ arguments: [String], environment: [String: String]? = nil, errors: String? = nil,
+              qos: qos_class_t = QOS_CLASS_DEFAULT, onExit: (@Sendable (pid_t) -> Void)? = nil) {
+            self.onExit = onExit
+            var fds: [Int32] = [0, 0]
+            guard pipe(&fds) == 0 else { return nil }
+            var actions: posix_spawn_file_actions_t?
+            var attributes: posix_spawnattr_t?
+            posix_spawn_file_actions_init(&actions)
+            posix_spawnattr_init(&attributes)
+            defer {
+                posix_spawn_file_actions_destroy(&actions)
+                posix_spawnattr_destroy(&attributes)
+            }
+            posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0)
+            posix_spawn_file_actions_adddup2(&actions, fds[1], 1)
+            posix_spawn_file_actions_addopen(&actions, 2, errors ?? "/dev/null", O_WRONLY | O_CREAT | O_APPEND, 0o644)
+            posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETSID | POSIX_SPAWN_CLOEXEC_DEFAULT))
+            posix_spawnattr_set_qos_class_np(&attributes, qos)
+            let argv: [UnsafeMutablePointer<CChar>?] = ([executable] + arguments).map { strdup($0) } + [nil]
+            // this process's environment, as Process gives its child
+            let envp: [UnsafeMutablePointer<CChar>?] = (environment ?? ProcessInfo.processInfo.environment)
+                .map { strdup($0.key + "=" + $0.value) } + [nil]
+            defer { (argv + envp).forEach { free($0) } }
+            var pid: pid_t = 0
+            let started = posix_spawn(&pid, executable, &actions, &attributes, argv, envp)
+            close(fds[1])
+            guard started == 0 else {
+                close(fds[0])
+                return nil
+            }
+            self.pid = pid
+            output = FileHandle(fileDescriptor: fds[0], closeOnDealloc: true)
+            Thread.detachNewThread { [self] in watch() }
+        }
+
+        /// Waits for the program to end, leaving it a zombie, whose pid no other program can get.
+        private func watch() {
+            var info = siginfo_t()
+            while waitid(P_PID, id_t(pid), &info, WEXITED | WNOWAIT) == -1 && errno == EINTR {}
+            onExit?(pid)
+            lock.lock()
+            exited = true
+            reapWhenDone()
+            lock.unlock()
+        }
+
+        /// Its output has ended: no program it started holds it any more.
+        func outputEnded() {
+            lock.lock()
+            ended = true
+            reapWhenDone()
+            lock.unlock()
+        }
+
+        /// Ends the program and every one in its session with SIGKILL, unless it has been reaped. An
+        /// interactive shell ignores SIGTERM, and what is asked here keeps nothing that needs a clean end. A
+        /// program that left the session (a daemon of the profile's) is not reached; if it holds the output,
+        /// only the thread reading it waits on. The program's own pid and group are its own until it is
+        /// reaped; another member's pid is free once that member ends, so between reading the session and the
+        /// signal there is the one kernel call in which it could be taken.
+        func stop() {
+            lock.lock()
+            if !reaped {
+                kill(-pid, SIGKILL)
+                // twice: one that was being started as the first round ran is ended in the second
+                for _ in 0..<2 { for member in Self.session(pid) where member != pid { kill(member, SIGKILL) } }
+            }
+            stopped = true
+            reapWhenDone()
+            lock.unlock()
+        }
+
+        /// The processes in the session `sid`: every process, kept where getsid says so. macOS's own filter
+        /// for a session (KERN_PROC_SESSION, `pgrep -s`) found none of a shell's jobs on 2026-11-17.
+        static func session(_ sid: pid_t) -> [pid_t] {
+            var name: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL]
+            var size = 0
+            guard sysctl(&name, 3, nil, &size, nil, 0) == 0, size > 0 else { return [] }
+            let stride = MemoryLayout<kinfo_proc>.stride
+            var found = [kinfo_proc](repeating: kinfo_proc(), count: size / stride + 16)
+            size = found.count * stride
+            guard sysctl(&name, 3, &found, &size, nil, 0) == 0 else { return [] }
+            return found.prefix(size / stride).map(\.kp_proc.p_pid).filter { $0 > 0 && getsid($0) == sid }
+        }
+
+        /// Under the lock: reaps the program once it has ended, and its output has too or it was stopped.
+        private func reapWhenDone() {
+            guard exited, ended || stopped, !reaped else { return }
+            var status: Int32 = 0
+            waitpid(pid, &status, 0)  // it has ended: this does not wait
+            // the exit code, or 128 and the signal that ended it, as a shell says
+            code = status & 0x7f == 0 ? (status >> 8) & 0xff : 128 + status & 0x7f
+            reaped = true
+            gone.signal()
+        }
+
+        /// Waits until the program has been reaped (its output has ended, or it was stopped) and gives its exit
+        /// code.
+        func exitCode() -> Int32 {
+            gone.wait()
+            gone.signal()
+            lock.lock()
+            defer { lock.unlock() }
+            return code
         }
     }
 

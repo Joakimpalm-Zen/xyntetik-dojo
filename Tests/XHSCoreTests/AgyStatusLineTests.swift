@@ -23,7 +23,8 @@ import Testing
         return String(decoding: try! JSONSerialization.data(withJSONObject: data), as: UTF8.self)
     }
 
-    /// The shim's status line, run off the main actor so the bus can answer it.
+    /// The shim's status line, run off the main actor so the bus can answer it. The test process stands in for
+    /// the pane's agy, which runs the command as its child: an agy pane's environment names it in DOJO_AGY_PID.
     static func statusLine(_ stdin: String, environment: [String: String]) async -> (status: Int32, out: String) {
         let shim = Self.shim
         return await withCheckedContinuation { continuation in
@@ -77,7 +78,8 @@ import Testing
         let path = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"
         let tmp = Self.folder()
         defer { try? FileManager.default.removeItem(atPath: tmp) }
-        let pane = ["PATH": path, "DOJO_TOKEN": token, "DOJO_PORT": String(port), "DOJO_PANE": "agy-1", "TMPDIR": tmp]
+        let pane = ["PATH": path, "DOJO_TOKEN": token, "DOJO_PORT": String(port), "DOJO_PANE": "agy-1", "TMPDIR": tmp,
+                    "DOJO_HARNESS": "agy", "DOJO_AGY_PID": String(getpid())]
         func report(_ fields: [String: Any], _ environment: [String: String]? = nil) async -> String {
             let (status, out) = await Self.statusLine(Self.payload(fields), environment: environment ?? pane)
             #expect(status == 0)
@@ -101,6 +103,51 @@ import Testing
         #expect(await Self.settles(bus, "agy-1", at: .idle))
     }
 
+    /// Live on 2026-11-16: an agy run as a tool inside a Claude pane reported into that pane. Both ends now:
+    /// that agy has no DOJO_HARNESS, so it tells the bus nothing; and the bus refuses agy's events for a pane
+    /// of another kind, should they come, and records the refusal. The agy pane itself is as before.
+    @Test func anAgyInsideAClaudePaneMovesNothing() async throws {
+        let bus = Bus()
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("agy-refused-\(UUID().uuidString)")
+        bus.record = BusRecord(directory: folder)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let claude = bus.add(name: "claude-1", kind: .claude, io: MockIO())
+        let agy = bus.add(name: "agy-1", kind: .agy, io: MockIO(kind: .agy))
+        bus.setState("claude-1", .running)
+        let server = try BusServer(port: 0) { path, token, body in bus.handle(path: path, token: token, body: body) }
+        let started: Error? = await withCheckedContinuation { continuation in
+            server.start { continuation.resume(returning: $0) }
+        }
+        #expect(started == nil)
+        defer { server.stop() }
+        let port = try #require(server.port)
+        let tmp = Self.folder()
+        defer { try? FileManager.default.removeItem(atPath: tmp) }
+        let path = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"
+        // the Claude pane's environment, as any process it starts inherits it
+        let inClaude = ["PATH": path, "DOJO_TOKEN": claude, "DOJO_PORT": String(port), "DOJO_PANE": "claude-1", "TMPDIR": tmp]
+        _ = await Self.statusLine(Self.payload(["agent_state": "idle"]), environment: inClaude)
+        _ = await Self.statusLine(Self.payload(["agent_state": "tool_use", "tool_confirmation_pending": true]), environment: inClaude)
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        #expect(bus.info("claude-1")?.state == .running)
+        #expect(bus.info("claude-1")?.model == "")
+        // the bus's own end: an event marked agy's from a Claude pane is refused, and the record says so
+        let refused = bus.handle(path: "/hook", token: claude, body: try JSONSerialization.data(withJSONObject:
+            ["hook_event_name": "Stop", "model": "gemini-4-hydrogen-high", "harness": "agy"]))
+        #expect(refused.status == 403)
+        #expect(bus.info("claude-1")?.state == .running)
+        #expect(bus.info("claude-1")?.model == "")
+        let lines = ((try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []).flatMap {
+            ((try? String(contentsOf: $0, encoding: .utf8)) ?? "").split(separator: "\n").map(String.init)
+        }
+        #expect(lines.contains { $0.contains("\"op\":\"hook\"") && $0.contains("refused") && $0.contains("claude-1") })
+        // the agy pane is as before
+        let inAgy = ["PATH": path, "DOJO_TOKEN": agy, "DOJO_PORT": String(port), "DOJO_PANE": "agy-1", "TMPDIR": tmp,
+                     "DOJO_HARNESS": "agy", "DOJO_AGY_PID": String(getpid())]
+        _ = await Self.statusLine(Self.payload(["agent_state": "tool_use", "tool_confirmation_pending": true]), environment: inAgy)
+        #expect(await Self.settles(bus, "agy-1", at: .prompt))
+    }
+
     /// An agy that does not send the field: no prompt from the status line. The composer guard, which
     /// types only into a composer it can see, keeps the bus out of the dialog (D35.1).
     @Test func anAgyWithoutTheFieldLeavesTheDialogToTheScreen() async throws {
@@ -116,7 +163,7 @@ import Testing
         let tmp = Self.folder()
         defer { try? FileManager.default.removeItem(atPath: tmp) }
         let pane = ["PATH": ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin", "DOJO_TOKEN": token,
-                    "DOJO_PORT": String(port), "DOJO_PANE": "agy-1", "TMPDIR": tmp]
+                    "DOJO_PORT": String(port), "DOJO_PANE": "agy-1", "TMPDIR": tmp, "DOJO_HARNESS": "agy", "DOJO_AGY_PID": String(getpid())]
         let (status, _) = await Self.statusLine(Self.payload(["agent_state": "tool_use"]), environment: pane)
         #expect(status == 0)
         #expect(await Self.settles(bus, "agy-1", at: .running))
