@@ -44,9 +44,15 @@ public enum OwnerInput {
         if pointer(bytes) { return .pointer }
         // Bracketed paste inserts text.
         if s.hasPrefix("\u{1b}[200~") { return .text }
-        // Keys that only move, delete or invoke UI controls (arrows including Up/Down, Home/End,
-        // Shift-Tab, function/navigation CSI and SS3 sequences) never insert text directly.
-        if moves(s) || s.hasPrefix("\u{1b}[") || s.hasPrefix("\u{1b}O") { return .other }
+        // Up and Down (CSI or SS3) recall saved prompts into the composer; all other CSI/SS3 sequences
+        // (Left/Right/Home/End, Shift-Tab, navigation/function keys) only move or act on UI chrome.
+        if moves(s) { return .other }
+        if s.hasPrefix("\u{1b}O") {
+            return (s.last.map { "AB".contains($0) } ?? false) ? .text : .other
+        }
+        if s.hasPrefix("\u{1b}[") {
+            return (s.last.map { "AB".contains($0) } ?? false) ? .text : .other
+        }
         // Anything else (for example Alt-key chords): may insert text.
         return .text
     }
@@ -75,12 +81,13 @@ public enum OwnerInput {
         return code & 32 != 0 || code & 64 != 0
     }
 
-    /// CSI and SS3 sequences for cursor movement (all arrows, Home, End), forward delete and mouse reports.
+    /// CSI and SS3 sequences for horizontal cursor movement, Home, End, forward delete and mouse reports.
+    /// Up and Down (`A`/`B`) recall history and are kept as `.text`.
     static func moves(_ s: String) -> Bool {
         let body = s.dropFirst(2)
-        if s.hasPrefix("\u{1b}O"), let last = s.last, "ABCDHF".contains(last) { return true }
+        if s.hasPrefix("\u{1b}O"), let last = s.last, "CDHF".contains(last) { return true }
         guard s.hasPrefix("\u{1b}["), let last = body.last else { return false }
-        if "ABCDHF".contains(last) { return true }                                           // arrows, Home, End (with modifiers too)
+        if "CDHF".contains(last) { return true }                                           // left, right, Home, End (with modifiers too)
         if last == "~", let number = Int(body.dropLast().split(separator: ";").first ?? ""), [1, 3, 4, 5, 6, 7, 8].contains(number) { return true }
         if body.hasPrefix("<"), last == "M" || last == "m" { return true }                   // mouse
         return false

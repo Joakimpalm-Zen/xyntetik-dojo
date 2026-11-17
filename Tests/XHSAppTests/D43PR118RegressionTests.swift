@@ -360,6 +360,23 @@ import Testing
             #expect(rig.io.enterCount == 1, "\(kind): dialog answer blocked Enter on later capped paste")
             #expect(rig.bus.info("worker")?.needsOwnerEnter == false)
         }
+
+        // Pager/editor on the other buffer after harnessBuffer was learned does not set ownerTypedUnproven either.
+        let rig = Self.makeRig(kind: .claude, cols: entry.cols, rows: entry.rows)
+        rig.io.showBytes(bytes.prefix(entry.beforeOffset))
+        rig.hook("Stop")
+        rig.io.show("\u{1b}[?1049l\u{1b}[2J\u{1b}[Hpager line\n")
+        rig.bus.noteOwnerInput("worker", OwnerInput.key(Array("q".utf8)[...]))
+        rig.io.show("\u{1b}[?1049h")
+        rig.io.showBytes(bytes.prefix(entry.beforeOffset))
+        rig.advance(4)
+        let pagerRes = rig.send(payload)
+        #expect(pagerRes["delivered"] as? Bool == true)
+        #expect(rig.bus.info("worker")?.draft == false)
+        rig.io.showBytes(bytes[entry.beforeOffset..<entry.afterOffset])
+        rig.fire()
+        #expect(rig.io.enterCount == 1)
+        #expect(rig.bus.info("worker")?.needsOwnerEnter == false)
     }
 
     @Test func reread3QueuedBusPasteSubmitHookDoesNotClearOwnerTypedUnproven() throws {

@@ -388,11 +388,11 @@ import Testing
     }
 
     @Test func keysAreClassifiedFromTheBytesTheTerminalSends() {
-        let text = ["a", "p\u{e5}", "\t", "\n", "\u{19}", "\u{1b}[200~hello world\u{1b}[201~",
+        let text = ["a", "p\u{e5}", "\t", "\n", "\u{19}", "\u{1b}[200~hello world\u{1b}[201~", "\u{1b}[A", "\u{1b}[B", "\u{1b}[1;2B",
                     "\u{1b}[97u", "\u{1b}[13;2u", "\u{1b}[106;5u", "\u{1b}[122;5u", "\u{1b}[97;1:2u", "\u{1b}a", "\u{1b}[57400u"]
         let submit = ["\r", "\u{1b}[13u"]
         let clear = ["\u{3}", "\u{1b}[99;5u"]
-        let other = ["\u{7f}", "\u{8}", "\u{1b}", "\u{1b}[A", "\u{1b}[B", "\u{1b}[1;2B", "\u{1b}[C", "\u{1b}[D", "\u{1b}[H", "\u{1b}[F", "\u{1b}[3~", "\u{1b}[5~", "\u{1b}[1;5D",
+        let other = ["\u{7f}", "\u{8}", "\u{1b}", "\u{1b}[C", "\u{1b}[D", "\u{1b}[H", "\u{1b}[F", "\u{1b}[3~", "\u{1b}[5~", "\u{1b}[1;5D",
                      "\u{1b}OD", "\u{1b}[127u", "\u{1b}[127;1:3u", "\u{1b}[57364u", "\u{1b}[<0;10;5M"]
         let reply = ["\u{1b}[24;80R", "\u{1b}[?62;c", "\u{1b}[0n", "\u{1b}]11;rgb:f3f3/efef/e6e6\u{1b}\\", "\u{1b}[?1u", "\u{1b}[I", "\u{1b}P1$r\u{1b}\\"]
         for (keys, expected) in [(text, Bus.OwnerKey.text), (submit, .submit), (clear, .clear), (other, .other), (reply, .reply)] {

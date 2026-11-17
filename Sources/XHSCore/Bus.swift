@@ -144,6 +144,10 @@ public final class Bus {
         /// for the owner's own prompt, a shell/runner Enter, Ctrl-C, or an Enter over a fully visible paste).
         /// Unlike `hasDraft`, screen redraws never clear this fact.
         var ownerTypedUnproven = false
+        /// The owner pressed Enter since their last unproven text key (`ownerTypedUnproven`).
+        var ownerSubmitted = false
+        /// Pastes the bus submitted by Enter and has not yet matched to a `UserPromptSubmit` hook.
+        var busPastes: [String] = []
         /// An Enter is held because `ownerTypedUnproven` is true while the composer's head is hidden above.
         var needsOwnerEnter = false
         /// The bus looked for the harness's composer on the screen and did not see one, so it typed nothing,
@@ -371,6 +375,18 @@ public final class Bus {
         case pointer
     }
 
+    private func keyReachesComposer(_ p: Pane) -> Bool {
+        if p.state == .prompt { return false }
+        if let home = p.harnessBuffer, let alt = p.io?.liveScreen().alternate, alt != home { return false }
+        return true
+    }
+
+    private func recordBusPaste(_ p: Pane, _ text: String?) {
+        guard let text, !text.isEmpty else { return }
+        p.busPastes.append(text)
+        if p.busPastes.count > 32 { p.busPastes.removeFirst(p.busPastes.count - 32) }
+    }
+
     /// The owner typed into the pane: hold relayed messages for a moment, and while text may be unsent.
     public func noteOwnerInput(_ name: String, _ key: OwnerKey = .text) {
         guard let p = pane(named: name), key != .reply, key != .pointer else { return }
@@ -395,16 +411,22 @@ public final class Bus {
         case .text:
             p.hasDraft = true
             p.typedSinceSubmit = true
-            p.ownerTypedUnproven = true
+            if keyReachesComposer(p) {
+                p.ownerTypedUnproven = true
+                p.ownerSubmitted = false
+            }
         case .clear:
             p.hasDraft = false
             p.typedSinceSubmit = false
             p.ownerTypedUnproven = false
+            p.ownerSubmitted = false
         case .submit:
             p.typedSinceSubmit = false
+            if p.ownerTypedUnproven { p.ownerSubmitted = true }
             if p.kind == .shell || p.kind == .runner {
                 p.hasDraft = false
                 p.ownerTypedUnproven = false
+                p.ownerSubmitted = false
             }   // no hooks there: Enter is it
         case .other, .reply, .pointer: break
         }
@@ -854,13 +876,23 @@ public final class Bus {
         // pi reports the editor submission separately: agent_start can arrive later, or start a
         // queued turn, while a new draft is already present.
         if let name = event["hook_event_name"] as? String,
-           name == "UserInputSubmitted" || (name == "UserPromptSubmit" && pane.kind != .pi),
-           !pane.typedSinceSubmit, !pane.enterPending, !pane.enterOwed,
-           composerTookTheDraft(pane, prompt: event["prompt"] as? String) {
-            let wasDraft = pane.hasDraft
-            pane.hasDraft = false
-            pane.ownerTypedUnproven = false
-            if wasDraft { onChange?() }
+           name == "UserInputSubmitted" || (name == "UserPromptSubmit" && pane.kind != .pi) {
+            let prompt = event["prompt"] as? String
+            var matchedBusPaste = false
+            if let prompt, let idx = pane.busPastes.firstIndex(where: { Composer.sameText(prompt, $0) }) {
+                pane.busPastes.remove(at: idx)
+                matchedBusPaste = true
+            }
+            if !matchedBusPaste, !pane.typedSinceSubmit, !pane.enterPending, !pane.enterOwed,
+               composerTookTheDraft(pane, prompt: prompt) {
+                let wasDraft = pane.hasDraft
+                pane.hasDraft = false
+                if pane.ownerSubmitted && (prompt != nil || pane.kind == .pi || pane.busPastes.isEmpty) {
+                    pane.ownerTypedUnproven = false
+                    pane.ownerSubmitted = false
+                }
+                if wasDraft { onChange?() }
+            }
         }
         // A submission the hook names: evidence for the owner's Enter only when it carries the text the bus
         // pasted AND comes after that Enter. A hook of an earlier prompt can come late, and an earlier prompt
@@ -991,8 +1023,12 @@ public final class Bus {
                     switch self.afterPasteDecision(p, io) {
                     case .send(let headHidden):
                         if p.noComposer { p.noComposer = false }
+                        self.recordBusPaste(p, p.pasted)
                         io.write(Delivery.enter)
-                        if !headHidden { p.ownerTypedUnproven = false }
+                        if !headHidden {
+                            p.ownerTypedUnproven = false
+                            p.ownerSubmitted = false
+                        }
                         self.nothingWaits(p)
                         self.note(["op": "enter", "pane": p.name, "outcome": "sent"])
                         self.enterStartedATurn(p)
@@ -1020,6 +1056,7 @@ public final class Bus {
                 self.flush(p)
             }
         } else {
+            recordBusPaste(p, p.pasted)
             io.write(Delivery.enter)
             p.pasted = nil
             p.look = nil
@@ -1162,7 +1199,9 @@ public final class Bus {
         guard did != .unknown else { return false }
         p.enterOwed = false
         if did == .sentIt {
+            recordBusPaste(p, p.pasted)
             p.ownerTypedUnproven = false
+            p.ownerSubmitted = false
         }
         nothingWaits(p)
         if did == .leftADraft {
@@ -1275,8 +1314,12 @@ public final class Bus {
         case .send(let headHidden):
             let unproven = p.ownerEnterAfterPaste
             p.enterOwed = false
+            recordBusPaste(p, p.pasted)
             io.write(Delivery.enter)
-            if !headHidden && !unproven { p.ownerTypedUnproven = false }
+            if !headHidden && !unproven {
+                p.ownerTypedUnproven = false
+                p.ownerSubmitted = false
+            }
             nothingWaits(p)
             if unproven {
                 p.hasDraft = true
