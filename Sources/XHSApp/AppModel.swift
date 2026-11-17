@@ -591,17 +591,30 @@ final class AppModel: NSObject, ObservableObject {
     /// come back once every pane is open, since a grant names another pane.
     func reopenLast() {
         let panes = lastPanes
+        guard !panes.isEmpty else { return }
+        var errors: [String] = []
+        let wasKeeping = keepingList
+        keepingList = true
         for pane in panes {
-            if let trouble = addPane(kind: pane.kind, host: pane.host, name: pane.name, directory: pane.directory, unrestricted: pane.unrestricted,
-                                     session: pane.session, reopened: true) {
-                problem = "\(pane.name): \(trouble)"
+            if let trouble = addPane(kind: pane.kind, host: pane.host, name: pane.name, directory: pane.directory,
+                                     unrestricted: pane.unrestricted, session: pane.session, reopened: true) {
+                errors.append("\(pane.name): \(trouble)")
             }
         }
         for pane in panes {
-            if pane.coordinator { bus.setCoordinator(pane.name) }
-            for target in pane.mayRead { bus.setRead(pane.name, of: target, allowed: true) }
+            if pane.coordinator, let trouble = bus.setCoordinator(pane.name) {
+                errors.append("\(pane.name): \(trouble)")
+            }
+            for target in pane.mayRead {
+                if let trouble = bus.setRead(pane.name, of: target, allowed: true) {
+                    errors.append("\(pane.name): \(trouble)")
+                }
+            }
         }
-        savePanes()
+        keepingList = wasKeeping
+        if !errors.isEmpty { problem = errors.joined(separator: " ") }
+        // Preserve saved panes on disk when every pane failed to open.
+        if !items.isEmpty { savePanes() }
     }
 
     // MARK: roles (D21.2)
@@ -631,15 +644,26 @@ final class AppModel: NSObject, ObservableObject {
         let wasCoordinator = bus.coordinatorName == item.name
         let reads = bus.info(item.name)?.reads ?? []
         let readBy = bus.all.filter { $0.reads.contains(item.name) }.map(\.name)
+        let wasKeeping = keepingList
+        keepingList = true
         close(item.name)
         if let trouble = addPane(kind: item.kind, host: host, name: item.name, directory: item.directory, unrestricted: item.unrestricted,
                                  session: session, reopened: true) {
+            keepingList = wasKeeping
             problem = "\(item.name): \(trouble)"
+            savePanes()
             return
         }
-        if wasCoordinator { bus.setCoordinator(item.name) }
-        for target in reads { bus.setRead(item.name, of: target, allowed: true) }
-        for worker in readBy { bus.setRead(worker, of: item.name, allowed: true) }
+        var errors: [String] = []
+        if wasCoordinator, let trouble = bus.setCoordinator(item.name) { errors.append(trouble) }
+        for target in reads {
+            if let trouble = bus.setRead(item.name, of: target, allowed: true) { errors.append(trouble) }
+        }
+        for worker in readBy {
+            if let trouble = bus.setRead(worker, of: item.name, allowed: true) { errors.append(trouble) }
+        }
+        keepingList = wasKeeping
+        if !errors.isEmpty { problem = errors.joined(separator: " ") }
         savePanes()
     }
 

@@ -148,13 +148,7 @@ public struct SavedPane: Codable, Equatable, Sendable {
 public enum SavedPanes {
     public static func save(_ panes: [SavedPane], to file: URL) {
         guard let data = try? JSONEncoder().encode(panes) else { return }
-        let folder = file.deletingLastPathComponent()
-        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let temporary = folder.appendingPathComponent(".panes-\(UUID().uuidString)")
-        guard let handle = openPrivate(temporary) else { return }
-        let written = (try? handle.write(contentsOf: data)) != nil
-        try? handle.close()
-        if !written || rename(temporary.path, file.path) != 0 { try? FileManager.default.removeItem(at: temporary) }
+        _ = writePrivate(data, to: file, tempPrefix: "panes")
     }
 
     /// A new file only the owner can read, from the moment it exists: the mode is set as it is created.
