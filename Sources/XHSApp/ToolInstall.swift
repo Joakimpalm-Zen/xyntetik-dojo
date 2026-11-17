@@ -24,15 +24,21 @@ enum ToolInstall {
         let target = fm.homeDirectoryForCurrentUser.appendingPathComponent(".dojo")
         let moved = moveOldHome(to: target)
         do {
-            try fm.createDirectory(at: target, withIntermediateDirectories: true)
-            for file in files {
-                let destination = target.appendingPathComponent(file)
-                if fm.fileExists(atPath: destination.path) { try fm.removeItem(at: destination) }
-                try fm.copyItem(at: source.appendingPathComponent(file), to: destination)
-            }
+            try place(from: source, to: target)
             return moved
         } catch {
             return "Could not install the dojo tools in ~/.dojo: \(error.localizedDescription)"
+        }
+    }
+
+    /// Puts the tools from the bundle folder in the state folder.
+    static func place(from source: URL, to target: URL) throws {
+        let fm = FileManager.default
+        try fm.createDirectory(at: target, withIntermediateDirectories: true)
+        for file in files {
+            let destination = target.appendingPathComponent(file)
+            if fm.fileExists(atPath: destination.path) { try fm.removeItem(at: destination) }
+            try fm.copyItem(at: source.appendingPathComponent(file), to: destination)
         }
     }
 

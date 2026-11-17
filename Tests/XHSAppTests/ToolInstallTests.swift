@@ -49,4 +49,43 @@ import Testing
         }
         #expect(outcome == "dojo install failed; run python3 ~/.dojo/dojo-mcp.py install")
     }
+
+    /// D58: the copy removed each file and then put the new one in its place, so a copy that failed left no
+    /// shim in ~/.dojo at all. A failure leaves every file as it was.
+    @Test func aCopyThatFailsLeavesTheToolsAsTheyWere() throws {
+        let fm = FileManager.default
+        let folder = fm.temporaryDirectory.appendingPathComponent("tool-place-\(UUID().uuidString)")
+        let source = folder.appendingPathComponent("bundle"), target = folder.appendingPathComponent("state")
+        try fm.createDirectory(at: source, withIntermediateDirectories: true)
+        try fm.createDirectory(at: target, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: folder) }
+        for file in ToolInstall.files {
+            try "old \(file)".write(to: target.appendingPathComponent(file), atomically: true, encoding: .utf8)
+        }
+        // a bundle that lacks the second file: the first copies, the second cannot
+        try "new".write(to: source.appendingPathComponent(ToolInstall.files[0]), atomically: true, encoding: .utf8)
+        #expect(throws: (any Error).self) { try ToolInstall.place(from: source, to: target) }
+        for file in ToolInstall.files {
+            #expect((try? String(contentsOf: target.appendingPathComponent(file), encoding: .utf8)) == "old \(file)")
+        }
+        #expect(try fm.contentsOfDirectory(atPath: target.path).sorted() == ToolInstall.files.sorted(), "nothing staged is left")
+    }
+
+    @Test func aCopyPutsEveryToolInPlace() throws {
+        let fm = FileManager.default
+        let folder = fm.temporaryDirectory.appendingPathComponent("tool-place-\(UUID().uuidString)")
+        let source = folder.appendingPathComponent("bundle"), target = folder.appendingPathComponent("state")
+        try fm.createDirectory(at: source, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: folder) }
+        for file in ToolInstall.files {
+            try "new \(file)".write(to: source.appendingPathComponent(file), atomically: true, encoding: .utf8)
+        }
+        try fm.createDirectory(at: target, withIntermediateDirectories: true)
+        try "old".write(to: target.appendingPathComponent(ToolInstall.files[0]), atomically: true, encoding: .utf8)
+        try ToolInstall.place(from: source, to: target)
+        for file in ToolInstall.files {
+            #expect((try? String(contentsOf: target.appendingPathComponent(file), encoding: .utf8)) == "new \(file)")
+        }
+        #expect(try fm.contentsOfDirectory(atPath: target.path).sorted() == ToolInstall.files.sorted())
+    }
 }
