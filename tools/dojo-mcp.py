@@ -696,11 +696,45 @@ def audit(argv, out, err, home=None, now=None):
 AGY_RULE_VARIABLE = "DOJO_PEER_RULE"
 
 
-def agy_pane(env):
-    """Whether this agy is an agy pane's own: its launch line sets DOJO_HARNESS=agy. Every process in any
-    pane inherits DOJO_TOKEN, so an agy run as a tool inside a Claude pane has it too, and must not report
-    into that pane (live on 2026-11-16)."""
-    return bool(env.get("DOJO_TOKEN")) and env.get("DOJO_HARNESS") == "agy"
+# The shells agy may run a command through, by the name the system gives the process.
+AGY_SHELLS = ("sh", "bash", "zsh", "dash", "ksh", "fish")
+
+
+def process_parent(pid):
+    """The parent of process `pid` and its name, or None: /proc where there is one, ps elsewhere."""
+    try:
+        with open("/proc/%d/stat" % pid) as f:
+            stat = f.read()
+        name = stat[stat.index("(") + 1:stat.rindex(")")]
+        return int(stat[stat.rindex(")") + 2:].split()[1]), name
+    except (OSError, ValueError, IndexError):
+        pass
+    import subprocess
+    try:
+        out = subprocess.run(["ps", "-o", "ppid=", "-o", "comm=", "-p", str(pid)], capture_output=True, text=True,
+                             timeout=2).stdout.split(None, 1)
+        return int(out[0]), os.path.basename(out[1].strip()).lstrip("-")
+    except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+        return None
+
+
+def agy_pane(env, parent=None):
+    """Whether the agy that runs this command is an agy pane's own. Every process in any pane inherits
+    DOJO_TOKEN, so an agy run as a tool inside a Claude pane has it too, and must not report into that pane
+    (live on 2026-11-16): an agy pane's launch line sets DOJO_HARNESS=agy. An agy the pane's own agent runs
+    (agy -p) inherits that too (the second read of #114): the launch line's script puts its pid in
+    DOJO_AGY_PID, which the pane's agy keeps, and agy runs this command as its child, or through a shell."""
+    if not env.get("DOJO_TOKEN") or env.get("DOJO_HARNESS") != "agy":
+        return False
+    try:
+        own = int(env.get("DOJO_AGY_PID", ""))
+    except ValueError:
+        return False
+    parent = os.getppid() if parent is None else parent
+    if parent == own:
+        return True
+    above = process_parent(parent)
+    return above is not None and above[0] == own and above[1] in AGY_SHELLS
 
 
 def agy_hook(event, env):

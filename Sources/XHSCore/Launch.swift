@@ -190,7 +190,13 @@ public enum Launcher {
     /// no terminal, no stty or an answer that is no size, no line is printed and agy starts as before. sh
     /// reads it with nothing but what sh has built in, and stty. No apostrophe and no backslash, which would
     /// cost bytes in the quoting a fish login shell needs (see `reachCheck`).
+    ///
+    /// It also puts its own pid in DOJO_AGY_PID, which agy keeps, run with exec: Dojo's plugin acts for that
+    /// agy alone, which runs its hook and status-line commands as its own children (a probe on 2026-11-17).
+    /// An agy the pane's agent runs under it (agy -p) inherits the variable, and has a pid of its own (the
+    /// second read of #114).
     public static let agyFootStart = [
+        #"DOJO_AGY_PID=$$; export DOJO_AGY_PID"#,
         #"size=$(stty size 2>/dev/null); rows=${size%% *}"#,
         #"case $rows in ""|*[!0-9]*) ;; *) i=1; while [ "$i" -lt "$rows" ]; do echo; i=$((i+1)); done;; esac"#,
         #"exec "$@""#,
@@ -262,8 +268,9 @@ public enum Launcher {
             // its start. The tick is agy's own flag, which approves every tool request. --settings carries the
             // pane's status line, which reports a permission dialog (`agySettings`).
             // It starts from the pane's foot (`agyFootStart`): agy draws a new session from its cursor down.
-            // DOJO_HARNESS marks the pane's own agy: Dojo's plugin reports only for it, not for an agy run as
-            // a tool in another pane, which inherits that pane's DOJO_TOKEN.
+            // DOJO_HARNESS marks an agy pane, and the script's DOJO_AGY_PID the pane's own agy: Dojo's plugin
+            // reports only for it, not for an agy run as a tool in another pane, which inherits that pane's
+            // DOJO_TOKEN, nor for one run under the pane's own agy, which inherits both.
             return [.literal(agyRuleVariable + "=" + prompt), .literal("DOJO_HARNESS=agy"), .literal("/bin/sh"), .literal("-c"),
                     .literal(agyFootStart),
                     .literal("sh"), .literal("agy")] +

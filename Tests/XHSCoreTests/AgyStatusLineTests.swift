@@ -23,7 +23,8 @@ import Testing
         return String(decoding: try! JSONSerialization.data(withJSONObject: data), as: UTF8.self)
     }
 
-    /// The shim's status line, run off the main actor so the bus can answer it.
+    /// The shim's status line, run off the main actor so the bus can answer it. The test process stands in for
+    /// the pane's agy, which runs the command as its child: an agy pane's environment names it in DOJO_AGY_PID.
     static func statusLine(_ stdin: String, environment: [String: String]) async -> (status: Int32, out: String) {
         let shim = Self.shim
         return await withCheckedContinuation { continuation in
@@ -78,7 +79,7 @@ import Testing
         let tmp = Self.folder()
         defer { try? FileManager.default.removeItem(atPath: tmp) }
         let pane = ["PATH": path, "DOJO_TOKEN": token, "DOJO_PORT": String(port), "DOJO_PANE": "agy-1", "TMPDIR": tmp,
-                    "DOJO_HARNESS": "agy"]
+                    "DOJO_HARNESS": "agy", "DOJO_AGY_PID": String(getpid())]
         func report(_ fields: [String: Any], _ environment: [String: String]? = nil) async -> String {
             let (status, out) = await Self.statusLine(Self.payload(fields), environment: environment ?? pane)
             #expect(status == 0)
@@ -142,7 +143,7 @@ import Testing
         #expect(lines.contains { $0.contains("\"op\":\"hook\"") && $0.contains("refused") && $0.contains("claude-1") })
         // the agy pane is as before
         let inAgy = ["PATH": path, "DOJO_TOKEN": agy, "DOJO_PORT": String(port), "DOJO_PANE": "agy-1", "TMPDIR": tmp,
-                     "DOJO_HARNESS": "agy"]
+                     "DOJO_HARNESS": "agy", "DOJO_AGY_PID": String(getpid())]
         _ = await Self.statusLine(Self.payload(["agent_state": "tool_use", "tool_confirmation_pending": true]), environment: inAgy)
         #expect(await Self.settles(bus, "agy-1", at: .prompt))
     }
@@ -162,7 +163,7 @@ import Testing
         let tmp = Self.folder()
         defer { try? FileManager.default.removeItem(atPath: tmp) }
         let pane = ["PATH": ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin", "DOJO_TOKEN": token,
-                    "DOJO_PORT": String(port), "DOJO_PANE": "agy-1", "TMPDIR": tmp, "DOJO_HARNESS": "agy"]
+                    "DOJO_PORT": String(port), "DOJO_PANE": "agy-1", "TMPDIR": tmp, "DOJO_HARNESS": "agy", "DOJO_AGY_PID": String(getpid())]
         let (status, _) = await Self.statusLine(Self.payload(["agent_state": "tool_use"]), environment: pane)
         #expect(status == 0)
         #expect(await Self.settles(bus, "agy-1", at: .running))
