@@ -107,6 +107,8 @@ public enum Composer {
     ///   ("1. Yes", or "1." where a narrow pane cut it) is not a composer. Rows set in, such as the later
     ///   rows of a long message, are never taken for a mark.
     /// - Claude Code and agy draw their composer between two ruled lines; Codex draws it after an empty row.
+    ///   Under agy's, the commands it runs in the background have a row each, between ruled lines of their
+    ///   own (`afterTaskRows`): they are neither the composer nor its footer.
     /// - Before the bus has typed anything, the composer is one row, and it does not already hold a paste.
     /// - After it has pasted (`afterPaste`), the composer must hold what it pasted: `pasted` itself, row by
     ///   row, or the harness's stand-in for a long paste ("[Pasted text #3 +4 lines]", "[Pasted Content 1200
@@ -231,7 +233,7 @@ public enum Composer {
                 return nil
             }
             block = closing
-            end = closing + 1
+            end = kind == .agy ? afterTaskRows(foot, from: closing + 1) : closing + 1
         case .codex:
             guard at == 0 || foot[at - 1].text.isEmpty else { return nil }
             if afterPaste, pasted != nil {
@@ -259,6 +261,26 @@ public enum Composer {
             guard footerUnchanged(under.map(\.text), since: before.under, kind: kind) else { return nil }
         }
         return Look(composer: first, under: under.map(\.text))
+    }
+
+    /// Where the footer under agy's composer starts: after the rows of the commands agy runs in the
+    /// background, one each ("● [07:46:48] sleep 75 running", set in) with a ruled line under them, when they
+    /// are there (D38: live on 2026-11-17 the bus held every message to an idle agy pane with an empty
+    /// composer while a task ran; read off agy 1.5.9 in a pty). `from` when there are none.
+    static func afterTaskRows(_ foot: [(text: String, setIn: Bool)], from: Int) -> Int {
+        var at = from
+        while at < foot.count, foot[at].setIn, isAgyTaskRow(foot[at].text) { at += 1 }
+        guard at > from, at < foot.count, isRuledLine(foot[at].text) else { return from }
+        return at + 1
+    }
+
+    /// "● [07:46:48] " and the command: agy's row for a task it runs in the background, from its start time.
+    static func isAgyTaskRow(_ text: String) -> Bool {
+        guard text.hasPrefix("● ["), let close = text.firstIndex(of: "]") else { return false }
+        let time = text[text.index(text.startIndex, offsetBy: 3)..<close].split(separator: ":", omittingEmptySubsequences: false)
+        let rest = text[text.index(after: close)...]
+        return time.count == 3 && time.allSatisfy { $0.count == 2 && $0.allSatisfy { $0.isASCII && $0.isNumber } }
+            && rest.hasPrefix(" ") && !rest.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
     /// Whether the composer's rows are what the bus pasted, or the harness's stand-in for it. Row breaks and
