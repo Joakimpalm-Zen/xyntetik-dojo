@@ -1322,6 +1322,26 @@ class AuditTest(unittest.TestCase):
         self.assertEqual((code, out), (0, ""))
         self.assertIn("no bus record", err)
 
+    def test_a_fork_names_the_earlier_line_and_leaves_the_record_alone(self):
+        first = self.write("2026-11-10", [{"op": "first"}])
+        path = os.path.join(self.folder, "2026-11-10.jsonl")
+        with open(path, "ab") as fh:
+            prev = first
+            for op in ("second", "third", "resumed"):
+                raw = json.dumps({"op": op, "prev": first if op == "resumed" else prev}, sort_keys=True).encode()
+                fh.write(raw + b"\n")
+                prev = hashlib.sha256(raw).hexdigest()
+        with open(path, "rb") as fh:
+            before = fh.read()
+        code, out, err = self.run_audit()
+        self.assertEqual(code, 1)
+        self.assertEqual(len(out.splitlines()), 4)
+        self.assertIn("2026-11-10.jsonl:4: the chain breaks here", err)
+        self.assertIn("prev points back to 2026-11-10.jsonl:1", err)
+        self.assertIn("possible second writer or reordered lines", err)
+        with open(path, "rb") as fh:
+            self.assertEqual(fh.read(), before)
+
     def test_the_cli_runs_it_without_a_bus(self):
         self.write("2026-11-10", [{"time": "2026-11-10T10:00:00.000Z", "op": "panes", "from": "a", "outcome": "ok"}])
         env = dict(os.environ, HOME=self.home)
