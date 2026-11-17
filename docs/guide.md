@@ -76,7 +76,7 @@ Set up a host once, with one command from this repository:
 tar -C tools -cf - dojo-mcp.py dojo-pi.ts runner-start.sh | ssh user@box 'mkdir -p ~/.dojo && tar -C ~/.dojo -xf - && python3 ~/.dojo/dojo-mcp.py install'
 ```
 
-(`make remote-setup HOST=user@box` runs the same.) It puts the shim, the pi extension and Runner's start script in `~/.dojo` on that host, links `dojo`, and adds the Codex entries and the agy plugin there if Codex or agy is installed. Nothing else runs on the remote host.
+(`make remote-setup HOST=user@box` runs the same.) It puts the shim, the pi extension and Runner's start script in `~/.dojo` on that host, links `dojo`, and adds the Codex entries and the agy plugin there if Codex or agy is installed. Nothing else runs on the remote host. On this Mac the app puts its own shim in `~/.dojo` at every start, before the bus starts; a remote host keeps the one from its last setup, so run it again there after an update: with an older shim, an agy run as a tool in a pane on that host can still report into the pane.
 
 Then press plus and enter `user@box` as the host (or pick it from the clock at the field's edge once you have used it). The app first asks the host which shell it runs commands in (`ssh host 'echo %OS%'`), then runs:
 
