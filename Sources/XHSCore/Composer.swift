@@ -358,8 +358,11 @@ public enum Composer {
     }
 
     /// "─── ↑ 3 more ───": Claude Code's ruled line over a composer taller than it shows (D41, a pane on
-    /// 2026-11-17). A run of box-drawing characters, the arrow, a count, "more", and box-drawing characters to
-    /// its end.
+    /// 2026-11-17). A run of box-drawing characters, the arrow, a count, "more", and then the line: box-drawing
+    /// characters to its end, or, in a session renamed with /rename, a run of them, the session's name and a last
+    /// run that closes the line, as the top line carries the name when nothing is capped ("─── ↑ 4 more ───…───
+    /// d42-probe ─", D42; read off Claude Code 2.1.326 at 105 and 60 columns, three box characters before the
+    /// arrow at both).
     static func isCappedRule(_ row: String, _ arrow: String) -> Bool {
         let scalars = Array(row.unicodeScalars)
         let box: (Unicode.Scalar) -> Bool = { (0x2500...0x257F).contains($0.value) }
@@ -367,7 +370,9 @@ public enum Composer {
         let words = String(String.UnicodeScalarView(scalars[start...])).split(separator: " ", maxSplits: 3).map(String.init)
         guard words.count >= 3, words[0] == arrow, !words[1].isEmpty, words[1].allSatisfy(\.isNumber), words[2] == "more"
         else { return false }
-        return words.count == 3 || words[3].unicodeScalars.allSatisfy { box($0) || $0 == " " }
+        guard words.count > 3 else { return true }
+        let rest = Array(words[3].unicodeScalars)
+        return rest.first.map(box) == true && rest.last.map(box) == true
     }
 
     /// "↑ 6 more lines", "↓ 1 more line": agy's word for rows of its composer it does not show.
