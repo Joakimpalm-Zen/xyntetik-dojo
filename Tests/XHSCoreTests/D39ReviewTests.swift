@@ -216,6 +216,21 @@ import Testing
         rig.fire()
         #expect(rig.enters == 1, "\(rig.recorded("enter"))")
         #expect(rig.recorded("enter").last?["outcome"] as? String == "sent")
+        // the end of another text in a capped composer is not this paste, nor is a dialog under such a line
+        for shown in [["  the end of something else, not what the bus pasted at all"], ["  1. Yes", "  2. No"]] {
+            let other = Rig(kind: .claude, submitDelay: 0.15)
+            other.io.screen = ["✻ Churned", "", rule, "❯\u{a0}", rule, "  Usage: 5h n/a"].joined(separator: "\n")
+            other.send(text)
+            other.io.screen = (["✻ Churned", "", "─── ↑ 3 more " + String(repeating: "─", count: 50)] + shown
+                               + [rule, "  Usage: 5h n/a"]).joined(separator: "\n")
+            other.fire()
+            #expect(other.enters == 0, "\(shown)")
+        }
+        #expect(Composer.isCappedRule("─── ↑ 3 more ───────", "↑"))
+        #expect(Composer.isCappedRule("─── ↓ 12 more ───", "↓"))
+        #expect(!Composer.isCappedRule("─── ↑ three more ───", "↑"))
+        #expect(!Composer.isCappedRule("↑ 3 more", "↑"))
+        #expect(!Composer.isCappedRule("─── ↑ 3 more lines ───", "↑"))
     }
 
     // MARK: P3 E. A pane closed while its Enter is on its way

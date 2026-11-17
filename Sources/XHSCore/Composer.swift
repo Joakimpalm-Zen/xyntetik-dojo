@@ -213,42 +213,61 @@ public enum Composer {
             guard !foot[at].setIn, let mark = rule.marks.first(where: { foot[at].text.hasPrefix($0) }) else { return nil }
             return String(foot[at].text.dropFirst(mark.count)).trimmingCharacters(in: blank)
         }
-        guard let at = foot.indices.last(where: { afterMark($0) != nil }), let first = afterMark(at),
-              !isNumberedChoice(first) else { return nil }
-        let standIn = Composer.standIn(for: kind)
-        /// The composer's rows from `at` to `end`, without the mark.
-        func rows(to end: Int) -> [String] { [first] + foot[(at + 1)..<max(end, at + 1)].map(\.text) }
-        func arrived(_ rows: [String]) -> Bool {
-            pasted.map { Composer.arrived($0, rows: rows, standIn: standIn, before: before, partial: kind == .agy) } ?? true
-        }
+        let marked = foot.indices.last(where: { afterMark($0) != nil })
+        let at: Int         // the composer's first row on the screen
+        let first: String   // what it shows, after the mark
         let end: Int        // the first row under the composer: its footer starts here
         var block: Int      // the first row that is not the composer's own text
-        switch kind {
-        case .claude, .agy:
-            guard at > 0, isRuledLine(foot[at - 1].text),
-                  let closing = foot.indices.first(where: { $0 > at && isRuledLine(foot[$0].text) }) else { return nil }
-            if afterPaste {
-                guard arrived(rows(to: closing)) else { return nil }
-            } else if closing != at + 1 || isStandIn(first, standIn) {
+        if kind == .claude, afterPaste, let pasted,
+           let top = foot.indices.last(where: { isCappedRule(foot[$0].text, "↑") || isCappedRule(foot[$0].text, "↓") }),
+           top > (marked ?? -1), isCappedRule(foot[top].text, "↑") {
+            // D41: Claude Code caps its composer's height. Its top ruled line says how many rows are above
+            // ("─── ↑ 3 more ───"), the row with the mark is among them, and what shows is the end of the
+            // text, set in; scrolled inside it, its closing line says how many are below. What shows is a part
+            // of the paste, in its place, as with agy's.
+            guard let closing = foot.indices.first(where: { $0 > top && (isRuledLine(foot[$0].text) || isCappedRule(foot[$0].text, "↓")) })
+            else { return nil }
+            let shown = foot[(top + 1)..<closing].map(\.text)
+            guard !shown.isEmpty, ShownPart(rows: shown, above: true, below: isCappedRule(foot[closing].text, "↓")).isPart(of: pasted)
+            else { return nil }
+            (at, first, end, block) = (top + 1, shown[0], closing + 1, closing)
+        } else {
+            guard let row = marked, let text = afterMark(row), !isNumberedChoice(text) else { return nil }
+            at = row
+            first = text
+            let standIn = Composer.standIn(for: kind)
+            /// The composer's rows from `at` to `end`, without the mark.
+            func rows(to end: Int) -> [String] { [first] + foot[(at + 1)..<max(end, at + 1)].map(\.text) }
+            func arrived(_ rows: [String]) -> Bool {
+                pasted.map { Composer.arrived($0, rows: rows, standIn: standIn, before: before, partial: kind == .agy) } ?? true
+            }
+            switch kind {
+            case .claude, .agy:
+                guard at > 0, isRuledLine(foot[at - 1].text),
+                      let closing = foot.indices.first(where: { $0 > at && isRuledLine(foot[$0].text) }) else { return nil }
+                if afterPaste {
+                    guard arrived(rows(to: closing)) else { return nil }
+                } else if closing != at + 1 || isStandIn(first, standIn) {
+                    return nil
+                }
+                block = closing
+                end = kind == .agy ? afterTaskRows(foot, from: closing + 1) : closing + 1
+            case .codex:
+                guard at == 0 || foot[at - 1].text.isEmpty else { return nil }
+                if afterPaste, pasted != nil {
+                    // the pasted text may have empty rows of its own: it ends where it has all been seen
+                    guard let last = (at..<foot.count).first(where: { arrived(rows(to: $0 + 1)) }) else { return nil }
+                    end = last + 1
+                } else if afterPaste {
+                    end = foot.indices.first(where: { $0 > at && (foot[$0].text.isEmpty || !foot[$0].setIn) }) ?? foot.count
+                } else {
+                    guard at + 1 == foot.count || foot[at + 1].text.isEmpty, !isStandIn(first, standIn) else { return nil }
+                    end = at + 1
+                }
+                block = end
+            case .pi, .runner, .shell:
                 return nil
             }
-            block = closing
-            end = kind == .agy ? afterTaskRows(foot, from: closing + 1) : closing + 1
-        case .codex:
-            guard at == 0 || foot[at - 1].text.isEmpty else { return nil }
-            if afterPaste, pasted != nil {
-                // the pasted text may have empty rows of its own: it ends where it has all been seen
-                guard let last = (at..<foot.count).first(where: { arrived(rows(to: $0 + 1)) }) else { return nil }
-                end = last + 1
-            } else if afterPaste {
-                end = foot.indices.first(where: { $0 > at && (foot[$0].text.isEmpty || !foot[$0].setIn) }) ?? foot.count
-            } else {
-                guard at + 1 == foot.count || foot[at + 1].text.isEmpty, !isStandIn(first, standIn) else { return nil }
-                end = at + 1
-            }
-            block = end
-        case .pi, .runner, .shell:
-            return nil
         }
         block = max(block, at + 1)
         if let cursorLine, !(at..<block).contains(cursorLine - dropped) { return nil }
@@ -335,6 +354,19 @@ public enum Composer {
         if below { rows.removeLast() }
         guard above || below else { return nil }
         return ShownPart(rows: rows, above: above, below: below)
+    }
+
+    /// "─── ↑ 3 more ───": Claude Code's ruled line over a composer taller than it shows (D41, a pane on
+    /// 2026-11-17), and with "↓" under one scrolled inside. A run of box-drawing characters, the arrow, a
+    /// count, "more", and box-drawing characters to its end.
+    static func isCappedRule(_ row: String, _ arrow: String) -> Bool {
+        let scalars = Array(row.unicodeScalars)
+        let box: (Unicode.Scalar) -> Bool = { (0x2500...0x257F).contains($0.value) }
+        guard let start = scalars.firstIndex(where: { !box($0) }), start >= 3 else { return false }
+        let words = String(String.UnicodeScalarView(scalars[start...])).split(separator: " ", maxSplits: 3).map(String.init)
+        guard words.count >= 3, words[0] == arrow, !words[1].isEmpty, words[1].allSatisfy(\.isNumber), words[2] == "more"
+        else { return false }
+        return words.count == 3 || words[3].unicodeScalars.allSatisfy { box($0) || $0 == " " }
     }
 
     /// "↑ 6 more lines", "↓ 1 more line": agy's word for rows of its composer it does not show.
