@@ -976,6 +976,10 @@ def agy_hook_cli(stdin, out):
                         pane.record.pop("question", None)
                     elif question and posted is not None and AGY_EVENT_STATES.get(posted["hook_event_name"]) == "running":
                         posted = None  # another tool's end while the question waits: the pane stays at prompt
+                    # a confirmation ends where a question does: the next model call (agy calls it once its
+                    # tools are done), the end of the turn, a new session (the second read of #116)
+                    if name in AGY_QUESTION_ENDS:
+                        pane.record.pop("confirmation", None)
                     if pane.record.get("confirmation") and posted is not None and AGY_EVENT_STATES.get(posted["hook_event_name"]) == "running":
                         posted = None  # another tool's work while a confirmation waits: the status line ends it
                     if posted is not None:
