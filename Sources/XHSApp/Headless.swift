@@ -8,6 +8,8 @@ import XHSCore
 @MainActor
 enum Headless {
     nonisolated static let isRequested = ProcessInfo.processInfo.environment["DOJO_SMOKE"] == "1"
+    /// D40, `make stage`: a visible copy for pictures (AppModel.ServicePolicy.stage). A smoke wins over it.
+    nonisolated static let stageRequested = ProcessInfo.processInfo.environment["DOJO_STAGE"] == "1" && !isRequested
     /// The installed app's preferences. AppKit keeps the window frame there, among others, so a smoke runs
     /// under another identifier (`make smoke` makes the copy): no key in them, today's or a later one, is reachable.
     private static let ownersBundle = "com.xyntetik.dojo"
@@ -80,8 +82,9 @@ enum Headless {
 
     /// The folder for what the app keeps between launches: ~/.dojo, or for a smoke a throwaway one, so that
     /// it neither reads nor writes what the live panes use.
-    nonisolated static func state(smoke: Bool = isRequested, home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
-        (smoke ? smokeHome : home).appendingPathComponent(".dojo")
+    nonisolated static func state(smoke: Bool = isRequested, stage: Bool = stageRequested,
+                                  home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
+        smoke ? smokeHome.appendingPathComponent(".dojo") : home.appendingPathComponent(stage ? ".dojo-stage" : ".dojo")
     }
 
     private static func exchange(_ type: AnyClass, _ original: String, _ replacement: String) {
