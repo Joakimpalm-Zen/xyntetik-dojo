@@ -44,7 +44,11 @@ import Testing
         let rig = rig()
         rig.bus.noteOwnerInput("worker", .text)
         #expect(rig.send("report")["delivered"] as? Bool == false, "the owner was typing a moment ago")
-        rig.wait(5)
+        // Harness echoes the key into the composer, then the owner takes it back.
+        rig.io.live = Self.liveLines.map { $0.hasPrefix("❯") ? "❯\u{a0}a" : $0 }
+        rig.wait(1)
+        rig.io.live = Self.liveLines
+        rig.wait(4)
         #expect(rig.io.typed.contains("[from: fable] report"), "the composer is empty: the hold is over")
         #expect(rig.bus.info("worker")?.draft == false)
         #expect(rig.bus.info("worker")?.queued == 0)

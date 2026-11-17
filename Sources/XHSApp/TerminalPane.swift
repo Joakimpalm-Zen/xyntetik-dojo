@@ -33,6 +33,8 @@ final class TerminalPane: TerminalView, PaneIO {
     var onExit: ((Int32?) -> Void)?
     /// Called with what each batch of the owner's keystrokes did to the composer.
     var onOwnerInput: ((Bus.OwnerKey) -> Void)?
+    /// Called after terminal bytes update the in-memory screen model.
+    var onScreenChange: (() -> Void)?
     /// Called each time the pane arrives in a window, as a move between the grid and a tab does.
     var onLanded: (() -> Void)?
     private var process: LocalProcess!
@@ -244,6 +246,7 @@ final class TerminalPane: TerminalView, PaneIO {
         paletteTail = Array(seen.suffix(Repaint.paletteMarkLength - 1))
         let due = clock().timeIntervalSince(lastBandPaint) >= TerminalPane.bandInterval
         if bandWaiting || Repaint.touchesPalette(seen) || (due && parser.isAtRest) { paintBand() }
+        onScreenChange?()
     }
 
     /// `Theme.brand` as a terminal colour code.

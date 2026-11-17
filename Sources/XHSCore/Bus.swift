@@ -136,6 +136,11 @@ public final class Bus {
         var hasDraft = false
         /// Text keys came after the last Enter: a submission hook arriving now is for an earlier prompt.
         var typedSinceSubmit = false
+        /// A text key fell on this pane and the screen has not yet reflected it; an empty composer reading
+        /// before the screen changes is stale and must not end the draft hold (D43).
+        var draftAwaitsScreenChange = false
+        var draftBaselineEmpty = false
+        var draftBaselineLines: [String]?
         /// The bus looked for the harness's composer on the screen and did not see one, so it typed nothing,
         /// or held back an Enter (D35.1). True only while something waits on it: a queue, or an Enter.
         var noComposer = false
@@ -382,8 +387,19 @@ public final class Bus {
         if key == .submit { note(["op": "owner-submit", "pane": name]) }
         let before = p.hasDraft
         switch key {
-        case .text: p.hasDraft = true; p.typedSinceSubmit = true
-        case .clear: p.hasDraft = false; p.typedSinceSubmit = false
+        case .text:
+            p.hasDraft = true
+            p.typedSinceSubmit = true
+            if Composer.rule(for: p.kind) != nil, let screen = p.io?.liveScreen() {
+                p.draftAwaitsScreenChange = true
+                p.draftBaselineEmpty = Composer.shownEmpty(kind: p.kind, screen: screen.lines.joined(separator: "\n"))
+                p.draftBaselineLines = screen.lines
+            }
+        case .clear:
+            p.hasDraft = false
+            p.typedSinceSubmit = false
+            p.draftAwaitsScreenChange = false
+            p.draftBaselineLines = nil
         case .submit:
             p.typedSinceSubmit = false
             if p.kind == .shell || p.kind == .runner { p.hasDraft = false }   // no hooks there: Enter is it
@@ -392,11 +408,30 @@ public final class Bus {
         if before != p.hasDraft { onChange?() }
     }
 
+    /// Notes that output changed a pane's terminal screen so `hasDraft` knows whether the owner's last
+    /// text key has had a chance to echo before trusting `Composer.shownEmpty` (D43).
+    public func noteScreenChange(_ name: String) {
+        guard let p = pane(named: name), p.draftAwaitsScreenChange, let screen = p.io?.liveScreen() else { return }
+        observeDraftScreen(p, screen)
+    }
+
+    private func observeDraftScreen(_ p: Pane, _ screen: PaneScreen) {
+        guard p.draftAwaitsScreenChange else { return }
+        if p.draftBaselineEmpty {
+            guard !Composer.shownEmpty(kind: p.kind, screen: screen.lines.joined(separator: "\n")) else { return }
+        } else {
+            guard screen.lines != p.draftBaselineLines else { return }
+        }
+        p.draftAwaitsScreenChange = false
+        p.draftBaselineLines = nil
+    }
+
     /// Delivers what can be delivered now and notices turns that ended without a Stop hook.
     /// The app calls this once a second.
     public func tick() {
         noteUnknownCallersLeftOut()
         for p in panes {
+            if p.draftAwaitsScreenChange, let screen = p.io?.liveScreen() { observeDraftScreen(p, screen) }
             if p.state == .running || p.state == .starting { watchQuiet(p) }
             flush(p)
             expireWatchers(of: p)
@@ -836,6 +871,8 @@ public final class Bus {
            name == "UserInputSubmitted" || (name == "UserPromptSubmit" && pane.kind != .pi),
            pane.hasDraft, !pane.typedSinceSubmit, composerTookTheDraft(pane, prompt: event["prompt"] as? String) {
             pane.hasDraft = false
+            pane.draftAwaitsScreenChange = false
+            pane.draftBaselineLines = nil
             onChange?()
         }
         // A submission the hook names: evidence for the owner's Enter only when it carries the text the bus
@@ -917,7 +954,10 @@ public final class Bus {
             // empty composer read as a draft, and the hold lasted until the owner next sent something.
             // Only in the buffer the harness draws itself in: a pager or an editor in the other one shows no
             // composer of the harness's, whatever its rows look like (D39).
+            // Never end on a screen that still predates the owner's last text key (delayed echo, D43).
             let screen = io.liveScreen()
+            observeDraftScreen(p, screen)
+            guard !p.draftAwaitsScreenChange else { return }
             if let home = p.harnessBuffer, let alternate = screen.alternate, alternate != home { return }
             guard Composer.shownEmpty(kind: p.kind, screen: screen.lines.joined(separator: "\n")) else { return }
             p.hasDraft = false
