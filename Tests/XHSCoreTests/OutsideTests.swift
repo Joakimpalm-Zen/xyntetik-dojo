@@ -112,8 +112,8 @@ import Testing
         _ = outside()
         _ = outside(token: "wrong")
         _ = outside(["pane": "codex-1"], op: "outside/read")
-        let file = try #require(try FileManager.default.contentsOfDirectory(atPath: dir.path).first)
-        let lines = try String(contentsOf: dir.appendingPathComponent(file), encoding: .utf8).split(separator: "\n").map { json(Data($0.utf8)) }
+        let file = try #require(BusRecord.files(in: dir).first)
+        let lines = try String(contentsOf: file, encoding: .utf8).split(separator: "\n").map { json(Data($0.utf8)) }
         let uses = lines.filter { $0["via"] as? String == "outside" }
         #expect(uses.count == 3)
         #expect(uses[0]["op"] as? String == "send" && uses[0]["from"] as? String == "outside" && uses[0]["text"] as? String == "hello"

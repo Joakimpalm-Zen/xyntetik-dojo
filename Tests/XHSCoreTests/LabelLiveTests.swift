@@ -59,8 +59,8 @@ import Testing
         defer { try? FileManager.default.removeItem(at: dir) }
         bus.record = BusRecord(directory: dir)
         _ = label("B11")
-        let file = try #require(try FileManager.default.contentsOfDirectory(atPath: dir.path).first)
-        let lines = try String(contentsOf: dir.appendingPathComponent(file), encoding: .utf8).split(separator: "\n").map { json(Data($0.utf8)) }
+        let file = try #require(BusRecord.files(in: dir).first)
+        let lines = try String(contentsOf: file, encoding: .utf8).split(separator: "\n").map { json(Data($0.utf8)) }
         #expect(lines.contains { $0["op"] as? String == "label" && $0["from"] as? String == "claude-1" && $0["label"] as? String == "B11" })
     }
 

@@ -31,7 +31,7 @@ import time
 import urllib.error
 import urllib.request
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 DEFAULT_PORT = "7788"
 PROTOCOL_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
 
@@ -611,6 +611,7 @@ def audit_entries(folder):
     """Every line, oldest first, and where the chain breaks. The first line of the oldest file is where the
     check starts: the files before it may have been deleted after 30 days."""
     entries, problems, prev = [], [], None
+    seen = {}
     names = sorted(n for n in os.listdir(folder) if AUDIT_DAY.match(n)) if os.path.isdir(folder) else []
     for name in names:
         with open(os.path.join(folder, name), "rb") as fh:
@@ -625,8 +626,14 @@ def audit_entries(folder):
             if not isinstance(entry, dict):
                 problems.append("%s:%d: not a record line" % (name, number))
             elif prev is not None and entry.get("prev") != prev:
-                problems.append("%s:%d: the chain breaks here: a line before it was removed or changed" % (name, number))
+                link = entry.get("prev")
+                earlier = seen.get(link) if isinstance(link, str) else None
+                reason = ("prev points back to %s:%d, skipping intervening lines "
+                          "(possible second writer or reordered lines)") % earlier if earlier else \
+                         "a line before it was removed or changed"
+                problems.append("%s:%d: the chain breaks here: %s" % (name, number, reason))
             prev = hashlib.sha256(raw).hexdigest()
+            seen[prev] = (name, number)
             if isinstance(entry, dict):
                 entries.append(entry)
     return entries, problems
