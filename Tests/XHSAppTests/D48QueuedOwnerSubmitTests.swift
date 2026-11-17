@@ -267,4 +267,192 @@ import Testing
         #expect(completed.io.enterCount == 1)
         #expect(completed.bus.info("worker")?.needsOwnerEnter == false)
     }
+
+    @Test func duplicateEqualTextSubmitsHoldUntilSecondHookAndWhitespaceDiffDoesNotCollide() throws {
+        let fx = try Self.loadCappedCase()
+
+        // Case A (P1): owner submits "same", then types another "same" + completion Enter before hook 1 arrives.
+        let dup = Self.makeRig(cols: fx.cols, rows: fx.rows)
+        dup.io.showBytes(fx.before)
+        dup.bus.setState("worker", .running)
+        dup.bus.noteOwnerInput("worker", bytes: Array("same".utf8)[...])
+        dup.bus.noteOwnerInput("worker", bytes: [0x0D][...])
+        dup.bus.noteOwnerInput("worker", bytes: Array("same".utf8)[...])
+        dup.bus.noteOwnerInput("worker", bytes: [0x0D][...])
+        try dup.hook("UserPromptSubmit", prompt: "same")
+        try dup.hook("Stop")
+        dup.step(4)
+        dup.bus.tick()
+        _ = try dup.send(fx.payload)
+        dup.io.showBytes(fx.after)
+        dup.fire()
+        for _ in 0..<5 { dup.step(1); dup.bus.tick() }
+        #expect(dup.io.enterCount == 0, "first 'same' hook cleared pending duplicate 'same' draft")
+        #expect(dup.bus.info("worker")?.needsOwnerEnter == true)
+
+        // Case B: when both 'same' hooks arrive, capped delivery succeeds cleanly.
+        let both = Self.makeRig(cols: fx.cols, rows: fx.rows)
+        both.io.showBytes(fx.before)
+        both.bus.setState("worker", .running)
+        both.bus.noteOwnerInput("worker", bytes: Array("same".utf8)[...])
+        both.bus.noteOwnerInput("worker", bytes: [0x0D][...])
+        both.bus.noteOwnerInput("worker", bytes: Array("same".utf8)[...])
+        both.bus.noteOwnerInput("worker", bytes: [0x0D][...])
+        try both.hook("UserPromptSubmit", prompt: "same")
+        try both.hook("UserPromptSubmit", prompt: "same")
+        try both.hook("Stop")
+        both.step(4)
+        both.bus.tick()
+        _ = try both.send(fx.payload)
+        both.io.showBytes(fx.after)
+        both.fire()
+        for _ in 0..<5 { both.step(1); both.bus.tick() }
+        #expect(both.io.enterCount == 1)
+        #expect(both.bus.info("worker")?.needsOwnerEnter == false)
+
+        // Case C: interior whitespace differences ("a b" vs "ab") must not collide.
+        let space = Self.makeRig(cols: fx.cols, rows: fx.rows)
+        space.io.showBytes(fx.before)
+        space.bus.setState("worker", .running)
+        space.bus.noteOwnerInput("worker", bytes: Array("ab".utf8)[...])
+        space.bus.noteOwnerInput("worker", bytes: [0x0D][...])
+        try space.hook("UserPromptSubmit", prompt: "a b")
+        try space.hook("Stop")
+        space.step(4)
+        space.bus.tick()
+        _ = try space.send(fx.payload)
+        space.io.showBytes(fx.after)
+        space.fire()
+        for _ in 0..<5 { space.step(1); space.bus.tick() }
+        #expect(space.io.enterCount == 0, "'a b' hook must not clear observed 'ab' draft")
+        #expect(space.bus.info("worker")?.needsOwnerEnter == true)
+    }
+
+    @Test func delayedEarlierHookAcrossCtrlCOrVisibleBusPasteDoesNotClearLaterDraft() throws {
+        let fx = try Self.loadCappedCase()
+
+        // Case A (P1): observed A + Enter -> Ctrl-C -> B + Tab + Enter -> delayed A hook must NOT clear B.
+        let ctrlC = Self.makeRig(cols: fx.cols, rows: fx.rows)
+        ctrlC.io.showBytes(fx.before)
+        ctrlC.bus.setState("worker", .running)
+        ctrlC.bus.noteOwnerInput("worker", bytes: Array("earlier A".utf8)[...])
+        ctrlC.bus.noteOwnerInput("worker", bytes: [0x0D][...])
+        ctrlC.bus.noteOwnerInput("worker", bytes: [0x03][...]) // Ctrl-C empties composer, not harness queue
+        ctrlC.bus.noteOwnerInput("worker", bytes: Array("later".utf8)[...])
+        ctrlC.bus.noteOwnerInput("worker", bytes: [0x09][...]) // Tab makes B's text unknown
+        ctrlC.bus.noteOwnerInput("worker", bytes: [0x0D][...])
+        try ctrlC.hook("UserPromptSubmit", prompt: "earlier A")
+        try ctrlC.hook("Stop")
+        ctrlC.step(4)
+        ctrlC.bus.tick()
+        _ = try ctrlC.send(fx.payload)
+        ctrlC.io.showBytes(fx.after)
+        ctrlC.fire()
+        for _ in 0..<5 { ctrlC.step(1); ctrlC.bus.tick() }
+        #expect(ctrlC.io.enterCount == 0, "delayed earlier A across Ctrl-C cleared later Tab draft")
+        #expect(ctrlC.bus.info("worker")?.needsOwnerEnter == true)
+
+        // Case B (P1): observed A + Enter -> visible (!headHidden) short bus paste -> B + Tab + Enter -> delayed A hook.
+        let vis = Self.makeRig(cols: fx.cols, rows: fx.rows)
+        let rule = String(repeating: "─", count: fx.cols)
+        let shortBefore = Data("\u{1b}[2J\u{1b}[H\(rule)\r\n❯\u{a0}\r\n\(rule)\r\n  Usage: 5h n/a\r\n".utf8)
+        let shortAfter = Data("\u{1b}[2J\u{1b}[H\(rule)\r\n❯\u{a0}[from: probe] short ok\r\n\(rule)\r\n  Usage: 5h n/a\r\n".utf8)
+        vis.io.showBytes(shortBefore)
+        vis.bus.setState("worker", .running)
+        vis.bus.noteOwnerInput("worker", bytes: Array("earlier A".utf8)[...])
+        vis.bus.noteOwnerInput("worker", bytes: [0x0D][...])
+        try vis.hook("Stop")
+        vis.step(4)
+        let visReply = try vis.send("short ok")
+        #expect(visReply["delivered"] as? Bool == true)
+        vis.io.showBytes(shortAfter)
+        vis.fire()
+        #expect(vis.io.enterCount == 1)
+        vis.step(1)
+        vis.io.showBytes(fx.before)
+        vis.bus.noteOwnerInput("worker", bytes: Array("later".utf8)[...])
+        vis.bus.noteOwnerInput("worker", bytes: [0x09][...])
+        vis.bus.noteOwnerInput("worker", bytes: [0x0D][...])
+        try vis.hook("UserPromptSubmit", prompt: "earlier A")
+        try vis.hook("Stop")
+        vis.step(4)
+        vis.bus.tick()
+        let cappedReply = try vis.send(fx.payload)
+        #expect(cappedReply["delivered"] as? Bool == true)
+        vis.io.showBytes(fx.after)
+        vis.fire()
+        for _ in 0..<5 { vis.step(1); vis.bus.tick() }
+        #expect(vis.io.enterCount == 1, "delayed earlier A across visible bus paste cleared later Tab draft")
+        #expect(vis.bus.info("worker")?.needsOwnerEnter == true)
+    }
+
+    @Test func earlierHookArrivingWhileTypingTabDraftRetiresSlotWithoutPermanentDebt() throws {
+        let fx = try Self.loadCappedCase()
+        let rig = Self.makeRig(cols: fx.cols, rows: fx.rows)
+        rig.io.showBytes(fx.before)
+        rig.bus.setState("worker", .running)
+
+        // Submit A; begin editing B with Tab; A's hook arrives during that typing; submit B; B's hook arrives.
+        rig.bus.noteOwnerInput("worker", bytes: Array("first prompt".utf8)[...])
+        rig.bus.noteOwnerInput("worker", bytes: [0x0D][...])
+        rig.bus.noteOwnerInput("worker", bytes: Array("second".utf8)[...])
+        rig.bus.noteOwnerInput("worker", bytes: [0x09][...]) // Tab makes B unknown
+        try rig.hook("UserPromptSubmit", prompt: "first prompt")
+        rig.bus.noteOwnerInput("worker", bytes: [0x0D][...])
+        try rig.hook("UserPromptSubmit", prompt: "second completed")
+        try rig.hook("Stop")
+        rig.step(4)
+        rig.bus.tick()
+
+        _ = try rig.send(fx.payload)
+        rig.io.showBytes(fx.after)
+        rig.fire()
+        for _ in 0..<5 { rig.step(1); rig.bus.tick() }
+        #expect(rig.io.enterCount == 1, "earlier hook during typing left permanent ordinal debt")
+        #expect(rig.bus.info("worker")?.needsOwnerEnter == false)
+    }
+
+    @Test func sessionStartRetiresDeadSessionDebtAndAmbiguousUnhookedEnterFailsClosed() throws {
+        let fx = try Self.loadCappedCase()
+
+        // Part A (P2): SessionStart retires unhooked submit slots from the ended session.
+        let reset = Self.makeRig(cols: fx.cols, rows: fx.rows)
+        reset.io.showBytes(fx.before)
+        reset.bus.noteOwnerInput("worker", bytes: Array("/cle".utf8)[...])
+        reset.bus.noteOwnerInput("worker", bytes: [0x09][...])
+        reset.bus.noteOwnerInput("worker", bytes: [0x0D][...]) // swallowed/local command without hook
+        try reset.hook("SessionStart")
+        reset.bus.noteOwnerInput("worker", bytes: Array("new".utf8)[...])
+        reset.bus.noteOwnerInput("worker", bytes: [0x09][...])
+        reset.bus.noteOwnerInput("worker", bytes: [0x0D][...])
+        try reset.hook("UserPromptSubmit", prompt: "new task")
+        try reset.hook("Stop")
+        reset.step(4)
+        reset.bus.tick()
+        _ = try reset.send(fx.payload)
+        reset.io.showBytes(fx.after)
+        reset.fire()
+        for _ in 0..<5 { reset.step(1); reset.bus.tick() }
+        #expect(reset.io.enterCount == 1, "SessionStart left stale ordinal debt from previous session")
+        #expect(reset.bus.info("worker")?.needsOwnerEnter == false)
+
+        // Part B: fail-closed when two submits cannot be disambiguated ("fi" + completion Enter + "x" + Enter).
+        let failClosed = Self.makeRig(cols: fx.cols, rows: fx.rows)
+        failClosed.io.showBytes(fx.before)
+        failClosed.bus.setState("worker", .running)
+        failClosed.bus.noteOwnerInput("worker", bytes: Array("fi".utf8)[...])
+        failClosed.bus.noteOwnerInput("worker", bytes: [0x0D][...])
+        failClosed.bus.noteOwnerInput("worker", bytes: Array("x".utf8)[...])
+        failClosed.bus.noteOwnerInput("worker", bytes: [0x0D][...])
+        try failClosed.hook("UserPromptSubmit", prompt: "file.txt x")
+        try failClosed.hook("Stop")
+        failClosed.step(4)
+        failClosed.bus.tick()
+        _ = try failClosed.send(fx.payload)
+        failClosed.io.showBytes(fx.after)
+        failClosed.fire()
+        for _ in 0..<5 { failClosed.step(1); failClosed.bus.tick() }
+        #expect(failClosed.io.enterCount == 0)
+        #expect(failClosed.bus.info("worker")?.needsOwnerEnter == true)
+    }
 }
