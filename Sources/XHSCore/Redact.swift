@@ -117,53 +117,66 @@ public enum Redact {
         var rows = text.components(separatedBy: "\n")
         // the passes before this one keep every row break, so the rows are still the ones `reaches` is about
         guard rows.count > 1, reaches.count == rows.count else { return text }
+        /// One hit's part of each row it covers, in the row's own places; the marker goes on the first.
+        typealias Part = (row: Int, lower: Int, upper: Int)
+        var hits: [(parts: [Part], kind: String)] = []
+        /// The hits that cross a row break in rows s...last read as one line, each later row without its
+        /// indent, and not over a part of a hit found before.
+        func look(_ s: Int, _ last: Int) {
+            var joined = ""
+            var starts: [Int] = []
+            var indents: [Int] = []
+            for r in s...last {
+                let row = rows[r] as NSString
+                var indent = 0
+                if r > s { while indent < row.length, row.character(at: indent) == 0x20 { indent += 1 } }
+                starts.append((joined as NSString).length)
+                indents.append(indent)
+                joined += row.substring(from: indent)
+            }
+            let length = (joined as NSString).length
+            for rule in rules where rule.wraps {
+                for m in rule.regex.matches(in: joined, range: NSRange(location: 0, length: length)) {
+                    // what goes: the match, less the part the rule keeps in front of the marker ("NAME=")
+                    let start = rule.keep > 0 ? NSMaxRange(m.range(at: rule.keep)) : m.range.location
+                    let end = m.range.location + m.range.length
+                    // the match crosses a row break, though what goes may stand in one row ("-u bob:" at a
+                    // row's end, the password the whole next row): no rule that reads row by row sees it
+                    guard starts.dropFirst().contains(where: { m.range.location < $0 && $0 < end }), end > start else { continue }
+                    let from = starts.lastIndex(where: { $0 <= start })!
+                    let to = starts.lastIndex(where: { $0 < end })!
+                    let parts: [Part] = (from...to).map { k in
+                        (s + k, max(start, starts[k]) - starts[k] + indents[k],
+                         min(end, k + 1 < starts.count ? starts[k + 1] : length) - starts[k] + indents[k])
+                    }
+                    let taken = hits.contains { hit in
+                        hit.parts.contains { a in parts.contains { b in a.row == b.row && a.lower < b.upper && b.lower < a.upper } }
+                    }
+                    if !taken { hits.append((parts, rule.kind)) }
+                }
+            }
+        }
         var first = 0
         while first < rows.count - 1 {
             guard reaches[first] else { first += 1; continue }
             var last = first
             while last < rows.count - 1, reaches[last] { last += 1 }
-            // rows first...last as one line; where each row's part starts in it, and how much indent it lost
-            var joined = ""
-            var starts: [Int] = []
-            var indents: [Int] = []
-            for r in first...last {
-                let row = rows[r] as NSString
-                var indent = 0
-                if r > first { while indent < row.length, row.character(at: indent) == 0x20 { indent += 1 } }
-                starts.append((joined as NSString).length)
-                indents.append(indent)
-                joined += row.substring(from: indent)
-            }
-            let line = joined as NSString
-            var hits: [(range: NSRange, kind: String)] = []
-            for rule in rules where rule.wraps {
-                for m in rule.regex.matches(in: joined, range: NSRange(location: 0, length: line.length)) {
-                    // what goes: the match, less the part the rule keeps in front of the marker ("NAME=")
-                    let start = rule.keep > 0 ? NSMaxRange(m.range(at: rule.keep)) : m.range.location
-                    let end = m.range.location + m.range.length
-                    let range = NSRange(location: start, length: end - start)
-                    // the match crosses a row break, though what goes may stand in one row ("-u bob:" at a
-                    // row's end, the password the whole next row): no rule that reads row by row sees it
-                    guard starts.dropFirst().contains(where: { m.range.location < $0 && $0 < end }), range.length > 0 else { continue }
-                    guard !hits.contains(where: { NSIntersectionRange($0.range, range).length > 0 }) else { continue }
-                    hits.append((range, rule.kind))
-                }
-            }
-            // from the last hit back, so the places of the earlier ones hold
-            for hit in hits.sorted(by: { $0.range.location > $1.range.location }) {
-                let end = hit.range.location + hit.range.length
-                let from = starts.lastIndex(where: { $0 <= hit.range.location })!
-                let to = starts.lastIndex(where: { $0 < end })!
-                for k in from...to {
-                    let row = rows[first + k] as NSString
-                    // this row's part of the hit, in the row's own places
-                    let lower = max(hit.range.location, starts[k]) - starts[k] + indents[k]
-                    let upper = min(end, k + 1 < starts.count ? starts[k + 1] : line.length) - starts[k] + indents[k]
-                    rows[first + k] = row.substring(to: lower) + (k == from ? "[redacted: \(hit.kind)]" : "") + row.substring(from: upper)
-                }
-                count += 1
-            }
+            look(first, last)
+            // a row inside the run that starts indented may be a line of its own after a row that only ended
+            // near the edge: read from it too, its indent kept, so a rule that wants a line's start or a blank
+            // there ("  API_KEY=...") sees one (the second read of #116)
+            for r in (first + 1)..<last where rows[r].hasPrefix(" ") { look(r, last) }
             first = last
+        }
+        // each row's parts from its end back, so the places of the earlier ones hold
+        var edits: [(part: Part, marker: String?)] = []
+        for hit in hits {
+            for (i, part) in hit.parts.enumerated() { edits.append((part, i == 0 ? "[redacted: \(hit.kind)]" : nil)) }
+            count += 1
+        }
+        for edit in edits.sorted(by: { ($0.part.row, $0.part.lower) > ($1.part.row, $1.part.lower) }) {
+            let row = rows[edit.part.row] as NSString
+            rows[edit.part.row] = row.substring(to: edit.part.lower) + (edit.marker ?? "") + row.substring(from: edit.part.upper)
         }
         return rows.joined(separator: "\n")
     }
