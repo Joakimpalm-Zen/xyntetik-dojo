@@ -91,6 +91,7 @@ final class AppModel: NSObject, ObservableObject {
     private var runnerForwards: [ObjectIdentifier: Int] = [:]
     private var server: BusServer?
     private var timer: Timer?
+    private lazy var powerHold: PowerHold? = smoke ? nil : PowerHold()
     /// D15: ~/.dojo/live.json (a smoke's goes in its throwaway folder).
     let live = LiveState(url: AppModel.liveFile)
     /// D15 (b): sending from outside Dojo, while the owner's ~/.dojo/outside is there (Outside).
@@ -118,6 +119,7 @@ final class AppModel: NSObject, ObservableObject {
         bus.onChange = { [weak self] in
             guard let self else { return }
             self.revision &+= 1
+            self.syncPowerHold()
             // D15: the panes as a file other tools can read (LiveState), at most once a second.
             self.live.changed { [weak self] in self?.bus.all ?? [] }
         }
@@ -356,6 +358,7 @@ final class AppModel: NSObject, ObservableObject {
         if !host.isEmpty { recentHosts = RecentHosts.remember(host, in: AppModel.hostsFile) }
         if !directory.isEmpty { recentFolders = RecentHosts.remember(directory, in: AppModel.foldersFile, valid: RecentHosts.isFolder) }
         items.append(Item(name: name, kind: kind, unrestricted: unrestricted, view: view, directory: directory))
+        syncPowerHold()
         if let session { bus.setSession(name, session) }
         lastPanes = []
         savePanes()
@@ -479,6 +482,7 @@ final class AppModel: NSObject, ObservableObject {
         tokens[name] = nil
         remoteShells[name] = nil
         items.removeAll { $0.name == name }
+        syncPowerHold()
         // Its tab goes with it; the overview shows what is left.
         if selectedTab == item.id { selectedTab = nil }
         // The keys go to the pane in its place, or the next key would reach no pane at all.
@@ -497,9 +501,14 @@ final class AppModel: NSObject, ObservableObject {
         keepingList = true
         for item in items { close(item.name) }
         keepingList = false
+        powerHold?.release()
         live.remove()
         outside.off()
         bus.outsideToken = nil
+    }
+
+    private func syncPowerHold() {
+        powerHold?.update(states: items.map { bus.info($0.name)?.state ?? .starting })
     }
 
     /// The owner switched the outside route on or off: the token file and the bus follow within seconds.
