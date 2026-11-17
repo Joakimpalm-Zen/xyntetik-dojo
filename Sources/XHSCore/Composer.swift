@@ -219,17 +219,15 @@ public enum Composer {
         let end: Int        // the first row under the composer: its footer starts here
         var block: Int      // the first row that is not the composer's own text
         if kind == .claude, afterPaste, let pasted,
-           let top = foot.indices.last(where: { isCappedRule(foot[$0].text, "↑") || isCappedRule(foot[$0].text, "↓") }),
-           top > (marked ?? -1), isCappedRule(foot[top].text, "↑") {
+           let top = foot.indices.last(where: { isCappedRule(foot[$0].text, "↑") }), top > (marked ?? -1) {
             // D41: Claude Code caps its composer's height. Its top ruled line says how many rows are above
             // ("─── ↑ 3 more ───"), the row with the mark is among them, and what shows is the end of the
-            // text, set in; scrolled inside it, its closing line says how many are below. What shows is a part
-            // of the paste, in its place, as with agy's.
-            guard let closing = foot.indices.first(where: { $0 > top && (isRuledLine(foot[$0].text) || isCappedRule(foot[$0].text, "↓")) })
-            else { return nil }
+            // text, set in, over the closing ruled line. What shows is the end of the paste, in its place, as
+            // with agy's. Not read: a composer scrolled inside, with rows below what shows too. The bus's
+            // paste leaves the cursor at its end, so only the owner scrolls it; the Enter then waits, as before.
+            guard let closing = foot.indices.first(where: { $0 > top && isRuledLine(foot[$0].text) }) else { return nil }
             let shown = foot[(top + 1)..<closing].map(\.text)
-            guard !shown.isEmpty, ShownPart(rows: shown, above: true, below: isCappedRule(foot[closing].text, "↓")).isPart(of: pasted)
-            else { return nil }
+            guard !shown.isEmpty, ShownPart(rows: shown, above: true, below: false).isPart(of: pasted) else { return nil }
             (at, first, end, block) = (top + 1, shown[0], closing + 1, closing)
         } else {
             guard let row = marked, let text = afterMark(row), !isNumberedChoice(text) else { return nil }
@@ -360,8 +358,8 @@ public enum Composer {
     }
 
     /// "─── ↑ 3 more ───": Claude Code's ruled line over a composer taller than it shows (D41, a pane on
-    /// 2026-11-17), and with "↓" under one scrolled inside. A run of box-drawing characters, the arrow, a
-    /// count, "more", and box-drawing characters to its end.
+    /// 2026-11-17). A run of box-drawing characters, the arrow, a count, "more", and box-drawing characters to
+    /// its end.
     static func isCappedRule(_ row: String, _ arrow: String) -> Bool {
         let scalars = Array(row.unicodeScalars)
         let box: (Unicode.Scalar) -> Bool = { (0x2500...0x257F).contains($0.value) }

@@ -252,6 +252,16 @@ import Testing
             other.fire()
             #expect(other.enters == 0, "\(shown)")
         }
+        // scrolled inside, with rows below what shows as well: not read, and the Enter waits (the second read
+        // of #116 found the branch for it unreachable; a bus paste leaves the cursor at its end)
+        let scrolled = Rig(kind: .claude, submitDelay: 0.15)
+        scrolled.io.screen = ["✻ Churned", "", rule, "❯\u{a0}", rule, "  Usage: 5h n/a"].joined(separator: "\n")
+        scrolled.send(text)
+        scrolled.io.screen = ["✻ Churned", "", "─── ↑ 1 more " + String(repeating: "─", count: 50),
+                              "  includes make smoke from its own pane at 28809d5a). Hold",
+                              "─── ↓ 2 more " + String(repeating: "─", count: 50), "  Usage: 5h n/a"].joined(separator: "\n")
+        scrolled.fire()
+        #expect(scrolled.enters == 0)
         #expect(Composer.isCappedRule("─── ↑ 3 more ───────", "↑"))
         #expect(Composer.isCappedRule("─── ↓ 12 more ───", "↓"))
         #expect(!Composer.isCappedRule("─── ↑ three more ───", "↑"))
