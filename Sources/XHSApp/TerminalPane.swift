@@ -35,6 +35,8 @@ final class TerminalPane: TerminalView, PaneIO {
     var onOwnerInput: ((Bus.OwnerKey) -> Void)?
     /// Called each time the pane arrives in a window, as a move between the grid and a tab does.
     var onLanded: (() -> Void)?
+    /// Number of times this view has been attached to a non-nil window.
+    private(set) var windowAttachCount = 0
     private var process: LocalProcess!
 
     /// D19: the pane's own pointer methods, added once for the class (see `PanePointer`).
@@ -217,8 +219,11 @@ final class TerminalPane: TerminalView, PaneIO {
     /// CoreGraphics path draws on the main thread, glyph by glyph. SwiftTerm leaves Metal off by default.
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        if window != nil, !isUsingMetalRenderer { try? setUseMetal(true) }
-        if window != nil { onLanded?() }
+        if window != nil {
+            windowAttachCount &+= 1
+            if !isUsingMetalRenderer { try? setUseMetal(true) }
+            onLanded?()
+        }
     }
 
     // MARK: bytes from the harness

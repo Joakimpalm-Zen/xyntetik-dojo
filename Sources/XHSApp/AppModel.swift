@@ -626,6 +626,99 @@ final class AppModel: NSObject, ObservableObject {
 
     /// DOJO_SMOKE=1: open one pane running `echo ok` (locally, or on DOJO_SMOKE_HOST over ssh), check its screen
     /// and the bus, then quit.
+    /// Whether `view` has landed in a window at least `minAttachCount` times, is visible, and has non-trivial
+    /// bounds enclosing the smoke click point `(20, 20)`.
+    static func isClickReady(_ view: TerminalPane, minAttachCount: Int = 1) -> Bool {
+        view.window != nil
+            && view.windowAttachCount >= minAttachCount
+            && !view.isHiddenOrHasHiddenAncestor
+            && view.bounds.width > 20
+            && view.bounds.height > 20
+    }
+
+    /// Clears `firstResponder` and clicks `(20, 20)` inside `view`, returning whether `view` became first responder.
+    static func clickToFocus(_ view: TerminalPane) -> Bool {
+        // Focus comes from the click, not from the model, as in the window.
+        let windowNumber = view.window?.windowNumber ?? 0
+        view.window?.makeFirstResponder(nil)
+        if let down = NSEvent.mouseEvent(with: .leftMouseDown, location: NSPoint(x: 20, y: 20), modifierFlags: [],
+                                         timestamp: 0, windowNumber: windowNumber, context: nil, eventNumber: 0,
+                                         clickCount: 1, pressure: 1) {
+            view.mouseDown(with: down)
+        }
+        if let up = NSEvent.mouseEvent(with: .leftMouseUp, location: NSPoint(x: 20, y: 20), modifierFlags: [],
+                                       timestamp: 0, windowNumber: windowNumber, context: nil, eventNumber: 0,
+                                       clickCount: 1, pressure: 0) {
+            view.mouseUp(with: up)
+        }
+        return view.window?.firstResponder === view
+    }
+
+    private static func waitUntil(deadline: Date, condition: @MainActor () -> Bool) async -> Bool {
+        while !condition() {
+            if Date() >= deadline { return false }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        return true
+    }
+
+    /// Drives the smoke swap -> tab -> click -> type sequence by waiting for actual window attachment and layout
+    /// conditions instead of blind fixed delays.
+    @discardableResult
+    func runSmokeSwapTabClick(name: String, partner: String, typed: String, deadline: Date,
+                              onFailure: (String) -> Void) async -> Bool {
+        guard let item1 = items.first(where: { $0.name == name }),
+              let item2 = items.first(where: { $0.name == partner }) else {
+            onFailure("missing smoke panes \(name)/\(partner)")
+            return false
+        }
+        let view1 = item1.view
+        let view2 = item2.view
+
+        guard await Self.waitUntil(deadline: deadline, condition: {
+            Self.isClickReady(view1, minAttachCount: 1) && Self.isClickReady(view2, minAttachCount: 1)
+        }) else {
+            onFailure("panes did not land in a window before swap (window \(view1.window != nil), attaches \(view1.windowAttachCount))")
+            return false
+        }
+
+        swap(name, with: partner)
+        CATransaction.flush()
+        try? await Task.sleep(for: .milliseconds(20))
+        guard await Self.waitUntil(deadline: deadline, condition: {
+            Self.isClickReady(view1, minAttachCount: 1)
+        }) else {
+            onFailure("pane left the window after swap")
+            return false
+        }
+
+        let nextAttach = view1.windowAttachCount + 1
+        show(tab: item1.id)
+        guard await Self.waitUntil(deadline: deadline, condition: {
+            Self.isClickReady(view1, minAttachCount: nextAttach)
+        }) else {
+            onFailure("pane did not land in tab before click (window \(view1.window != nil), attaches \(view1.windowAttachCount)/\(nextAttach))")
+            return false
+        }
+
+        guard Self.clickToFocus(view1) else {
+            onFailure("a click did not focus the pane")
+            return false
+        }
+        checkPanePointer(view1)
+        guard !typed.isEmpty else { return true }
+        for character in typed + "\r" {
+            let c = String(character)
+            if let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                            windowNumber: view1.window?.windowNumber ?? 0, context: nil,
+                                            characters: c, charactersIgnoringModifiers: c, isARepeat: false,
+                                            keyCode: character == "\r" ? 36 : 0) {
+                view1.keyDown(with: event)
+            }
+        }
+        return true
+    }
+
     func runSmoke() {
         let name = "shell-1"
         let host = ProcessInfo.processInfo.environment["DOJO_SMOKE_HOST"] ?? ""
@@ -634,36 +727,18 @@ final class AppModel: NSObject, ObservableObject {
             exit(1)
         }
         let deadline = Date().addingTimeInterval(15)
-        // A local pane gets a line typed in through the view, as keys, after it has had a second to start.
+        // A local pane gets a line typed in through the view, as keys, once re-parenting has settled.
         let typed = host.isEmpty ? "typed" : ""
         let expected = host.isEmpty ? "ok typed" : "ok"
         if host.isEmpty {
             // A second pane, swapped with the first as a drag would do it, then the first shown in its own tab:
             // re-parented twice, it must still take keys.
             addPane(kind: .shell, host: "", name: "shell-2")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.swap(name, with: "shell-2") }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) { [weak self] in
+            Task { @MainActor [weak self] in
                 guard let self else { return }
-                self.show(tab: self.items.first(where: { $0.name == name })?.id)
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
-                guard let view = self?.items.first(where: { $0.name == name })?.view else { return }
-                // Focus comes from the click, not from the model, as in the window.
-                view.window?.makeFirstResponder(nil)
-                view.mouseDown(with: NSEvent.mouseEvent(with: .leftMouseDown, location: NSPoint(x: 20, y: 20), modifierFlags: [], timestamp: 0,
-                                                        windowNumber: view.window?.windowNumber ?? 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!)
-                view.mouseUp(with: NSEvent.mouseEvent(with: .leftMouseUp, location: NSPoint(x: 20, y: 20), modifierFlags: [], timestamp: 0,
-                                                      windowNumber: view.window?.windowNumber ?? 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 0)!)
-                guard view.window?.firstResponder === view else { print("DOJO_SMOKE failed: a click did not focus the pane"); exit(1) }
-                self?.checkPanePointer(view)
-                for character in typed + "\r" {
-                    let c = String(character)
-                    if let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
-                                                    windowNumber: view.window?.windowNumber ?? 0, context: nil,
-                                                    characters: c, charactersIgnoringModifiers: c, isARepeat: false,
-                                                    keyCode: character == "\r" ? 36 : 0) {
-                        view.keyDown(with: event)
-                    }
+                await self.runSmokeSwapTabClick(name: name, partner: "shell-2", typed: typed, deadline: deadline) { reason in
+                    print("DOJO_SMOKE failed: \(reason)")
+                    exit(1)
                 }
             }
         }
