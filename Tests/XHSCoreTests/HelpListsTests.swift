@@ -98,6 +98,26 @@ import Testing
         child.stop()
     }
 
+    /// The re-read of #114: the process table is read in two calls, its size and then its rows, and more
+    /// processes than the room left over between the two gave ENOMEM, and no list: the jobs in the session
+    /// were not ended. The read is tried again, with the room the table needs by then.
+    @Test func aProcessTableThatGrewBetweenItsSizeAndItsReadIsReadAgain() {
+        let stride = MemoryLayout<kinfo_proc>.stride
+        var calls = 0
+        let pids = Launcher.Detached.processes { buffer, size in
+            calls += 1
+            guard let buffer else { size = (calls < 3 ? 2 : 40) * stride; return 0 }   // the size asked: it grew
+            guard size >= 40 * stride else { errno = ENOMEM; return -1 }              // too small for 40 now
+            let rows = buffer.bindMemory(to: kinfo_proc.self, capacity: 40)
+            for i in 0..<40 { rows[i] = kinfo_proc(); rows[i].kp_proc.p_pid = pid_t(1000 + i) }
+            size = 40 * stride
+            return 0
+        }
+        #expect(pids == (0..<40).map { pid_t(1000 + $0) })
+        // and the real table, read the same way, has this process in it
+        #expect(Launcher.Detached.processes().contains(getpid()))
+    }
+
     final class Seen: @unchecked Sendable {
         private let lock = NSLock()
         private var value: Bool?

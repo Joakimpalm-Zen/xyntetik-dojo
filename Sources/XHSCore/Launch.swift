@@ -596,14 +596,27 @@ public enum Launcher {
         /// The processes in the session `sid`: every process, kept where getsid says so. macOS's own filter
         /// for a session (KERN_PROC_SESSION, `pgrep -s`) found none of a shell's jobs on 2026-11-17.
         static func session(_ sid: pid_t) -> [pid_t] {
+            processes().filter { $0 > 0 && getsid($0) == sid }
+        }
+
+        /// Every process's pid (sysctl KERN_PROC_ALL), in two calls: the table's size, then its rows, with room
+        /// for more. A table that grew past that room in between gives ENOMEM, and is read again with the
+        /// size it has then (the re-read of #114); a few times at most. `read` is sysctl's, or a test's.
+        static func processes(read: (UnsafeMutableRawPointer?, inout Int) -> Int32 = { buffer, size in
             var name: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL]
-            var size = 0
-            guard sysctl(&name, 3, nil, &size, nil, 0) == 0, size > 0 else { return [] }
+            return sysctl(&name, 3, buffer, &size, nil, 0)
+        }) -> [pid_t] {
             let stride = MemoryLayout<kinfo_proc>.stride
-            var found = [kinfo_proc](repeating: kinfo_proc(), count: size / stride + 16)
-            size = found.count * stride
-            guard sysctl(&name, 3, &found, &size, nil, 0) == 0 else { return [] }
-            return found.prefix(size / stride).map(\.kp_proc.p_pid).filter { $0 > 0 && getsid($0) == sid }
+            for _ in 0..<4 {
+                var size = 0
+                guard read(nil, &size) == 0, size > 0 else { return [] }
+                var found = [kinfo_proc](repeating: kinfo_proc(), count: size / stride + 16)
+                size = found.count * stride
+                let got = found.withUnsafeMutableBytes { read($0.baseAddress, &size) }
+                if got == 0 { return found.prefix(size / stride).map(\.kp_proc.p_pid) }
+                guard errno == ENOMEM else { return [] }
+            }
+            return []
         }
 
         /// Under the lock: reaps the program once it has ended, and its output has too or it was stopped.
