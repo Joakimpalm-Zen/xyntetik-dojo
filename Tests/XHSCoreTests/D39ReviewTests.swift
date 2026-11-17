@@ -187,6 +187,14 @@ import Testing
             let text = read()
             for secret in secrets { #expect(!text.contains(secret), "\(text)") }
         }
+        // the second read of #116: an indented line of its own after a row that ended near the edge with no
+        // blank, its secret wrapped onto the next row: the line's start is still seen
+        let rows = ["See config below (38 chars, no space):", "  API_KEY=abcdefghijklmnopqrstuvwxyz0123", "456789"]
+        #expect(rows[0].count == 38 && rows[1].count == 40)
+        io.screen = rows.joined(separator: "\n") + "\n"
+        let shown = read()
+        #expect(!shown.contains("abcdefghij") && !shown.contains("456789"), "\(shown)")
+        #expect(shown.hasPrefix("See config below (38 chars, no space):\n  API_KEY=[redacted: secret]"), "\(shown)")
     }
 
     // MARK: the second read of #116
