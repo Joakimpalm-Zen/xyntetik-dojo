@@ -69,6 +69,48 @@ import Testing
         #expect(rig.bus.info("worker")?.queued == 1)
     }
 
+    /// Live on 2026-11-17: agy shows each command it runs in the background in a row of its own under the
+    /// composer, those rows between ruled lines, until the task ends. The bus found no composer there and held
+    /// every message to the pane, an idle one with an empty composer, till then (Tests/XHSAppTests/Fixtures
+    /// has the bytes). The rows say nothing about the composer: a message goes in, a draft is still held, and a
+    /// dialog's rows under them are still a dialog.
+    static let task = "  ● [07:46:48] sleep 75 running"
+    static let idleWithATask = ["  started", "", rule, ">", rule, task, rule, status].joined(separator: "\n")
+    static let runningWithTasks = ["⢿  Reading file...", "└ Tip: Press ? to see keyboard shortcuts.", rule, ">", rule,
+                                   "  ● [07:44:14] sh /tmp/probe/tree.sh shelltool... running", task, rule, status].joined(separator: "\n")
+
+    @Test func aBackgroundTaskUnderTheComposerHoldsNoMessage() {
+        let rig = Rig(kind: .agy)
+        rig.io.screen = Self.idleWithATask
+        #expect(rig.send("status?")["delivered"] as? Bool == true)
+        #expect(rig.io.typed == "[from: fable] status?\r")
+        let working = Rig(kind: .agy)
+        working.hook("UserPromptSubmit")
+        working.io.screen = Self.runningWithTasks
+        #expect(working.send("status?")["delivered"] as? Bool == true)
+        #expect(working.io.typed == "[from: fable] status?\r")
+    }
+
+    @Test func aBackgroundTaskUnderTheComposerHoldsTheDraftAndTheDialogAsBefore() {
+        let draft = [Self.rule, "> half a thought", Self.rule, Self.task, Self.rule, Self.status].joined(separator: "\n")
+        let rig = Rig(kind: .agy)
+        rig.io.screen = draft
+        rig.bus.noteOwnerInput("worker", .text)
+        rig.send("report")
+        rig.wait(30)
+        #expect(rig.io.written.isEmpty)
+        #expect(rig.bus.info("worker")?.draft == true)
+        #expect(!Composer.shownEmpty(kind: .agy, screen: draft))
+        // rows that only look like the task rows, or a dialog's under them, are no footer
+        for under in [[Self.task, Self.rule, "> 1. Yes, run command", "  2. No, cancel", Self.status],
+                      [Self.task, Self.rule, "  ↑/↓ Navigate · enter Select · esc Skip", Self.status],
+                      [Self.task, "> 1. Yes, run command", Self.rule, Self.status],
+                      ["  ● 07:46:48 sleep 75 running", Self.rule, Self.status]] {
+            let screen = ([Self.rule, ">", Self.rule] + under).joined(separator: "\n")
+            #expect(Composer.look(kind: .agy, lines: screen.components(separatedBy: "\n"), cursorLine: nil) == nil, "\(under)")
+        }
+    }
+
     @Test func anIdleComposerIsTypedIntoAndSent() {
         let rig = Rig(kind: .agy)
         rig.io.screen = Self.idle

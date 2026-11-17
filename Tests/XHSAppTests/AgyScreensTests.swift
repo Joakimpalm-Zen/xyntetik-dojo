@@ -141,6 +141,23 @@ import XHSCore
         #expect(Composer.look(kind: .agy, lines: capped, cursorLine: nil) == nil)
     }
 
+    /// Live on 2026-11-17: while agy ran a command in the background, the bus found no composer and held
+    /// every message to the pane, idle with an empty composer, until the task ended. agy shows each task it
+    /// runs in the background in a row of its own under the composer ("● [07:46:48] sleep 75 running"), and
+    /// those rows between ruled lines, above the status line. Recorded in a pty of 40 rows and 100 columns,
+    /// with one task and two while agy worked, one when it was idle, and the composer once the task ended.
+    @Test func aBackgroundTaskUnderTheComposerLeavesItAComposer() throws {
+        for name in ["t1-1-running-a-task", "t1-2-running-two-tasks", "t1-3-idle-with-a-task", "t1-4-task-ended"] {
+            let lines = Self.lines(name)
+            let look = Composer.look(kind: .agy, lines: lines, cursorLine: nil)
+            #expect(look != nil, "\(name)")
+            #expect(look?.under == ["probe status line"], "\(name): the status line is what stands under it")
+            #expect(Self.shownEmpty(lines), "\(name)")
+        }
+        #expect(Self.lines("t1-3-idle-with-a-task").contains { $0.hasPrefix("  ● [") && $0.hasSuffix("] sleep 75 running") })
+        #expect(Self.lines("t1-2-running-two-tasks").filter { $0.hasPrefix("  ● [") }.count == 2)
+    }
+
     /// Under the composer stands the pane's own status line, which starts in the first column.
     @Test func underTheComposerIsThePanesStatusLine() throws {
         let look = try #require(Composer.look(kind: .agy, lines: Self.lines("1-idle"), cursorLine: nil))

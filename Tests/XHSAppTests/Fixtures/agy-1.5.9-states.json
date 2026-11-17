@@ -260,5 +260,45 @@
   ],
   "rows": 30,
   "cols": 100
+ },
+ "t1-1-running-a-task": {
+  "stream": "agy-1.5.9-tasks.bin",
+  "offset": 22917,
+  "cursor": [
+   28,
+   3
+  ],
+  "rows": 40,
+  "cols": 100
+ },
+ "t1-2-running-two-tasks": {
+  "stream": "agy-1.5.9-tasks.bin",
+  "offset": 45309,
+  "cursor": [
+   31,
+   3
+  ],
+  "rows": 40,
+  "cols": 100
+ },
+ "t1-3-idle-with-a-task": {
+  "stream": "agy-1.5.9-tasks.bin",
+  "offset": 68736,
+  "cursor": [
+   35,
+   3
+  ],
+  "rows": 40,
+  "cols": 100
+ },
+ "t1-4-task-ended": {
+  "stream": "agy-1.5.9-tasks.bin",
+  "offset": 69054,
+  "cursor": [
+   35,
+   3
+  ],
+  "rows": 40,
+  "cols": 100
  }
 }
