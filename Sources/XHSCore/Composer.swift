@@ -301,20 +301,28 @@ public enum Composer {
     /// writes "↑ N more lines" on the composer's first row and "↓ N more lines" on its last for the rows it
     /// does not show. Nil when the rows carry neither.
     struct ShownPart {
-        var text: String
+        var rows: [String]
         var above: Bool
         var below: Bool
+        var text: String { rows.joined() }
 
         /// Whether the rows shown are this part of `pasted`, blanks apart: its end when only rows above are
         /// hidden, its start when only rows below are, somewhere inside it when both are. At least `editedRun`
-        /// characters of it, so that a row or two of punctuation says nothing.
+        /// characters of it, so that a row or two of punctuation says nothing; a shorter end counts when its
+        /// rows are the paste's last lines, one for one (a message whose last lines are a letter or two, the
+        /// second read of #114).
         func isPart(of pasted: String) -> Bool {
             let whole = Composer.bare(pasted), part = Composer.bare(text)
-            guard part.count >= Composer.editedRun else { return false }
+            guard !part.isEmpty else { return false }
             switch (above, below) {
-            case (true, false): return whole.hasSuffix(part)
-            case (false, true): return whole.hasPrefix(part)
-            default: return whole.contains(part)
+            case (true, false):
+                guard whole.hasSuffix(part) else { return false }
+                if part.count >= Composer.editedRun { return true }
+                let shown = rows.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                let lines = pasted.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                return Array(lines.suffix(shown.count)) == shown
+            case (false, true): return part.count >= Composer.editedRun && whole.hasPrefix(part)
+            default: return part.count >= Composer.editedRun && whole.contains(part)
             }
         }
     }
@@ -326,7 +334,7 @@ public enum Composer {
         let below = rows.last.map { isMoreLines($0, "↓") } ?? false
         if below { rows.removeLast() }
         guard above || below else { return nil }
-        return ShownPart(text: rows.joined(), above: above, below: below)
+        return ShownPart(rows: rows, above: above, below: below)
     }
 
     /// "↑ 6 more lines", "↓ 1 more line": agy's word for rows of its composer it does not show.
