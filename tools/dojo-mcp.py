@@ -22,6 +22,7 @@ the sender from it.
 """
 import datetime
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -111,6 +112,14 @@ class BusError(Exception):
     pass
 
 
+def bus_trouble(port, e):
+    """A failed call in words. An answer that broke off says so: the request was sent, and the bus may have
+    acted on it (a send may have gone out), which "not reachable" would deny."""
+    if isinstance(e, http.client.HTTPException) and not isinstance(e, http.client.InvalidURL):
+        return "bus answer on 127.0.0.1:%s broke off, the request may have been taken: %s" % (port, e)
+    return "bus not reachable on 127.0.0.1:%s: %s" % (port, e)
+
+
 def bus_call(op, payload, timeout=10):
     token = os.environ.get("DOJO_TOKEN", "")
     if not token:
@@ -133,8 +142,10 @@ def bus_call(op, payload, timeout=10):
         except ValueError:
             pass
         raise BusError("bus refused (%d): %s" % (e.code, detail))
-    except (urllib.error.URLError, OSError) as e:
-        raise BusError("bus not reachable on 127.0.0.1:%s: %s" % (port, e))
+    except (urllib.error.URLError, OSError, http.client.HTTPException) as e:
+        # http.client's own errors are neither of the first two: an answer cut short when the app quits
+        # (IncompleteRead), a port that is no number (InvalidURL). D52: they came out as tracebacks.
+        raise BusError(bus_trouble(port, e))
     return json.loads(body.decode("utf-8")) if body else {}
 
 
@@ -170,9 +181,40 @@ def outside_send(pane, text, timeout=10):
         except ValueError:
             pass
         raise BusError("bus refused (%d): %s" % (e.code, detail))
-    except (urllib.error.URLError, OSError) as e:
-        raise BusError("bus not reachable on 127.0.0.1:%d: %s" % (port, e))
+    except (urllib.error.URLError, OSError, http.client.HTTPException) as e:
+        raise BusError(bus_trouble(port, e))
     return json.loads(body.decode("utf-8")) if body else {}
+
+
+# ---------------------------------------------------------------- hook events (D51)
+# A harness sends a tool's whole input and result with PostToolUse and PermissionRequest, and the bus takes a
+# body of at most 1 MiB (HTTP.maxBodyBytes in the app). The bus reads an event's name, session, model, prompt,
+# notification type and transcript path, never the tool's payload: so the size of a file a tool read must not
+# decide whether the pane's state reaches the bus. Before D51 a large event was cut and dropped in silence.
+
+BUS_BODY_LIMIT = 1024 * 1024
+HOOK_READ_LIMIT = 64 << 20  # characters of one event; past this it is dropped, as any event that is not JSON
+HOOK_NEVER_READ = ("tool_input", "tool_response")
+HOOK_STATE_FIELDS = ("hook_event_name", "session_id", "model", "to_model", "notification_type", "harness",
+                     "transcript_path")  # with the prompt, every field the bus reads
+
+
+def hook_payload(event):
+    """What `dojo hook` posts for a harness event: the event without the tool's payload; without the prompt
+    too if it would still be more than the bus takes (the bus then proves nothing by the prompt, as when a
+    harness sends none); and in the last resort the fields that carry the state alone."""
+    if not isinstance(event, dict):
+        return event
+
+    def fits(payload):
+        return len(json.dumps(payload).encode("utf-8")) <= BUS_BODY_LIMIT
+
+    slim = {k: v for k, v in event.items() if k not in HOOK_NEVER_READ}
+    if not fits(slim):
+        slim.pop("prompt", None)
+    if not fits(slim):
+        slim = {k: slim[k] for k in HOOK_STATE_FIELDS if isinstance(slim.get(k), str) and len(slim[k]) < 4096}
+    return slim
 
 
 # ---------------------------------------------------------------- MCP server
@@ -641,14 +683,20 @@ def audit_entries(folder):
 
 def audit_text(entry):
     """One entry as text: time, operation, who to whom, outcome, the other fields, then a send's text."""
+    # D53: a line is shown whatever its fields are; one with a number for its time stopped the whole listing.
     when = entry.get("time", "")
+    if not isinstance(when, str):
+        when = json.dumps(when)
     when = when[:10] + " " + when[11:19] + "Z" if len(when) >= 19 else when
     who = entry.get("from")
     pane = entry.get("pane")
     route = "%s -> %s" % (who, pane) if who and pane else (who or pane or "")
-    rest = ", ".join("%s %s" % (k, ",".join(v) if isinstance(v, list) else json.dumps(v) if isinstance(v, bool) else v)
+    route = route if isinstance(route, str) else json.dumps(route)
+    rest = ", ".join("%s %s" % (k, ",".join(map(str, v)) if isinstance(v, list) else json.dumps(v) if isinstance(v, bool) else v)
                      for k, v in sorted(entry.items()) if k not in AUDIT_SHOWN)
-    line = " ".join(x for x in (when, "%-12s" % entry.get("op", "?"), route, entry.get("outcome", ""),
+    outcome = entry.get("outcome", "")
+    outcome = outcome if isinstance(outcome, str) else json.dumps(outcome)
+    line = " ".join(x for x in (when, "%-12s" % entry.get("op", "?"), route, outcome,
                                 "(%s)" % rest if rest else "") if x)
     text = entry.get("text")
     if isinstance(text, str):
@@ -681,14 +729,15 @@ def audit(argv, out, err, home=None, now=None):
     for entry in entries:
         if kind and entry.get("type") != kind:
             continue
+        senders = entry.get("senders")
         if pane and pane not in (entry.get("from"), entry.get("pane"), entry.get("to")) \
-                and pane not in (entry.get("senders") or []):
+                and pane not in (senders if isinstance(senders, list) else []):
             continue
         if since is not None:
             try:
-                stamp = datetime.datetime.fromisoformat(entry.get("time", "").replace("Z", "+00:00")).timestamp()
-            except ValueError:
-                stamp = None
+                stamp = datetime.datetime.fromisoformat(entry["time"].replace("Z", "+00:00")).timestamp()
+            except (KeyError, AttributeError, ValueError):
+                stamp = None  # no time, or one that is not text: shown, as a line whose time cannot be read was
             if stamp is not None and stamp < since:
                 continue
         out.write(audit_text(entry) + "\n")
@@ -968,7 +1017,7 @@ def agy_hook_cli(stdin, out):
     happens here. Outside a pane, nothing is posted and nothing is injected."""
     reply = {}
     try:
-        event = json.loads(stdin.read(1 << 20) or "{}")
+        event = json.loads(stdin.read(HOOK_READ_LIMIT) or "{}")  # D51: agy sends a tool's result too
         if isinstance(event, dict):
             posted, reply = agy_hook(event, os.environ)
             token = os.environ.get("DOJO_TOKEN")
@@ -1014,8 +1063,8 @@ def cli(argv, out=sys.stdout, err=sys.stderr, stdin=sys.stdin):
         return agy_statusline_cli(stdin, out)
     if cmd == "hook":
         try:
-            event = json.loads(stdin.read(1 << 20) or "{}")
-            bus_call("hook", event, timeout=1)  # the loopback bus answers in milliseconds; Codex allows 3 s
+            event = json.loads(stdin.read(HOOK_READ_LIMIT) or "{}")
+            bus_call("hook", hook_payload(event), timeout=1)  # the loopback bus answers in milliseconds; Codex allows 3 s
         except Exception:
             pass
         return 0
