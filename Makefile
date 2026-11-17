@@ -10,7 +10,7 @@ SIGN := $(shell security find-identity -v -p codesigning 2>/dev/null | grep -q '
 # sandbox cannot start inside Homebrew's.
 SWIFT_BUILD_FLAGS ?=
 
-.PHONY: build test icon app run smoke remote-setup clean cert install
+.PHONY: build test icon app run smoke stage remote-setup clean cert install
 
 build:
 	swift build -c release $(SWIFT_BUILD_FLAGS)
@@ -78,6 +78,18 @@ smoke: app
 	/usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier com.xyntetik.dojo.smoke' $(SMOKE_APP)/Contents/Info.plist
 	codesign --force --sign "$(SIGN)" $(SMOKE_APP)
 	DOJO_SMOKE=1 DOJO_SMOKE_HOST=$(HOST) DOJO_SMOKE_SHOT=$(SHOT) DOJO_SMOKE_SHOT_PICKER=$(PICKER) DOJO_SMOKE_POINTER=$(POINTER) DOJO_SMOKE_SHOT_EMPTY=$(EMPTY) DOJO_SMOKE_SHOT_REOPENED=$(REOPENED) DOJO_PORT=7799 $(SMOKE_APP)/Contents/MacOS/XyntetikDojo
+
+# A visible copy for the README's window pictures, beside an open Dojo (D40): its own bundle identifier, its
+# whole state in ~/.dojo-stage and its bus on port 7798. Its panes run with your own home and logins and the
+# shim already in ~/.dojo, which it reads and never writes: no tool copy, no "dojo install", no Runner tray.
+STAGE_APP := build/stage/XyntetikDojo.app
+stage: app
+	rm -rf build/stage
+	mkdir -p build/stage
+	cp -R $(APP) $(STAGE_APP)
+	/usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier com.xyntetik.dojo.stage' $(STAGE_APP)/Contents/Info.plist
+	codesign --force --sign "$(SIGN)" $(STAGE_APP)
+	DOJO_STAGE=1 DOJO_PORT=7798 $(STAGE_APP)/Contents/MacOS/XyntetikDojo
 
 # Install the shim and the pi extension on a remote host (POSIX or Windows): make remote-setup HOST=user@box
 remote-setup:

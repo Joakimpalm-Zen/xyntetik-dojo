@@ -92,7 +92,7 @@ find_runner() {
     latest=$(latest_tag || true)
     # A runner of yours on PATH is used as it is. One inside ~/.dojo/bin is not yours: it is a stop-gap
     # copy and would shadow every release, so it is removed and the release is used.
-    if [ -x "$HOME/.dojo/bin/runner" ]; then
+    if [ "$home" = "$HOME/.dojo/runner" ] && [ -x "$HOME/.dojo/bin/runner" ]; then   # not from a staging copy (D40)
         note "Removing the stop-gap runner in ~/.dojo/bin; releases are followed from here on."
         rm -f "$HOME/.dojo/bin/runner"
     fi

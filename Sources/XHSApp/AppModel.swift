@@ -26,7 +26,10 @@ final class AppModel: NSObject, ObservableObject {
         /// Isolated unit-test instance: never touches `~/.dojo`, never installs tools, never binds a listener.
         case test
         /// D40, `make stage` (DOJO_STAGE=1): a visible copy for the README's pictures, beside an open Dojo. The
-        /// bus server and the timer run as in the app, on a state root and a port of its own.
+        /// bus server, the timer and notifications run as in the app, on a state root and a port of its own.
+        /// Nothing of the owner's moves: no tool copy into ~/.dojo, no "dojo install" (so no Codex entries and
+        /// no agy plugin), and a Runner pane keeps its files under this root and raises no tray. Its panes run
+        /// with the owner's own home and logins, and the shim already in ~/.dojo, read only.
         case stage
     }
 
@@ -151,7 +154,7 @@ final class AppModel: NSObject, ObservableObject {
         super.init()
         if let wanted, wanted != port { problem = "DOJO_PORT is \(wanted); a port is 1 to 65535. Using \(port)." }
         // The tools (and the move from ~/.xhs) come first, so the recent lists are read from the right folder.
-        if policy != .test, !smoke, let trouble = tools.copy() {
+        if policy == .app, !smoke, let trouble = tools.copy() {
             problem = trouble
         }
         recentHosts = RecentHosts.load(state.hostsFile)
@@ -173,7 +176,7 @@ final class AppModel: NSObject, ObservableObject {
         guard policy != .test else { return }
         startServer()
         // "dojo install" once the bus is up, off the main thread (D39)
-        if !smoke {
+        if policy == .app, !smoke {
             tools.install { [weak self] trouble in
                 MainActor.assumeIsolated {
                     if let trouble { self?.problem = trouble }
@@ -278,7 +281,7 @@ final class AppModel: NSObject, ObservableObject {
     /// Starts listening for clicks on notifications, also those from before a relaunch, and records what
     /// macOS allows the app (D23).
     func startNotifying() {
-        guard policy == .app else { return }
+        guard policy != .test else { return }
         _ = notifier
     }
 
@@ -483,7 +486,8 @@ final class AppModel: NSObject, ObservableObject {
         start(view, Launcher.plan(kind: kind, paneName: view.paneName, host: host.isEmpty ? nil : host, port: port,
                                   token: token, runnerModel: model, loginShell: loginShell, remoteShell: remoteShell,
                                   directory: directory, unrestricted: unrestricted, remotePort: remotePort, session: session,
-                                  runnerForward: runnerForward, runnerURL: piRunnerURL, msysBash: msysBash))
+                                  runnerForward: runnerForward, runnerURL: piRunnerURL, msysBash: msysBash,
+                                  runnerHome: state.runnerHome.path, runnerTray: policy != .stage))
     }
 
     private func start(_ view: TerminalPane, _ plan: LaunchPlan) {

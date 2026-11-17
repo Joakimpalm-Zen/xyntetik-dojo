@@ -224,7 +224,10 @@ make cert    # once: a self-signed certificate so macOS privacy remembers its an
 make smoke   # launch proof, off screen: two panes, swapped, a click, typed keys echoed back, the bus answering; exit 0
 make smoke HOST=user@box   # the same, with the pane on that host over ssh
 make smoke SHOT=window.png PICKER=picker.png EMPTY=empty.png REOPENED=reopened.png   # the same, plus pictures of the window, the picker and the empty window to check the look
+make stage   # a visible copy for pictures, beside an open Dojo; see below
 ```
+
+`make stage` is for the README's window pictures, made from a real window that is not your working one. It builds a copy with its own bundle identifier (`com.xyntetik.dojo.stage`) and opens it as an ordinary window, empty, with nothing reopened. The make target alone sets its switch, `DOJO_STAGE=1`. The copy keeps its whole state (pane list, live file, record, outside switch, hosts and folders) in `~/.dojo-stage`, out of the folder every reader of `~/.dojo` takes for your Dojo, and runs its bus on port 7798. Unlike a smoke it contains nothing: its panes run with your own home and logins, and use the shim and pi extension already in `~/.dojo`, which it reads and never writes. It does not copy the tools there, runs no `dojo install` (so no Codex entries and no agy plugin change), and a Runner pane keeps its files in `~/.dojo-stage/runner` and raises no tray. A Runner pane still serves on port 8080, so open one only while your own Dojo has none. `dojo audit` in a staging pane reads your own record in `~/.dojo/audit`, read only.
 
 The version is the number in `packaging/Info.plist`, and a release is the tag `v<that number>`. The Homebrew formula (`brew install joakimpalm-zen/xyntetik/xyntetik-dojo`, in the [tap](https://github.com/Joakimpalm-Zen/homebrew-xyntetik)) builds that tag's source with `make app SWIFT_BUILD_FLAGS=--disable-sandbox SIGN=-`, and its test fails when the tag and the number in the app differ.
 

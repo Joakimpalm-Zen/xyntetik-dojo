@@ -97,3 +97,25 @@ import Testing
         #expect(SavedPanes.load(rootB.appendingPathComponent("panes.json")).map(\.name) == ["only-b"])
     }
 }
+
+/// D40: a Runner pane on this Mac is told where the app keeps its Runner files, and a staging copy's raises no
+/// tray. A Runner pane on a host keeps its own rules.
+@Suite struct D40RunnerPaneTests {
+    private func plan(_ host: String?, tray: Bool) -> LaunchPlan {
+        Launcher.plan(kind: .runner, paneName: "runner", host: host, port: 7798, token: "t", runnerModel: nil,
+                      loginShell: "/bin/zsh", remotePort: 7801, runnerHome: "/stage/.dojo-stage/runner", runnerTray: tray)
+    }
+
+    @Test func aLocalRunnerPaneIsToldItsHomeAndAStagingOneRaisesNoTray() {
+        #expect(plan(nil, tray: false).environment["DOJO_RUNNER_HOME"] == "/stage/.dojo-stage/runner")
+        #expect(plan(nil, tray: false).environment["DOJO_RUNNER_TRAY"] == "off")
+        #expect(plan(nil, tray: true).environment["DOJO_RUNNER_TRAY"] == nil)
+        #expect(plan(nil, tray: true).environment["DOJO_RUNNER_HOME"] == "/stage/.dojo-stage/runner")
+    }
+
+    @Test func aRemoteRunnerPaneKeepsItsOwnRules() {
+        let remote = plan("user@box", tray: true)
+        #expect(remote.environment["DOJO_RUNNER_HOME"] == nil)
+        #expect(remote.environment["DOJO_RUNNER_TRAY"] == "off")
+    }
+}
