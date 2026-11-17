@@ -243,6 +243,20 @@ public enum Composer {
             guard !shown.isEmpty, wrappedRows(pasted, width: innerWidth) > shown.count,
                   ShownPart(rows: shown, above: true, below: false).isPart(of: pasted) else { return nil }
             (at, first) = (top + 1, shown[0])
+        } else if kind == .claude, afterPaste, let pasted, marked == nil,
+                  let closing = foot.indices.last(where: { isRuledLine(foot[$0].text) }),
+                  let start = foot[..<closing].firstIndex(where: { !$0.text.isEmpty }),
+                  !foot[..<closing].contains(where: { isRuledLine($0.text) || isCappedRule($0.text, "↓") }),
+                  closing + 1 < foot.count {
+            // Shape 3 (primary screen): the top ruled line and the composer's `❯` row scrolled above
+            // the viewport, leaving indented continuation rows down to `closing` and the footer below it.
+            let body = foot[start..<closing]
+            guard body.allSatisfy({ $0.text.isEmpty || ($0.setIn && !startsWithBoxDrawing($0.text) && !isNumberedChoice($0.text)) })
+            else { return nil }
+            let shown = body.map(\.text)
+            guard bare(shown.joined()).count >= editedRun,
+                  ShownPart(rows: shown, above: true, below: false).isPart(of: pasted) else { return nil }
+            (at, first, end, block) = (start, shown[0], closing + 1, closing)
         } else {
             guard let row = marked, let text = afterMark(row), !isNumberedChoice(text) else { return nil }
             at = row
@@ -255,7 +269,9 @@ public enum Composer {
             }
             switch kind {
             case .claude, .agy:
-                guard at > 0, isRuledLine(foot[at - 1].text),
+                // Primary-screen pastes tall enough to scroll the top ruled line off row 0 leave `❯` at `at == 0`.
+                let topScrolledOff = kind == .claude && afterPaste && pasted != nil && at == 0
+                guard topScrolledOff || (at > 0 && isRuledLine(foot[at - 1].text)),
                       let closing = foot.indices.first(where: { $0 > at && isRuledLine(foot[$0].text) }) else { return nil }
                 if afterPaste {
                     guard arrived(rows(to: closing)) else { return nil }
