@@ -222,15 +222,27 @@ public enum Composer {
            let top = foot.indices.last(where: { isCappedRule(foot[$0].text, "↑") }), top > (marked ?? -1) {
             // D41: Claude Code caps its composer's height. Its top ruled line says how many rows are above
             // ("─── ↑ 3 more ───"), the row with the mark is among them, and what shows is the end of the
-            // text, set in, over the closing ruled line. What shows is the end of the paste, in its place, as
-            // with agy's. Not read: a composer scrolled inside, with rows below what shows too. The bus's
-            // paste leaves the cursor at its end, so only the owner scrolls it; the Enter then waits, as before.
-            guard let closing = foot.indices.first(where: { $0 > top && isRuledLine(foot[$0].text) }) else { return nil }
-            let shown = foot[(top + 1)..<closing].map(\.text)
+            // text, set in, over the closing ruled line. At 10 rows tall (D43) the closing ruled line and
+            // footer can be clipped below the viewport; accept when every remaining row down to the bottom
+            // is indented composer body and matches the exact end of `pasted`.
+            let closing = foot.indices.first(where: { $0 > top && isRuledLine(foot[$0].text) })
+            let tailEnd: Int
+            if let closing {
+                tailEnd = closing
+                (end, block) = (closing + 1, closing)
+            } else {
+                let body = foot[(top + 1)...]
+                guard !body.isEmpty,
+                      body.allSatisfy({ $0.setIn && !startsWithBoxDrawing($0.text) && !isNumberedChoice($0.text) })
+                else { return nil }
+                tailEnd = foot.count
+                (end, block) = (foot.count, foot.count)
+            }
+            let shown = foot[(top + 1)..<tailEnd].map(\.text)
             let innerWidth = max(foot[top].text.count - 4, shown.map(\.count).max() ?? 1)
             guard !shown.isEmpty, wrappedRows(pasted, width: innerWidth) > shown.count,
                   ShownPart(rows: shown, above: true, below: false).isPart(of: pasted) else { return nil }
-            (at, first, end, block) = (top + 1, shown[0], closing + 1, closing)
+            (at, first) = (top + 1, shown[0])
         } else {
             guard let row = marked, let text = afterMark(row), !isNumberedChoice(text) else { return nil }
             at = row
