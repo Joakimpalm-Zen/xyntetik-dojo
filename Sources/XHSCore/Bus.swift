@@ -884,7 +884,11 @@ public final class Bus {
             // By the live screen, whose rows end at the pane's width (D37). The pane's whole text also gives
             // back what a wider pane once had beyond its right edge: words after the mark there made an
             // empty composer read as a draft, and the hold lasted until the owner next sent something.
-            guard Composer.shownEmpty(kind: p.kind, screen: io.liveScreen().lines.joined(separator: "\n")) else { return }
+            // Only in the buffer the harness draws itself in: a pager or an editor in the other one shows no
+            // composer of the harness's, whatever its rows look like (D39).
+            let screen = io.liveScreen()
+            if let home = p.harnessBuffer, let alternate = screen.alternate, alternate != home { return }
+            guard Composer.shownEmpty(kind: p.kind, screen: screen.lines.joined(separator: "\n")) else { return }
             p.hasDraft = false
             p.typedSinceSubmit = false
         }

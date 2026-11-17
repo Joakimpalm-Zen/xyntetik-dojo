@@ -426,24 +426,41 @@ public enum Composer {
         row.unicodeScalars.first.map { (0x2500...0x257F).contains($0.value) } ?? false
     }
 
+    /// Whether the screen shows the harness's composer empty: its row, with the mark in the first column,
+    /// empty or showing the harness's own placeholder, in the composer's own frame. Claude Code's and agy's
+    /// stands between two ruled lines: a draft that goes on in the next row has no ruled line there. Codex's
+    /// stands after an empty row, and under it come an empty row and the footer, one block of rows: text
+    /// after a second empty row is the draft's (D39, an outside read: a draft that starts with new lines read
+    /// as empty, and so did a row set in that starts with a mark, such as a pager's "  >").
     public static func shownEmpty(kind: HarnessKind, screen: String) -> Bool {
         guard let rule = rule(for: kind) else { return false }
         let blank = CharacterSet.whitespaces.union(CharacterSet(charactersIn: "\u{a0}"))
-        var rows = screen.components(separatedBy: "\n").map { $0.trimmingCharacters(in: blank.union(.newlines)) }
-        while rows.last?.isEmpty == true { rows.removeLast() }
-        let foot = Array(rows.suffix(footRows))
+        var lines = screen.components(separatedBy: "\n")
+        while let last = lines.last, last.trimmingCharacters(in: blank.union(.newlines)).isEmpty { lines.removeLast() }
+        let foot: [(text: String, setIn: Bool)] = lines.suffix(footRows).map { line in
+            (line.trimmingCharacters(in: blank.union(.newlines)), line.unicodeScalars.first.map(blank.contains) ?? false)
+        }
         // The lowest one: past prompts in the transcript above can start with the same mark.
-        guard let at = foot.lastIndex(where: { row in rule.marks.contains { row.hasPrefix($0) } }),
-              let mark = rule.marks.first(where: { foot[at].hasPrefix($0) }) else { return false }
-        let rest = String(foot[at].dropFirst(mark.count)).trimmingCharacters(in: blank)
+        guard let at = foot.indices.last(where: { i in !foot[i].setIn && rule.marks.contains { foot[i].text.hasPrefix($0) } }),
+              let mark = rule.marks.first(where: { foot[at].text.hasPrefix($0) }) else { return false }
+        let rest = String(foot[at].text.dropFirst(mark.count)).trimmingCharacters(in: blank)
         // Codex draws a hint at the right edge of the same row when a usage limit is near ("4 on 17 Nov ·
         // /status"). A placeholder is only drawn in an empty composer, so one followed by the harness's own
         // padding is still empty; a single space and more words is the owner's text.
         let padded = rule.hintAfterPlaceholder && rule.placeholders.contains { rest.hasPrefix($0 + "  ") }
         guard rest.isEmpty || rule.placeholders.contains(rest) || padded else { return false }
-        // A draft that goes on in the next row is not empty, however its first row looks.
-        guard at + 1 < foot.count else { return true }
-        let next = foot[at + 1]
-        return next.isEmpty || next.unicodeScalars.allSatisfy { (0x2500...0x257F).contains($0.value) || blank.contains($0) }
+        switch kind {
+        case .claude, .agy:
+            return at > 0 && isRuledLine(foot[at - 1].text) && at + 1 < foot.count && isRuledLine(foot[at + 1].text)
+        case .codex:
+            guard at == 0 || foot[at - 1].text.isEmpty else { return false }
+            guard at + 1 < foot.count else { return true }
+            guard foot[at + 1].text.isEmpty else { return false }
+            let under = foot[(at + 1)...].map(\.text)
+            guard let first = under.firstIndex(where: { !$0.isEmpty }) else { return true }
+            return !under[first...].contains(where: \.isEmpty)
+        case .pi, .runner, .shell:
+            return false
+        }
     }
 }

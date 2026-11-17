@@ -13,7 +13,9 @@ import XHSCore
         pane.resize(cols: 141, rows: 8)
         // a harness in the alternate buffer, as Claude Code is: its composer, and a hint at the right edge of
         // the same row
-        pane.show(Array("\u{1b}[?1049h\u{1b}[3;1H❯\u{a0}\u{1b}[3;121Hnew message (click) ↓".utf8))
+        // between its ruled lines, as Claude Code draws it (an empty composer is read in its frame, D39)
+        let rule = String(repeating: "─", count: 120)
+        pane.show(Array("\u{1b}[?1049h\u{1b}[2;1H\(rule)\u{1b}[3;1H❯\u{a0}\u{1b}[3;121Hnew message (click) ↓\u{1b}[4;1H\(rule)".utf8))
         pane.resize(cols: 129, rows: 8)
         // the harness draws its composer again for the new width, and clears to the end of the row
         pane.show(Array("\u{1b}[3;1H❯\u{a0}\u{1b}[K".utf8))
