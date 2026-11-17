@@ -1113,6 +1113,31 @@ public final class Bus {
         if p.ownerEnterAfterPaste, ownersEnterSettledIt(p, io) { return }
         guard p.state == .idle || p.state == .running, !p.hasDraft else { return }
         if let last = p.lastOwnerInput, now().timeIntervalSince(last) < ownerQuietInterval { return }
+        // What is left of the paste (D39, an outside read): keys that add no text, Backspace or Escape, take
+        // it out of the composer, or part of it, and the owner's own Enter is not the only way it goes. Gone,
+        // there is nothing to press Enter on, and an Enter owed for it held every later message for good;
+        // edited, it is the owner's draft now. Read as after the owner's Enter, and only where the owner's keys
+        // came after the paste: without them an empty composer is one the harness has not drawn the text in yet.
+        if Composer.rule(for: p.kind) != nil, let keys = p.lastOwnerInput, let pasted = p.pastedAt, keys > pasted {
+            switch ownersEnter(p, io) {
+            case .sentIt:
+                p.enterOwed = false
+                nothingWaits(p)
+                note(["op": "enter", "pane": p.name, "outcome": "dropped", "why": "the composer no longer holds the paste"])
+                onChange?()
+                return
+            case .leftADraft:
+                p.enterOwed = false
+                nothingWaits(p)
+                p.hasDraft = true
+                p.typedSinceSubmit = true
+                note(["op": "enter", "pane": p.name, "outcome": "dropped", "why": "the owner edited the paste"])
+                onChange?()
+                return
+            case .unknown:
+                break
+            }
+        }
         guard composerShown(p, io, afterPaste: true, record: false) || footerSettled(p, io) else { return }
         let unproven = p.ownerEnterAfterPaste
         p.enterOwed = false

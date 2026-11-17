@@ -101,6 +101,21 @@ import Testing
         rig.wait(30)
         rig.fire()
         #expect(rig.io.typed.contains("[from: fable] hello"), "\(rig.io.typed.debugDescription)")
+        #expect(rig.recorded("enter").contains { $0["why"] as? String == "the composer no longer holds the paste" })
+        // erased in part: the rest is the owner's draft now, held as one, and no Enter goes onto it
+        let edited = Rig(kind: .claude, submitDelay: 0.15)
+        edited.io.screen = Self.claude("❯\u{a0}")
+        edited.send("hello there friend")
+        edited.clock += 0.05
+        for _ in 0..<3 { edited.bus.noteOwnerInput("worker", .other) }
+        edited.io.screen = Self.claude("❯\u{a0}[from: fable] hello there fri")
+        edited.fire()
+        edited.send("later")
+        edited.wait(30)
+        edited.fire()
+        #expect(edited.enters == 0)
+        #expect(!edited.io.typed.contains("later"))
+        #expect(edited.bus.info("worker")?.draft == true)
     }
 
     // MARK: P2 D/E. The state the bus sets when it types
