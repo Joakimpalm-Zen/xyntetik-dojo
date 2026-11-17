@@ -278,6 +278,8 @@ public final class Bus {
     public func remove(_ name: String) {
         let gone = pane(named: name)
         if gone != nil { note(["op": "close", "pane": name]) }
+        // a queue elsewhere can still hold it as a sender: it is no pane to type into any more
+        gone?.state = .exited
         panes.removeAll { $0.name == name }
         for p in panes { p.watchers.removeAll { $0.asker === gone } }
         if let gone { for p in panes { p.mayRead.removeAll { $0 == ObjectIdentifier(gone) } } }
@@ -930,7 +932,8 @@ public final class Bus {
             p.enterPending = true
             let pasted = now()
             schedule(submitDelay) { [weak self, weak p, weak io] in
-                guard let self, let p else { return }
+                // a pane closed meanwhile gets nothing more, and the record says nothing of it after its close (D39)
+                guard let self, let p, self.panes.contains(where: { $0 === p }) else { return }
                 p.enterPending = false
                 let cancelled = p.enterCancelled
                 p.enterCancelled = false
