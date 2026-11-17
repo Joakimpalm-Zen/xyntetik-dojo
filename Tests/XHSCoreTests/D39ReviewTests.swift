@@ -189,6 +189,32 @@ import Testing
         }
     }
 
+    // MARK: the second read of #116
+
+    /// A message that comes during another's submit delay: M2 was written into the pane right behind M1's
+    /// Enter, looked at against the screen from before the harness had taken that Enter. It waits for a look
+    /// of the screen after it: a dialog the Enter opened holds it, and an emptied composer takes it.
+    @Test func aMessageWaitsForTheScreenAfterTheEnterBeforeIt() {
+        let rig = Rig(kind: .claude, submitDelay: 0.15)
+        rig.io.screen = Self.claude("❯\u{a0}")
+        rig.send("first")
+        rig.send("second")
+        rig.io.screen = Self.claude("❯\u{a0}[from: fable] first")
+        rig.fire()
+        #expect(rig.enters == 1)
+        #expect(!rig.io.typed.contains("second"), "written in the same turn as the first's Enter: \(rig.io.typed.debugDescription)")
+        rig.io.screen = ComposerShownTests.claudePermission(cursorOn: 1)
+        rig.wait(3)
+        rig.fire()
+        #expect(!rig.io.typed.contains("second"), "typed into the dialog the Enter opened")
+        rig.io.screen = Self.claude("❯\u{a0}")
+        rig.wait(2)
+        #expect(rig.io.typed.hasSuffix("[from: fable] second"), "\(rig.io.typed.debugDescription)")
+        rig.io.screen = Self.claude("❯\u{a0}[from: fable] second")
+        rig.fire()
+        #expect(rig.enters == 2)
+    }
+
     // MARK: D41. A message taller than Claude Code's composer
 
     /// Live on 2026-11-17: a 279-character message sat in a Claude pane's composer, its Enter owed ("no
