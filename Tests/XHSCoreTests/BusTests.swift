@@ -300,7 +300,9 @@ import Testing
         for _ in 15...19 { clock = clock.addingTimeInterval(1); bus.tick() }
         #expect(bus.info("codex-1")?.state == .running)
         clock = clock.addingTimeInterval(1); bus.tick()
-        #expect(bus.info("codex-1")?.state == .idle || bus.info("codex-1")?.state == .running)
+        // second 20: the screen has been still for 15 seconds since its last change at second 5 (D39: this
+        // took either state, so a rule a second later or sooner passed it)
+        #expect(bus.info("codex-1")?.state == .idle)
         clock = clock.addingTimeInterval(1); bus.tick()
         #expect(targetIO.typed.contains("[from: claude-1] hi"))
         #expect(bus.info("codex-1")?.queued == 0)

@@ -26,14 +26,18 @@ import Testing
     }
     @Test func enterThatOnlyAcceptsACompletionDoesNotSilentlyLoseSubmission() {
         let r=Rig(kind:.claude,submitDelay:0.15)
+        // the composer, with the footer it keeps (D39: the mock's own had another, and the Enter was owed for it)
+        r.io.screen=ComposerShownTests.claude("❯")
         r.send("status?")
         r.clock += 0.05
         r.bus.noteOwnerInput("worker",.submit)
         // Enter accepted a completion. No submit hook and no cleared row.
         r.io.screen=ComposerShownTests.claude("❯ [from: fable] status?")
         r.fire();r.wait(5)
-        #expect(r.enters == 1 || r.bus.info("worker")?.noComposer == true,
-                "the still-unsent message needs its Enter or a visible hold")
+        // the composer still holds the bus's text, which is the bus's to send: its Enter goes out once the owner
+        // is quiet (D39: this took either outcome, though the bus does one)
+        #expect(r.enters == 1, "the still-unsent message gets its Enter")
+        #expect(r.bus.info("worker")?.noComposer == false)
         #expect(r.bus.info("worker")?.queued == 0)
         r.send("second")
         #expect(!r.io.typed.contains("second"),
