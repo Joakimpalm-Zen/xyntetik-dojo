@@ -355,8 +355,8 @@ import Testing
         // Case B (P1): observed A + Enter -> visible (!headHidden) short bus paste -> B + Tab + Enter -> delayed A hook.
         let vis = Self.makeRig(cols: fx.cols, rows: fx.rows)
         let rule = String(repeating: "─", count: fx.cols)
-        let shortBefore = Data("\u{1b}[2J\u{1b}[H\(rule)\r\n❯\u{a0}\r\n\(rule)\r\n  Usage: 5h n/a\r\n".utf8)
-        let shortAfter = Data("\u{1b}[2J\u{1b}[H\(rule)\r\n❯\u{a0}[from: probe] short ok\r\n\(rule)\r\n  Usage: 5h n/a\r\n".utf8)
+        let shortBefore = Data("\u{1b}[?1049h\u{1b}[2J\u{1b}[H\(rule)\r\n❯\u{a0}\r\n\(rule)\r\n  Usage: 5h n/a\r\n".utf8)
+        let shortAfter = Data("\u{1b}[?1049h\u{1b}[2J\u{1b}[H\(rule)\r\n❯\u{a0}[from: probe] short ok\r\n\(rule)\r\n  Usage: 5h n/a\r\n".utf8)
         vis.io.showBytes(shortBefore)
         vis.bus.setState("worker", .running)
         vis.bus.noteOwnerInput("worker", bytes: Array("earlier A".utf8)[...])

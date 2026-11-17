@@ -151,6 +151,8 @@ public final class Bus {
         var ownerDraftExact = true
         /// Pending owner Enter presses paired against future `UserPromptSubmit` hooks (`nil` when draft text is unknown).
         var ownerSubmits: [String?] = []
+        /// Known-text owner submits still in flight across a draft clear (Ctrl-C or visible `!headHidden` bus paste).
+        var priorExactSubmits: [String] = []
         /// Pastes the bus submitted by Enter and has not yet matched to a `UserPromptSubmit` hook.
         var busPastes: [String] = []
         /// An Enter is held because `ownerTypedUnproven` is true while the composer's head is hidden above.
@@ -440,7 +442,7 @@ public final class Bus {
         case .clear:
             p.hasDraft = false
             p.typedSinceSubmit = false
-            clearOwnerTypedUnproven(p)
+            clearOwnerTypedUnproven(p, preserveInFlight: true)
             p.ownerDraftText = ""
             p.ownerDraftExact = true
         case .submit:
@@ -494,29 +496,60 @@ public final class Bus {
         }
     }
 
-    private func clearOwnerTypedUnproven(_ p: Pane) {
+    private func clearOwnerTypedUnproven(_ p: Pane, preserveInFlight: Bool = false) {
+        if preserveInFlight {
+            for entry in p.ownerSubmits {
+                if let text = entry {
+                    if p.priorExactSubmits.count >= 32 { p.priorExactSubmits.removeFirst() }
+                    p.priorExactSubmits.append(text)
+                }
+            }
+        } else {
+            p.priorExactSubmits.removeAll()
+        }
         p.ownerTypedUnproven = false
         p.ownerSubmitted = false
         p.ownerSubmits.removeAll()
     }
 
-    private func shouldClearOwnerTypedUnproven(_ p: Pane, prompt: String?) -> Bool {
-        guard !p.ownerSubmits.isEmpty else { return true }
+    private static func normalizedSubmittedText(_ text: String) -> String {
+        text.replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .trimmingCharacters(in: .newlines)
+    }
+
+    private static func sameSubmittedText(_ a: String, _ b: String) -> Bool {
+        normalizedSubmittedText(a) == normalizedSubmittedText(b)
+    }
+
+    /// Updates pending owner submit records when a non-bus `UserPromptSubmit` / `UserInputSubmitted` hook arrives.
+    /// Returns `true` only when `ownerTypedUnproven` may safely clear (`allowClearLast` must also hold).
+    private func retirePendingOwnerSubmit(_ p: Pane, prompt: String?, allowClearLast: Bool) -> Bool {
+        if let prompt, !prompt.isEmpty,
+           let priorIdx = p.priorExactSubmits.firstIndex(where: { Bus.sameSubmittedText($0, prompt) }) {
+            p.priorExactSubmits.remove(at: priorIdx)
+            return false
+        }
+        guard !p.ownerSubmits.isEmpty else { return allowClearLast }
         if let prompt, !prompt.isEmpty {
-            if let match = p.ownerSubmits.lastIndex(where: { entry in
+            if let idx = p.ownerSubmits.firstIndex(where: { entry in
                 guard let entry else { return false }
-                return Composer.sameText(entry, prompt)
+                return Bus.sameSubmittedText(entry, prompt)
             }) {
-                if match == p.ownerSubmits.count - 1 { return true }
-                p.ownerSubmits.remove(at: match)
+                if idx == p.ownerSubmits.count - 1 {
+                    if allowClearLast { return true }
+                    p.ownerSubmits.remove(at: idx)
+                    return false
+                }
+                p.ownerSubmits.remove(at: idx)
                 return false
             }
-            if let latest = p.ownerSubmits.last ?? nil, !Composer.sameText(latest, prompt) {
+            if let latest = p.ownerSubmits.last ?? nil, !Bus.sameSubmittedText(latest, prompt) {
                 return false
             }
         }
         p.ownerSubmits.removeFirst()
-        return p.ownerSubmits.isEmpty
+        return allowClearLast && p.ownerSubmits.isEmpty
     }
 
     /// Delivers what can be delivered now and notices turns that ended without a Stop hook.
@@ -969,16 +1002,21 @@ public final class Bus {
                 pane.busPastes.remove(at: idx)
                 matchedBusPaste = true
             }
-            if !matchedBusPaste, !pane.typedSinceSubmit, !pane.enterPending, !pane.enterOwed,
-               composerTookTheDraft(pane, prompt: prompt) {
-                let wasDraft = pane.hasDraft
-                pane.hasDraft = false
-                if pane.ownerSubmitted && (prompt != nil || pane.kind == .pi || pane.busPastes.isEmpty) {
-                    if self.shouldClearOwnerTypedUnproven(pane, prompt: prompt) {
-                        self.clearOwnerTypedUnproven(pane)
+            if !matchedBusPaste {
+                let canApplyPrompt = (prompt != nil || pane.kind == .pi || pane.busPastes.isEmpty)
+                let eligibleToClearDraft = !pane.typedSinceSubmit && !pane.enterPending && !pane.enterOwed &&
+                    composerTookTheDraft(pane, prompt: prompt)
+                let retiredAll = canApplyPrompt
+                    ? retirePendingOwnerSubmit(pane, prompt: prompt, allowClearLast: eligibleToClearDraft && pane.ownerSubmitted)
+                    : false
+                if eligibleToClearDraft {
+                    let wasDraft = pane.hasDraft
+                    pane.hasDraft = false
+                    if pane.ownerSubmitted && retiredAll {
+                        clearOwnerTypedUnproven(pane, preserveInFlight: false)
                     }
+                    if wasDraft { onChange?() }
                 }
-                if wasDraft { onChange?() }
             }
         }
         // A submission the hook names: evidence for the owner's Enter only when it carries the text the bus
@@ -993,7 +1031,12 @@ public final class Bus {
         // terminal shows now is the harness's own, if a composer is on the screen: a hook can come late, while
         // an editor shows. Not at SessionStart, which a harness may report before it has drawn itself: a new
         // session only forgets what the one before it showed.
-        if event["hook_event_name"] as? String == "SessionStart" { pane.harnessBuffer = nil }
+        if event["hook_event_name"] as? String == "SessionStart" {
+            pane.harnessBuffer = nil
+            pane.ownerSubmits.removeAll()
+            pane.priorExactSubmits.removeAll()
+            pane.ownerSubmitted = false
+        }
         if let name = event["hook_event_name"] as? String, name != "SessionStart",
            name == "UserPromptSubmit" || HookMapping.next(event: name, notificationType: event["notification_type"] as? String, current: pane.state) == .idle,
            let screen = pane.io?.liveScreen(), let alternate = screen.alternate,
@@ -1113,7 +1156,7 @@ public final class Bus {
                         self.recordBusPaste(p, p.pasted)
                         io.write(Delivery.enter)
                         if !headHidden {
-                            self.clearOwnerTypedUnproven(p)
+                            self.clearOwnerTypedUnproven(p, preserveInFlight: true)
                         }
                         self.nothingWaits(p)
                         self.note(["op": "enter", "pane": p.name, "outcome": "sent"])
@@ -1286,7 +1329,7 @@ public final class Bus {
         p.enterOwed = false
         if did == .sentIt {
             recordBusPaste(p, p.pasted)
-            clearOwnerTypedUnproven(p)
+            clearOwnerTypedUnproven(p, preserveInFlight: true)
         }
         nothingWaits(p)
         if did == .leftADraft {
@@ -1355,7 +1398,7 @@ public final class Bus {
             switch ownersEnter(p, io) {
             case .sentIt:
                 p.enterOwed = false
-                clearOwnerTypedUnproven(p)
+                clearOwnerTypedUnproven(p, preserveInFlight: true)
                 nothingWaits(p)
                 note(["op": "enter", "pane": p.name, "outcome": "dropped", "why": "the composer no longer holds the paste"])
                 onChange?()
@@ -1402,7 +1445,7 @@ public final class Bus {
             recordBusPaste(p, p.pasted)
             io.write(Delivery.enter)
             if !headHidden && !unproven {
-                clearOwnerTypedUnproven(p)
+                clearOwnerTypedUnproven(p, preserveInFlight: true)
             }
             nothingWaits(p)
             if unproven {
