@@ -480,7 +480,7 @@ public enum Launcher {
             DispatchQueue.global().async {
                 let data = child.output.readDataToEndOfFile()
                 answer.give(String(decoding: data, as: UTF8.self).contains(flag))
-                child.reap()
+                child.outputEnded()
             }
             DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
                 child.stop()
@@ -500,8 +500,11 @@ public enum Launcher {
         let output: FileHandle
         private let lock = NSLock()
         private var reaped = false
+        /// For a test: called with the pid once the program has ended, before it is reaped.
+        private let onExit: (@Sendable (pid_t) -> Void)?
 
-        init?(_ executable: String, _ arguments: [String]) {
+        init?(_ executable: String, _ arguments: [String], onExit: (@Sendable (pid_t) -> Void)? = nil) {
+            self.onExit = onExit
             var fds: [Int32] = [0, 0]
             guard pipe(&fds) == 0 else { return nil }
             var actions: posix_spawn_file_actions_t?
@@ -532,9 +535,10 @@ public enum Launcher {
         }
 
         /// Waits for the program to end, once its output has.
-        func reap() {
+        func outputEnded() {
             var status: Int32 = 0
             waitpid(pid, &status, 0)
+            onExit?(pid)
             lock.lock()
             reaped = true
             lock.unlock()
