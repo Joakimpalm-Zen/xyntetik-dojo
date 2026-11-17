@@ -22,23 +22,25 @@ public struct HTTPRequest: Equatable, Sendable {
         guard let end = data.range(of: Data("\r\n\r\n".utf8)) else {
             return data.count > maxHeaderBytes ? .invalid : .incomplete
         }
+        guard data.distance(from: data.startIndex, to: end.upperBound) <= maxHeaderBytes else { return .invalid }
         guard let head = String(data: data[data.startIndex..<end.lowerBound], encoding: .utf8) else { return .invalid }
         var lines = head.components(separatedBy: "\r\n")
         let start = lines.removeFirst().split(separator: " ")
         guard start.count == 3, start[2].hasPrefix("HTTP/1.") else { return .invalid }
         var headers: [String: String] = [:]
+        var bodyLength: Int?
         for line in lines {
             guard let colon = line.firstIndex(of: ":") else { return .invalid }
-            headers[line[..<colon].trimmingCharacters(in: .whitespaces).lowercased()] =
-                line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+            let name = line[..<colon].trimmingCharacters(in: .whitespaces).lowercased()
+            let value = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+            if name == "content-length" {
+                guard let n = Int(value), n >= 0, n <= maxBodyBytes,
+                      bodyLength == nil || bodyLength == n else { return .invalid }
+                bodyLength = n
+            }
+            headers[name] = value
         }
-        let length: Int
-        if let value = headers["content-length"] {
-            guard let n = Int(value), n >= 0, n <= maxBodyBytes else { return .invalid }
-            length = n
-        } else {
-            length = 0
-        }
+        let length = bodyLength ?? 0
         let bodyStart = end.upperBound
         guard data.distance(from: bodyStart, to: data.endIndex) >= length else { return .incomplete }
         let body = data[bodyStart..<data.index(bodyStart, offsetBy: length)]
