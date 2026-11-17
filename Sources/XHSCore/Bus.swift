@@ -827,7 +827,7 @@ public final class Bus {
         // queued turn, while a new draft is already present.
         if let name = event["hook_event_name"] as? String,
            name == "UserInputSubmitted" || (name == "UserPromptSubmit" && pane.kind != .pi),
-           pane.hasDraft, !pane.typedSinceSubmit {
+           pane.hasDraft, !pane.typedSinceSubmit, composerTookTheDraft(pane, prompt: event["prompt"] as? String) {
             pane.hasDraft = false
             onChange?()
         }
@@ -864,6 +864,21 @@ public final class Bus {
         if attention == .finished { tellWatchers(of: pane, "\(pane.name) finished its turn.") }
         setState(pane.name, next)
         if let attention { onAttention?(pane.name, attention) }
+    }
+
+    /// Whether a submission hook may end the draft hold (D39, an outside read). No text keys since the
+    /// owner's last Enter is not enough: an Enter that accepts a completion leaves the draft unsent, and the
+    /// hook can be for a message the harness had queued, the bus's own among them. Where the bus can read the
+    /// composer, it must show it empty, or still show the prompt the hook names (the harness draws it again
+    /// a moment later); otherwise the hold stays, and the composer showing empty ends it later (`flush`). A
+    /// harness with no composer rule has only the hook, as before.
+    private func composerTookTheDraft(_ p: Pane, prompt: String?) -> Bool {
+        guard Composer.rule(for: p.kind) != nil, let io = p.io else { return true }
+        let screen = io.liveScreen()
+        if let home = p.harnessBuffer, let alternate = screen.alternate, alternate != home { return false }
+        if Composer.shownEmpty(kind: p.kind, screen: screen.lines.joined(separator: "\n")) { return true }
+        guard let prompt, !prompt.isEmpty, let look = Composer.look(kind: p.kind, lines: screen.lines, cursorLine: nil) else { return false }
+        return Composer.sameText(look.composer, prompt)
     }
 
     /// Types the whole queue as one input if the pane is idle or running and the owner is not typing
