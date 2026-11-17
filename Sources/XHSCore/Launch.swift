@@ -472,15 +472,16 @@ public enum Launcher {
     }
 
     /// Whether a command's output lists `flag`, run in the login shell as a pane is. No answer in `timeout`
-    /// seconds is a no, so a slow or hanging profile cannot hold a pane back.
+    /// seconds is a no, so a slow or hanging profile cannot hold a pane back, and the shell is ended then
+    /// with all it started.
     public static func helpLists(_ flag: String, command: String, loginShell: String, timeout: TimeInterval = 5) async -> Bool {
         guard let child = Detached(loginShell, ["-l", "-i", "-c", command]) else { return false }
         return await withCheckedContinuation { continuation in
             let answer = Once(continuation)
             DispatchQueue.global().async {
                 let data = child.output.readDataToEndOfFile()
-                answer.give(String(decoding: data, as: UTF8.self).contains(flag))
                 child.outputEnded()
+                answer.give(String(decoding: data, as: UTF8.self).contains(flag))
             }
             DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
                 child.stop()
@@ -495,11 +496,18 @@ public enum Launcher {
     /// `make smoke` in an agy pane, whose shell tool runs commands on one), that group is a background one,
     /// and an interactive login shell there is stopped by SIGTTIN until the time runs out. A pane's harness
     /// never was: it runs in the pane's own terminal, in a session of its own.
+    ///
+    /// The program leads that session, so the session's id is its pid, and whatever it starts is in it, in
+    /// the program's group or, from an interactive shell, in a group of the job's own. A thread of its own
+    /// waits for the program to end without reaping it (the second read of #114): until it is reaped, under
+    /// the lock `stop()` takes, its pid stays its own and no signal can reach another program that got the
+    /// number. It is reaped once its output has ended too, or `stop()` was called: while a program it started
+    /// still holds the output open, it is kept, so that `stop()` can end that program as well.
     final class Detached: @unchecked Sendable {
         let pid: pid_t
         let output: FileHandle
         private let lock = NSLock()
-        private var reaped = false
+        private var exited = false, ended = false, stopped = false, reaped = false
         /// For a test: called with the pid once the program has ended, before it is reaped.
         private let onExit: (@Sendable (pid_t) -> Void)?
 
@@ -532,23 +540,65 @@ public enum Launcher {
             }
             self.pid = pid
             output = FileHandle(fileDescriptor: fds[0], closeOnDealloc: true)
+            Thread.detachNewThread { [self] in watch() }
         }
 
-        /// Waits for the program to end, once its output has.
-        func outputEnded() {
-            var status: Int32 = 0
-            waitpid(pid, &status, 0)
+        /// Waits for the program to end, leaving it a zombie, whose pid no other program can get.
+        private func watch() {
+            var info = siginfo_t()
+            while waitid(P_PID, id_t(pid), &info, WEXITED | WNOWAIT) == -1 && errno == EINTR {}
             onExit?(pid)
             lock.lock()
-            reaped = true
+            exited = true
+            reapWhenDone()
             lock.unlock()
         }
 
-        /// Ends the program, if it has not ended and been reaped (its pid could be another's by then).
+        /// Its output has ended: no program it started holds it any more.
+        func outputEnded() {
+            lock.lock()
+            ended = true
+            reapWhenDone()
+            lock.unlock()
+        }
+
+        /// Ends the program and every one in its session with SIGKILL, unless it has been reaped. An
+        /// interactive shell ignores SIGTERM, and what is asked here keeps nothing that needs a clean end. A
+        /// program that left the session (a daemon of the profile's) is not reached; if it holds the output,
+        /// only the thread reading it waits on. The program's own pid and group are its own until it is
+        /// reaped; another member's pid is free once that member ends, so between reading the session and the
+        /// signal there is the one kernel call in which it could be taken.
         func stop() {
             lock.lock()
-            defer { lock.unlock() }
-            if !reaped { kill(pid, SIGTERM) }
+            if !reaped {
+                kill(-pid, SIGKILL)
+                // twice: one that was being started as the first round ran is ended in the second
+                for _ in 0..<2 { for member in Self.session(pid) where member != pid { kill(member, SIGKILL) } }
+            }
+            stopped = true
+            reapWhenDone()
+            lock.unlock()
+        }
+
+        /// The processes in the session `sid`: every process, kept where getsid says so. macOS's own filter
+        /// for a session (KERN_PROC_SESSION, `pgrep -s`) found none of a shell's jobs on 2026-11-17.
+        static func session(_ sid: pid_t) -> [pid_t] {
+            var name: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL]
+            var size = 0
+            guard sysctl(&name, 3, nil, &size, nil, 0) == 0, size > 0 else { return [] }
+            let stride = MemoryLayout<kinfo_proc>.stride
+            var found = [kinfo_proc](repeating: kinfo_proc(), count: size / stride + 16)
+            size = found.count * stride
+            guard sysctl(&name, 3, &found, &size, nil, 0) == 0 else { return [] }
+            return found.prefix(size / stride).map(\.kp_proc.p_pid).filter { $0 > 0 && getsid($0) == sid }
+        }
+
+        /// Under the lock: reaps the program once it has ended, and its output has too or it was stopped.
+        private func reapWhenDone() {
+            guard exited, ended || stopped, !reaped else { return }
+            var status: Int32 = 0
+            waitpid(pid, &status, 0)  // it has ended: this does not wait
+            reaped = true
         }
     }
 
