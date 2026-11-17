@@ -296,11 +296,13 @@ public enum Launcher {
     /// `runnerForward` (D12): a Runner pane on a host also forwards that host's Runner port to this port on
     /// this Mac, on the same ssh connection, so the tunnel lives exactly as long as the pane.
     /// `runnerURL`: the Runner a pi pane uses when it is not the one on its own machine's 8080.
+    /// `runnerHome` (D40): where a Runner pane on this Mac keeps its binary, fits and model, the app's own
+    /// state folder; `runnerTray` false: it raises no tray (a staging copy changes nothing of the owner's).
     public static func plan(kind: HarnessKind, paneName: String, host: String?, port: Int, token: String,
                             runnerModel: String?, loginShell: String, remoteShell: RemoteShell = .posix,
                             directory: String? = nil, unrestricted: Bool = false, remotePort: Int? = nil,
                             session: String? = nil, runnerForward: Int? = nil, runnerURL: String? = nil,
-                            msysBash: String? = nil) -> LaunchPlan {
+                            msysBash: String? = nil, runnerHome: String? = nil, runnerTray: Bool = true) -> LaunchPlan {
         let local = host == nil || host!.isEmpty
         // The port the harness calls: on a host, its end of this pane's forward.
         let busPort = local ? port : remotePort ?? port
@@ -311,6 +313,10 @@ public enum Launcher {
             // tray: the pane owns the server, and closing it leaves nothing behind (runner-start.sh).
             env["DOJO_RUNNER_PORT"] = String(remoteRunnerPort)
             env["DOJO_RUNNER_TRAY"] = "off"
+        }
+        if kind == .runner, local {
+            if let runnerHome { env["DOJO_RUNNER_HOME"] = runnerHome }
+            if !runnerTray { env["DOJO_RUNNER_TRAY"] = "off" }
         }
         let directory = directory?.isEmpty == false ? directory : nil
         if kind == .shell, local {

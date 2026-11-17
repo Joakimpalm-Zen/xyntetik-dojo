@@ -25,9 +25,24 @@ final class AppModel: NSObject, ObservableObject {
         case app
         /// Isolated unit-test instance: never touches `~/.dojo`, never installs tools, never binds a listener.
         case test
+        /// D40, `make stage` (DOJO_STAGE=1): a visible copy for the README's pictures, beside an open Dojo. The
+        /// bus server, the timer and notifications run as in the app, on a state root and a port of its own.
+        /// Nothing of the owner's moves: no tool copy into ~/.dojo, no "dojo install" (so no Codex entries and
+        /// no agy plugin), and a Runner pane keeps its files under this root and raises no tray. Its panes run
+        /// with the owner's own home and logins, and the shim already in ~/.dojo, read only.
+        case stage
     }
 
-    static let shared = AppModel(stateRoot: Headless.state(), smoke: Headless.isRequested, policy: .app)
+    /// What the app does to the owner's tools: copies them into ~/.dojo, and runs "dojo install". A test
+    /// passes its own, so that neither ever runs.
+    struct Tools {
+        var copy: () -> String?
+        var install: (@escaping @Sendable (String?) -> Void) -> Void
+        static let real = Tools(copy: { ToolInstall.copy() }, install: { ToolInstall.install(done: $0) })
+    }
+
+    static let shared = AppModel(stateRoot: Headless.state(), smoke: Headless.isRequested,
+                                 policy: Headless.stageRequested ? .stage : .app)
 
     static func forTesting(stateRoot: URL) -> AppModel {
         AppModel(stateRoot: stateRoot, smoke: true, policy: .test)
@@ -125,10 +140,11 @@ final class AppModel: NSObject, ObservableObject {
     /// D15 (b): sending from outside Dojo, while the owner's ~/.dojo/outside is there (Outside).
     private(set) lazy var outside = OutsideRoute(switchFile: state.outsideSwitch, tokenFile: state.outsideTokenFile, port: port)
 
-    init(stateRoot: URL, smoke: Bool = Headless.isRequested, policy: ServicePolicy = .app) {
+    init(stateRoot: URL, smoke: Bool = Headless.isRequested, policy: ServicePolicy = .app, port given: Int? = nil,
+         tools: Tools = .real) {
         let env = ProcessInfo.processInfo.environment
-        // DOJO_PORT must be a port; anything else is said and the default used.
-        let wanted = env["DOJO_PORT"].flatMap { Int($0) }
+        // DOJO_PORT must be a port; anything else is said and the default used. A test gives its own.
+        let wanted = given ?? env["DOJO_PORT"].flatMap { Int($0) }
         port = wanted.flatMap { (1...65535).contains($0) ? $0 : nil } ?? Launcher.defaultPort
         self.smoke = smoke
         self.policy = policy
@@ -138,7 +154,7 @@ final class AppModel: NSObject, ObservableObject {
         super.init()
         if let wanted, wanted != port { problem = "DOJO_PORT is \(wanted); a port is 1 to 65535. Using \(port)." }
         // The tools (and the move from ~/.xhs) come first, so the recent lists are read from the right folder.
-        if policy == .app, !smoke, let trouble = ToolInstall.copy() {
+        if policy == .app, !smoke, let trouble = tools.copy() {
             problem = trouble
         }
         recentHosts = RecentHosts.load(state.hostsFile)
@@ -157,11 +173,11 @@ final class AppModel: NSObject, ObservableObject {
         live.write([])
         bus.onSession = { [weak self] in self?.savePanes() }
         bus.onAttention = { [weak self] name, attention in self?.attend(name, attention) }
-        guard policy == .app else { return }
+        guard policy != .test else { return }
         startServer()
         // "dojo install" once the bus is up, off the main thread (D39)
-        if !smoke {
-            ToolInstall.install { [weak self] trouble in
+        if policy == .app, !smoke {
+            tools.install { [weak self] trouble in
                 MainActor.assumeIsolated {
                     if let trouble { self?.problem = trouble }
                 }
@@ -265,7 +281,7 @@ final class AppModel: NSObject, ObservableObject {
     /// Starts listening for clicks on notifications, also those from before a relaunch, and records what
     /// macOS allows the app (D23).
     func startNotifying() {
-        guard policy == .app else { return }
+        guard policy != .test else { return }
         _ = notifier
     }
 
@@ -470,7 +486,8 @@ final class AppModel: NSObject, ObservableObject {
         start(view, Launcher.plan(kind: kind, paneName: view.paneName, host: host.isEmpty ? nil : host, port: port,
                                   token: token, runnerModel: model, loginShell: loginShell, remoteShell: remoteShell,
                                   directory: directory, unrestricted: unrestricted, remotePort: remotePort, session: session,
-                                  runnerForward: runnerForward, runnerURL: piRunnerURL, msysBash: msysBash))
+                                  runnerForward: runnerForward, runnerURL: piRunnerURL, msysBash: msysBash,
+                                  runnerHome: state.runnerHome.path, runnerTray: policy != .stage))
     }
 
     private func start(_ view: TerminalPane, _ plan: LaunchPlan) {
