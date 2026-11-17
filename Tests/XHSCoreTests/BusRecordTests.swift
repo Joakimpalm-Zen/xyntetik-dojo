@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 @testable import XHSCore
@@ -62,6 +63,77 @@ import Testing
         }
     }
 
+    /// A separate process using the record's lock protocol. Its home and every output stay in this rig.
+    func lockedProcess(afterLock: String, arguments: [String] = []) throws -> Process {
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let child = Process()
+        child.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        child.environment = ["HOME": folder.path, "TMPDIR": folder.path, "PATH": "/usr/bin:/bin"]
+        child.arguments = ["-c", """
+        import fcntl, signal, sys, time
+        lock = open(sys.argv[1], "a+b")
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        sys.stdout.buffer.write(b"x")
+        sys.stdout.buffer.flush()
+        \(afterLock)
+        """, folder.appendingPathComponent(".writer.lock").path] + arguments
+        let ready = Pipe()
+        child.standardOutput = ready
+        try child.run()
+        let byte = try ready.fileHandleForReading.read(upToCount: 1)
+        #expect(byte == Data("x".utf8))
+        return child
+    }
+
+    @Test func anAppendWaitsForAnotherProcessAndUsesItsTail() throws {
+        defer { try? FileManager.default.removeItem(at: folder) }
+        record.append(["op": "first"])
+        let raw = try JSONSerialization.data(withJSONObject: [
+            "op": "other process", "prev": BusRecord.hash(Data(rawLines()[0].utf8)),
+        ], options: [.sortedKeys])
+        let file = try #require(BusRecord.files(in: folder).first)
+        let child = try lockedProcess(afterLock: """
+        time.sleep(0.3)
+        with open(sys.argv[2], "ab") as record:
+            record.write(sys.argv[3].encode() + b"\\n")
+        """, arguments: [file.path, String(decoding: raw, as: UTF8.self)])
+        defer {
+            if child.isRunning { child.terminate() }
+            child.waitUntilExit()
+        }
+        record.append(["op": "after"])
+        child.waitUntilExit()
+        #expect(child.terminationStatus == 0)
+        #expect(lines().compactMap { $0["op"] as? String } == ["first", "other process", "after"])
+        #expect(lines().last?["prev"] as? String == BusRecord.hash(raw))
+    }
+
+    @Test func aKilledWriterLeavesNoStaleLock() throws {
+        defer { try? FileManager.default.removeItem(at: folder) }
+        record.append(["op": "before"])
+        let child = try lockedProcess(afterLock: "signal.pause()")
+        kill(child.processIdentifier, SIGKILL)
+        child.waitUntilExit()
+        // The sidecar is still there, but only the kernel lock conveys ownership.
+        #expect(FileManager.default.fileExists(atPath: folder.appendingPathComponent(".writer.lock").path))
+        record.append(["op": "after"])
+        #expect(lines().compactMap { $0["op"] as? String } == ["before", "after"])
+        #expect(lines().last?["prev"] as? String == BusRecord.hash(Data(rawLines()[0].utf8)))
+    }
+
+    @Test func theTailMayCrossReadChunksAndAnEmptyDay() throws {
+        defer { try? FileManager.default.removeItem(at: folder) }
+        record.append(["op": "long", "text": String(repeating: "wide 界\n", count: 2000)])
+        let first = rawLines()[0]
+        let next = folder.appendingPathComponent("2026-10-27.jsonl")
+        try Data("\n\n".utf8).write(to: next)
+        let other = BusRecord(directory: folder)
+        let nextDay = clock.addingTimeInterval(86_400)
+        other.now = { nextDay }
+        other.append(["op": "next"])
+        #expect(lines().last?["prev"] as? String == BusRecord.hash(Data(first.utf8)))
+    }
+
     @Test func onlyTheOwnerCanReadIt() throws {
         record.append(["op": "panes", "from": "a"])
         let fm = FileManager.default
@@ -91,7 +163,7 @@ import Testing
         record.append(["op": "panes", "from": "a"])
         let left = try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted()
         // today is 2026-10-26: 2026-09-26 is thirty days back and stays, older files go, other files stay
-        #expect(left == ["2026-09-26.jsonl", "2026-09-27.jsonl", "2026-10-26.jsonl", "notes.txt"])
+        #expect(left == [".writer.lock", "2026-09-26.jsonl", "2026-09-27.jsonl", "2026-10-26.jsonl", "notes.txt"])
     }
 
     // MARK: what the bus writes
