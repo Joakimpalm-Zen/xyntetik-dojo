@@ -273,4 +273,152 @@ import Testing
             #expect(rig.io.enterCount == 0, "Decoy D: Codex ↑ without footer separator empty row triggered Enter")
         }
     }
+
+    // MARK: Re-read 9b0c4777 findings 1-3
+
+    @Test func reread1HistoryRecallUpArrowHoldsRecalledDraft() throws {
+        let id = "claude-105x14-short-draft-s300"
+        let bytes = try Data(contentsOf: Self.sweepDir.appendingPathComponent("\(id).bin"))
+        let manifest = try JSONDecoder().decode(
+            [D43SweepScreensTests.SweepCase].self,
+            from: Data(contentsOf: Self.sweepDir.appendingPathComponent("manifest.json"))
+        )
+        let entry = try #require(manifest.first { $0.id == id })
+        let pasted = String(decoding: try Data(contentsOf: Self.sweepDir.appendingPathComponent("\(id).txt")), as: UTF8.self)
+        let payload = D43SweepScreensTests.sendPayload(from: pasted)
+
+        for kind in [HarnessKind.claude, .codex, .agy, .pi] {
+            let rig = Self.makeRig(kind: kind, cols: entry.cols, rows: entry.rows)
+            if kind == .claude {
+                rig.io.showBytes(bytes.prefix(entry.beforeOffset))
+            } else {
+                let empty: String = switch kind {
+                case .codex: "\n› Ask Codex to do anything\n\n  ? for shortcuts\n"
+                case .agy: "\(Self.rule60)\n> \n\(Self.rule60)\n  agy status\n"
+                default: "pi idle\n"
+                }
+                rig.io.show("\u{1b}[2J\u{1b}[H" + empty)
+            }
+            // Owner presses CSI Up to recall a saved draft from history.
+            rig.bus.noteOwnerInput("worker", OwnerInput.key(Array("\u{1b}[A".utf8)[...]))
+            if kind == .claude {
+                rig.io.showBytes(bytes[entry.beforeOffset..<entry.beforePasteOffset])
+            } else if kind == .codex {
+                rig.io.show("\u{1b}[2J\u{1b}[H\n› wip: recalled prompt\n\n  ? for shortcuts\n")
+            } else if kind == .agy {
+                rig.io.show("\u{1b}[2J\u{1b}[H\(Self.rule60)\n> wip: recalled prompt\n\(Self.rule60)\n  agy status\n")
+            }
+            rig.advance(4)
+            let res = rig.send(kind == .claude ? payload : "follow-up")
+            for _ in 0..<5 { rig.advance(1); rig.bus.tick() }
+            #expect(res["delivered"] as? Bool == false, "\(kind): Up-recalled draft was overwritten")
+            #expect(rig.io.pasteCount == 0, "\(kind): pasted onto Up-recalled draft")
+            #expect(rig.io.enterCount == 0, "\(kind): pressed Enter on Up-recalled draft")
+            #expect(rig.bus.info("worker")?.draft == true, "\(kind): draft flag must stay true")
+        }
+    }
+
+    @Test func reread2DialogAnswerKeyDoesNotPoisonLaterCappedDelivery() throws {
+        let id = "claude-105x14-short-draft-s300"
+        let bytes = try Data(contentsOf: Self.sweepDir.appendingPathComponent("\(id).bin"))
+        let manifest = try JSONDecoder().decode(
+            [D43SweepScreensTests.SweepCase].self,
+            from: Data(contentsOf: Self.sweepDir.appendingPathComponent("manifest.json"))
+        )
+        let entry = try #require(manifest.first { $0.id == id })
+        let pasted = String(decoding: try Data(contentsOf: Self.sweepDir.appendingPathComponent("\(id).txt")), as: UTF8.self)
+        let payload = D43SweepScreensTests.sendPayload(from: pasted)
+
+        for kind in [HarnessKind.claude, .agy] {
+            let rig = Self.makeRig(kind: kind, cols: entry.cols, rows: entry.rows)
+            let agyRule = String(repeating: "─", count: entry.cols)
+            if kind == .claude {
+                rig.io.showBytes(bytes.prefix(entry.beforeOffset))
+            } else {
+                rig.io.show("\u{1b}[2J\u{1b}[H\(agyRule)\n> \n\(agyRule)\n  agy status\n")
+            }
+            rig.hook("PermissionRequest")
+            #expect(rig.bus.info("worker")?.state == .prompt)
+            // Owner presses "1" to answer the open dialog (not typing in the composer).
+            rig.bus.noteOwnerInput("worker", OwnerInput.key(Array("1".utf8)[...]))
+            rig.hook("PostToolUse")
+            rig.hook("Stop")
+            rig.advance(4)
+            rig.bus.tick()
+
+            let res = rig.send(payload)
+            #expect(res["delivered"] as? Bool == true, "\(kind): dialog answer poisoned delivery")
+            #expect(rig.io.pasteCount == 1)
+            if kind == .claude {
+                rig.io.showBytes(bytes[entry.beforeOffset..<entry.afterOffset])
+            } else {
+                let tail = String(payload.replacingOccurrences(of: "\n", with: " ").suffix(30))
+                rig.io.show("\u{1b}[2J\u{1b}[H\(agyRule)\n> ↑ 2 more lines\n  \(tail)\n\(agyRule)\n  agy status\n")
+            }
+            rig.fire()
+            for _ in 0..<5 { rig.advance(1); rig.bus.tick() }
+            #expect(rig.io.enterCount == 1, "\(kind): dialog answer blocked Enter on later capped paste")
+            #expect(rig.bus.info("worker")?.needsOwnerEnter == false)
+        }
+    }
+
+    @Test func reread3QueuedBusPasteSubmitHookDoesNotClearOwnerTypedUnproven() throws {
+        let id = "claude-105x14-short-draft-s300"
+        let bytes = try Data(contentsOf: Self.sweepDir.appendingPathComponent("\(id).bin"))
+        let manifest = try JSONDecoder().decode(
+            [D43SweepScreensTests.SweepCase].self,
+            from: Data(contentsOf: Self.sweepDir.appendingPathComponent("manifest.json"))
+        )
+        let entry = try #require(manifest.first { $0.id == id })
+        let pasted = String(decoding: try Data(contentsOf: Self.sweepDir.appendingPathComponent("\(id).txt")), as: UTF8.self)
+        let payload = D43SweepScreensTests.sendPayload(from: pasted)
+
+        let rig = Self.makeRig(kind: .claude, cols: entry.cols, rows: entry.rows)
+        // 1. Bus sends an earlier queued message ("queued bus task") and presses Enter.
+        rig.io.showBytes(bytes.prefix(entry.beforeOffset))
+        _ = rig.send("queued bus task")
+        #expect(rig.io.pasteCount == 1)
+        let cols = entry.cols
+        let rule = String(repeating: "─", count: cols)
+        let footUnder = (Composer.look(kind: .claude, lines: rig.io.liveScreen().lines, cursorLine: nil)?.under ?? [])
+            .map { "  " + $0 }.joined(separator: "\r\n")
+        rig.io.showBytes(Data("\u{1b}[2J\u{1b}[H\(rule)\r\n❯\u{a0}[from: probe] queued bus task\r\n\(rule)\r\n\(footUnder)\r\n".utf8))
+        rig.fire()
+        #expect(rig.io.enterCount == 1)
+        rig.io.showBytes(Data("\u{1b}[2J\u{1b}[H".utf8))
+        rig.io.showBytes(bytes.prefix(entry.beforeOffset))
+
+        // 2. Owner types a delayed draft and hits Enter to accept completion; screen is still stale-empty.
+        rig.bus.noteOwnerInput("worker", OwnerInput.key(Array("w".utf8)[...]))
+        rig.bus.noteOwnerInput("worker", OwnerInput.key([0x0D]))
+
+        // 3. The queued bus paste's UserPromptSubmit arrives while screen looks empty: MUST NOT clear fact.
+        rig.hook("UserPromptSubmit", extra: ["prompt": "[from: probe] queued bus task"])
+        rig.hook("Stop")
+        rig.advance(4)
+        rig.bus.tick()
+
+        // 4. Next capped message pastes onto delayed draft; head is hidden -> Enter MUST NOT be sent.
+        _ = rig.send(payload)
+        rig.io.showBytes(bytes[entry.beforeOffset..<entry.afterOffset])
+        rig.fire()
+        for _ in 0..<5 { rig.advance(1); rig.bus.tick() }
+        #expect(rig.io.enterCount == 1, "unrelated queued bus hook cleared ownerTypedUnproven and allowed unsafe Enter")
+        #expect(rig.bus.info("worker")?.needsOwnerEnter == true)
+
+        // 5. Positive control: real owner submit hook (not a bus paste, after owner Enter) DOES clear it.
+        rig.bus.noteOwnerInput("worker", .clear)
+        rig.io.showBytes(Data("\u{1b}[2J\u{1b}[H".utf8))
+        rig.io.showBytes(bytes.prefix(entry.beforeOffset))
+        rig.bus.noteOwnerInput("worker", OwnerInput.key(Array("x".utf8)[...]))
+        rig.bus.noteOwnerInput("worker", OwnerInput.key([0x0D]))
+        rig.hook("UserPromptSubmit", extra: ["prompt": "x"])
+        rig.hook("Stop")
+        rig.advance(4)
+        rig.bus.tick()
+        _ = rig.send(payload)
+        rig.io.showBytes(bytes[entry.beforeOffset..<entry.afterOffset])
+        rig.fire()
+        #expect(rig.io.enterCount == 2, "owner's own UserPromptSubmit should clear fact and allow next capped Enter")
+    }
 }
