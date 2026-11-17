@@ -163,6 +163,35 @@ public enum SavedPanes {
         return descriptor < 0 ? nil : FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
     }
 
+    /// Writes `data` atomically with `0600` permissions from creation, checking full write and close.
+    static func writePrivate(_ data: Data, to url: URL, tempPrefix: String) -> Bool {
+        let dir = url.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let temp = dir.appendingPathComponent(".\(tempPrefix)-\(UUID().uuidString).tmp")
+        let fd = open(temp.path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
+        guard fd >= 0 else { return false }
+        let wrote = data.withUnsafeBytes { raw -> Bool in
+            var offset = 0
+            while offset < raw.count {
+                let n = Darwin.write(fd, raw.baseAddress!.advanced(by: offset), raw.count - offset)
+                if n > 0 {
+                    offset += n
+                } else if n < 0 && errno == EINTR {
+                    continue
+                } else {
+                    return false
+                }
+            }
+            return true
+        }
+        let closed = close(fd) == 0
+        guard wrote, closed, rename(temp.path, url.path) == 0 else {
+            unlink(temp.path)
+            return false
+        }
+        return true
+    }
+
     /// What can be trusted of the file: a pane with a bad name or host goes, a bad session id reopens fresh.
     public static func load(_ file: URL) -> [SavedPane] {
         guard let data = try? Data(contentsOf: file), let panes = try? JSONDecoder().decode([SavedPane].self, from: data) else { return [] }

@@ -557,7 +557,11 @@ final class AppModel: NSObject, ObservableObject {
         let before = outside.problem
         outside.refresh()
         bus.outsideToken = outside.token
-        if let why = outside.problem, why != before { problem = "Sending from outside Dojo stays off: \(why)." }
+        if let why = outside.problem {
+            if why != before { problem = "Sending from outside Dojo stays off: \(why)." }
+        } else if let before, problem == "Sending from outside Dojo stays off: \(before)." {
+            problem = ""
+        }
     }
 
     // MARK: reopening
