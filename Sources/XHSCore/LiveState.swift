@@ -53,25 +53,18 @@ public final class LiveState {
     /// Atomic, and 0600 from the first byte: a reader never sees half a file or a file others can read.
     /// A file that cannot be written never stops anything.
     public func write(_ panes: [Bus.Info]) {
+        guard !stopped else { return }
         let data = contents(panes)
-        guard data != written else { return }
-        let dir = url.deletingLastPathComponent()
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        let temp = dir.appendingPathComponent(".live-\(UUID().uuidString).tmp")
-        let fd = open(temp.path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
-        guard fd >= 0 else { return }
-        let ok = data.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) } == data.count
-        close(fd)
-        guard ok, rename(temp.path, url.path) == 0 else {
-            unlink(temp.path)
-            return
+        guard data != written || !FileManager.default.fileExists(atPath: url.path) else { return }
+        if SavedPanes.writePrivate(data, to: url, tempPrefix: "live") {
+            written = data
         }
-        written = data
     }
 
     /// At quit: no file, so no reader takes this Dojo for running.
     public func remove() {
         stopped = true
+        written = nil
         try? FileManager.default.removeItem(at: url)
     }
 

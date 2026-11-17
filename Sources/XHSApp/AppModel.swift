@@ -539,9 +539,13 @@ final class AppModel: NSObject, ObservableObject {
 
     /// Quitting, and the end of a smoke. The list stays: this is what the next launch offers to reopen.
     func closeAll() {
+        timer?.invalidate()
+        timer = nil
         keepingList = true
         for item in items { close(item.name) }
         keepingList = false
+        server?.stop()
+        server = nil
         powerHold?.release()
         live.remove()
         outside.off()
