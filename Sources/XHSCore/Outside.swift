@@ -60,7 +60,7 @@ public final class OutsideRoute {
         case .success?:
             problem = nil
             let current = token ?? Bus.newToken()
-            if token == nil || !FileManager.default.fileExists(atPath: tokenFile.path) {
+            if token == nil || !tokenFileMatches(current) {
                 token = write(current) ? current : nil
             }
         case .failure(let why)?:
@@ -78,22 +78,25 @@ public final class OutsideRoute {
         try? FileManager.default.removeItem(at: tokenFile)
     }
 
+    private func tokenFileMatches(_ expectedToken: String) -> Bool {
+        var info = stat()
+        guard lstat(tokenFile.path, &info) == 0,
+              (info.st_mode & S_IFMT) == S_IFREG,
+              (info.st_mode & 0o777) == 0o600,
+              info.st_uid == getuid(),
+              let data = FileManager.default.contents(atPath: tokenFile.path),
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              (object["port"] as? Int) == port,
+              let onDisk = object["token"] as? String
+        else { return false }
+        return Outside.same(onDisk, expectedToken)
+    }
+
     /// Atomic and 0600 from the first byte. False when it cannot be written: then the route stays off.
     private func write(_ token: String) -> Bool {
         let object: [String: Any] = ["port": port, "token": token]
         guard var data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) else { return false }
         data.append(0x0A)
-        let dir = tokenFile.deletingLastPathComponent()
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        let temp = dir.appendingPathComponent(".outside-\(UUID().uuidString).tmp")
-        let fd = open(temp.path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
-        guard fd >= 0 else { return false }
-        let ok = data.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) } == data.count
-        close(fd)
-        guard ok, rename(temp.path, tokenFile.path) == 0 else {
-            unlink(temp.path)
-            return false
-        }
-        return true
+        return SavedPanes.writePrivate(data, to: tokenFile, tempPrefix: "outside")
     }
 }

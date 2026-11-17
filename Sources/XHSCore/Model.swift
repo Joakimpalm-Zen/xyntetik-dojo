@@ -148,19 +148,42 @@ public struct SavedPane: Codable, Equatable, Sendable {
 public enum SavedPanes {
     public static func save(_ panes: [SavedPane], to file: URL) {
         guard let data = try? JSONEncoder().encode(panes) else { return }
-        let folder = file.deletingLastPathComponent()
-        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let temporary = folder.appendingPathComponent(".panes-\(UUID().uuidString)")
-        guard let handle = openPrivate(temporary) else { return }
-        let written = (try? handle.write(contentsOf: data)) != nil
-        try? handle.close()
-        if !written || rename(temporary.path, file.path) != 0 { try? FileManager.default.removeItem(at: temporary) }
+        _ = writePrivate(data, to: file, tempPrefix: "panes")
     }
 
     /// A new file only the owner can read, from the moment it exists: the mode is set as it is created.
     static func openPrivate(_ file: URL) -> FileHandle? {
         let descriptor = open(file.path, O_CREAT | O_EXCL | O_WRONLY, 0o600)
         return descriptor < 0 ? nil : FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+    }
+
+    /// Writes `data` atomically with `0600` permissions from creation, checking full write and close.
+    static func writePrivate(_ data: Data, to url: URL, tempPrefix: String) -> Bool {
+        let dir = url.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let temp = dir.appendingPathComponent(".\(tempPrefix)-\(UUID().uuidString).tmp")
+        let fd = open(temp.path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
+        guard fd >= 0 else { return false }
+        let wrote = data.withUnsafeBytes { raw -> Bool in
+            var offset = 0
+            while offset < raw.count {
+                let n = Darwin.write(fd, raw.baseAddress!.advanced(by: offset), raw.count - offset)
+                if n > 0 {
+                    offset += n
+                } else if n < 0 && errno == EINTR {
+                    continue
+                } else {
+                    return false
+                }
+            }
+            return true
+        }
+        let closed = close(fd) == 0
+        guard wrote, closed, rename(temp.path, url.path) == 0 else {
+            unlink(temp.path)
+            return false
+        }
+        return true
     }
 
     /// What can be trusted of the file: a pane with a bad name or host goes, a bad session id reopens fresh.
