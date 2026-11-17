@@ -349,8 +349,11 @@ struct PaneCell: View {
                 Spacer(minLength: 4)
                 if let q = info?.queued, q > 0 {
                     Text(info?.draft == true ? "\(q) queued, unsent text here"
+                         : info?.needsOwnerEnter == true ? "\(q) queued, Enter needed (typed before paste, head hidden)"
                          : info?.noComposer == true ? "\(q) queued, no composer on screen" : "\(q) queued")
                         .font(.caption).foregroundStyle(Color(Theme.coralInk))
+                } else if info?.needsOwnerEnter == true {
+                    Text("Enter needed: typed before paste, composer head hidden").font(.caption).foregroundStyle(Color(Theme.coralInk))
                 } else if info?.noComposer == true {
                     // nothing queued: a message is in the composer and its Enter waits (D35.1)
                     Text("Enter held, message not in a free composer").font(.caption).foregroundStyle(Color(Theme.coralInk))

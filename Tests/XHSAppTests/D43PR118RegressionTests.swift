@@ -79,7 +79,6 @@ import Testing
         bus.submitDelay = 0.15
         let sender = bus.add(name: "probe", kind: .claude, io: nil)
         let target = bus.add(name: "worker", kind: kind, io: io)
-        io.pane.onScreenChange = { bus.noteScreenChange("worker") }
         _ = bus.handle(path: "/hook", token: target,
                        body: try! JSONSerialization.data(withJSONObject: ["hook_event_name": "SessionStart"]))
         return Rig(
@@ -127,6 +126,20 @@ import Testing
             rig.fire()
             for _ in 0..<5 { rig.advance(1); rig.bus.tick() }
             #expect(rig.io.enterCount == 0, "\(id): clear-repaint reopened delayed-echo P1 Enter")
+            #expect(rig.bus.info("worker")?.needsOwnerEnter == true, "\(id): header did not tell owner why")
+
+            // 4. Owner presses Enter and composer empties -> ownerTypedUnproven clears, next capped paste gets Enter.
+            rig.bus.noteOwnerInput("worker", .submit)
+            rig.io.showBytes(Data("\u{1b}[2J\u{1b}[H".utf8))
+            rig.io.showBytes(bytes.prefix(entry.beforeOffset))
+            rig.advance(4)
+            rig.bus.tick()
+            #expect(rig.bus.info("worker")?.needsOwnerEnter == false)
+            rig.hook("Stop")
+            _ = rig.send(payload)
+            rig.io.showBytes(bytes[entry.beforeOffset..<entry.afterOffset])
+            rig.fire()
+            #expect(rig.io.enterCount == 1, "\(id): next capped paste after owner Enter should deliver")
         }
     }
 
@@ -225,14 +238,13 @@ import Testing
             #expect(rig.bus.info("worker")?.noComposer == true)
         }
 
-        // Decoy C (own control #1): Primary buffer where row 0 holds unrelated transcript (box did NOT scroll off top).
+        // Decoy C (own control #1): Primary buffer with leading blank row (box did NOT scroll off top row 0).
         do {
             let rig = Self.makeRig(kind: .claude, cols: 60, rows: 14)
             rig.io.show("\u{1b}[2J\u{1b}[H\n\(Self.rule60)\n❯\u{a0}\n\(Self.rule60)\n\(Self.claudeFoot60)")
             rig.hook("Stop")
             _ = rig.send("quoted line from transcript check")
             let decoy = [
-                "  Assistant: summary here",
                 "",
                 "  [from: probe] quoted line from transcript check",
                 Self.rule60,
@@ -240,7 +252,8 @@ import Testing
             ].joined(separator: "\n")
             rig.io.show("\u{1b}[2J\u{1b}[H" + decoy)
             rig.fire()
-            #expect(rig.io.enterCount == 0, "Decoy C: primary-screen transcript row above unframed quote triggered Enter")
+            #expect(rig.io.enterCount == 0, "Decoy C: primary-screen non-top row unframed quote triggered Enter")
+            #expect(rig.bus.info("worker")?.noComposer == true)
         }
 
         // Decoy D (own control #2): Codex `↑` at right column 60 WITHOUT empty separator row before footer.

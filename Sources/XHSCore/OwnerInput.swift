@@ -42,9 +42,12 @@ public enum OwnerInput {
         }
         // D26: the pointer moving or the wheel turning over a pane whose program tracks the mouse. Not the owner typing.
         if pointer(bytes) { return .pointer }
-        // Keys that only move or delete: arrows left and right, Home, End, Page keys, forward Delete, mouse reports.
-        if moves(s) { return .other }
-        // A bracketed paste, Up or Down recalling a prompt, Alt-key chords, anything else: text may have landed.
+        // Bracketed paste inserts text.
+        if s.hasPrefix("\u{1b}[200~") { return .text }
+        // Keys that only move, delete or invoke UI controls (arrows including Up/Down, Home/End,
+        // Shift-Tab, function/navigation CSI and SS3 sequences) never insert text directly.
+        if moves(s) || s.hasPrefix("\u{1b}[") || s.hasPrefix("\u{1b}O") { return .other }
+        // Anything else (for example Alt-key chords): may insert text.
         return .text
     }
 
@@ -72,12 +75,12 @@ public enum OwnerInput {
         return code & 32 != 0 || code & 64 != 0
     }
 
-    /// CSI sequences for cursor movement, forward delete and mouse reports.
+    /// CSI and SS3 sequences for cursor movement (all arrows, Home, End), forward delete and mouse reports.
     static func moves(_ s: String) -> Bool {
         let body = s.dropFirst(2)
-        if s.hasPrefix("\u{1b}O"), let last = s.last, "CDHF".contains(last) { return true }
+        if s.hasPrefix("\u{1b}O"), let last = s.last, "ABCDHF".contains(last) { return true }
         guard s.hasPrefix("\u{1b}["), let last = body.last else { return false }
-        if "CDHF".contains(last) { return true }                                             // left, right, Home, End (with modifiers too)
+        if "ABCDHF".contains(last) { return true }                                           // arrows, Home, End (with modifiers too)
         if last == "~", let number = Int(body.dropLast().split(separator: ";").first ?? ""), [1, 3, 4, 5, 6, 7, 8].contains(number) { return true }
         if body.hasPrefix("<"), last == "M" || last == "m" { return true }                   // mouse
         return false

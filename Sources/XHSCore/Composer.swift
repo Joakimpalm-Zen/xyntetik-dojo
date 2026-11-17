@@ -86,10 +86,12 @@ public enum Composer {
     public struct Look: Equatable, Sendable {
         public var composer: String
         public var under: [String]
+        public var headHidden: Bool
 
-        public init(composer: String, under: [String]) {
+        public init(composer: String, under: [String], headHidden: Bool = false) {
             self.composer = composer
             self.under = under
+            self.headHidden = headHidden
         }
     }
 
@@ -138,21 +140,27 @@ public enum Composer {
     }
 
     public static func shown(kind: HarnessKind, lines: [String], cursorLine: Int?, afterPaste: Bool = false,
-                             pasted: String? = nil, before: Look? = nil) -> Bool? {
+                             pasted: String? = nil, before: Look? = nil,
+                             alternate: Bool? = nil, columns: Int? = nil) -> Bool? {
         guard rule(for: kind) != nil else { return nil }
-        return read(kind: kind, lines: lines, cursorLine: cursorLine, afterPaste: afterPaste, pasted: pasted, before: before) != nil
+        return read(kind: kind, lines: lines, cursorLine: cursorLine, alternate: alternate, columns: columns,
+                    afterPaste: afterPaste, pasted: pasted, before: before) != nil
     }
 
     /// The composer as it stands before the bus types into it; nil when it may not type there.
-    public static func look(kind: HarnessKind, lines: [String], cursorLine: Int?) -> Look? {
-        read(kind: kind, lines: lines, cursorLine: cursorLine, afterPaste: false, pasted: nil, before: nil)
+    public static func look(kind: HarnessKind, lines: [String], cursorLine: Int?,
+                            alternate: Bool? = nil, columns: Int? = nil) -> Look? {
+        read(kind: kind, lines: lines, cursorLine: cursorLine, alternate: alternate, columns: columns,
+             afterPaste: false, pasted: nil, before: nil)
     }
 
     /// The composer as it stands holding what the bus pasted, with the rows under it as they are now; nil
     /// when it does not hold that, or the rows under it show a dialog. The rows are not held against the
     /// look before the paste here: `footerUnchanged` does that.
-    public static func holding(kind: HarnessKind, lines: [String], cursorLine: Int?, pasted: String, before: Look?) -> Look? {
-        read(kind: kind, lines: lines, cursorLine: cursorLine, afterPaste: true, pasted: pasted, before: before, compareFooter: false)
+    public static func holding(kind: HarnessKind, lines: [String], cursorLine: Int?, pasted: String, before: Look?,
+                               alternate: Bool? = nil, columns: Int? = nil) -> Look? {
+        read(kind: kind, lines: lines, cursorLine: cursorLine, alternate: alternate, columns: columns,
+             afterPaste: true, pasted: pasted, before: before, compareFooter: false)
     }
 
     /// Whether the rows under the composer are the ones from before the paste, one for one: each row now is
@@ -198,14 +206,15 @@ public enum Composer {
         return bare(a) == bare(b)
     }
 
-    private static func read(kind: HarnessKind, lines: [String], cursorLine: Int?, afterPaste: Bool, pasted: String?,
-                             before: Look?, compareFooter: Bool = true) -> Look? {
+    private static func read(kind: HarnessKind, lines: [String], cursorLine: Int?, alternate: Bool?, columns: Int?,
+                             afterPaste: Bool, pasted: String?, before: Look?, compareFooter: Bool = true) -> Look? {
         guard let rule = rule(for: kind) else { return nil }
         let blank = CharacterSet.whitespaces.union(CharacterSet(charactersIn: "\u{a0}")).union(.newlines)
         var lines = lines
         while let last = lines.last, last.trimmingCharacters(in: blank).isEmpty { lines.removeLast() }
         let dropped = max(lines.count - shownFootRows, 0)
-        let foot: [(text: String, setIn: Bool)] = lines.suffix(shownFootRows).map { line in
+        let rawFoot = Array(lines.suffix(shownFootRows))
+        let foot: [(text: String, setIn: Bool)] = rawFoot.map { line in
             (line.trimmingCharacters(in: blank), line.unicodeScalars.first.map(blank.contains) ?? false)
         }
         /// What follows the mark on a row that starts with it in the first column.
@@ -218,6 +227,7 @@ public enum Composer {
         let first: String   // what it shows, after the mark
         let end: Int        // the first row under the composer: its footer starts here
         var block: Int      // the first row that is not the composer's own text
+        var headHidden = false
         if kind == .claude, afterPaste, let pasted,
            let top = foot.indices.last(where: { isCappedRule(foot[$0].text, "↑") }), top > (marked ?? -1) {
             // D41: Claude Code caps its composer's height. Its top ruled line says how many rows are above
@@ -239,24 +249,26 @@ public enum Composer {
                 (end, block) = (foot.count, foot.count)
             }
             let shown = foot[(top + 1)..<tailEnd].map(\.text)
-            let innerWidth = max(foot[top].text.count - 4, shown.map(\.count).max() ?? 1)
-            guard !shown.isEmpty, wrappedRows(pasted, width: innerWidth) > shown.count,
+            guard !shown.isEmpty,
                   ShownPart(rows: shown, above: true, below: false).isPart(of: pasted) else { return nil }
+            headHidden = true
             (at, first) = (top + 1, shown[0])
-        } else if kind == .claude, afterPaste, let pasted, marked == nil,
+        } else if kind == .claude, afterPaste, let pasted, marked == nil, alternate == false,
                   let closing = foot.indices.last(where: { isRuledLine(foot[$0].text) }),
-                  let start = foot[..<closing].firstIndex(where: { !$0.text.isEmpty }),
+                  !foot[..<closing].isEmpty,
                   !foot[..<closing].contains(where: { isRuledLine($0.text) || isCappedRule($0.text, "↓") }),
                   closing + 1 < foot.count {
-            // Shape 3 (primary screen): the top ruled line and the composer's `❯` row scrolled above
-            // the viewport, leaving indented continuation rows down to `closing` and the footer below it.
-            let body = foot[start..<closing]
-            guard body.allSatisfy({ $0.text.isEmpty || ($0.setIn && !startsWithBoxDrawing($0.text) && !isNumberedChoice($0.text)) })
+            // Shape 3 (primary buffer only): the top ruled line and `❯` scrolled above row 0 of the viewport,
+            // leaving indented continuation rows starting from row 0 down to `closing` and the footer below it.
+            let body = foot[0..<closing]
+            guard let topText = body.first, !topText.text.isEmpty,
+                  body.allSatisfy({ $0.text.isEmpty || ($0.setIn && !startsWithBoxDrawing($0.text) && !isNumberedChoice($0.text)) })
             else { return nil }
             let shown = body.map(\.text)
             guard bare(shown.joined()).count >= editedRun,
                   ShownPart(rows: shown, above: true, below: false).isPart(of: pasted) else { return nil }
-            (at, first, end, block) = (start, shown[0], closing + 1, closing)
+            headHidden = true
+            (at, first, end, block) = (0, shown[0], closing + 1, closing)
         } else {
             guard let row = marked, let text = afterMark(row), !isNumberedChoice(text) else { return nil }
             at = row
@@ -265,12 +277,17 @@ public enum Composer {
             /// The composer's rows from `at` to `end`, without the mark.
             func rows(to end: Int) -> [String] { [first] + foot[(at + 1)..<max(end, at + 1)].map(\.text) }
             func arrived(_ rows: [String]) -> Bool {
-                pasted.map { Composer.arrived($0, rows: rows, standIn: standIn, before: before, partial: kind == .agy) } ?? true
+                if let pasted {
+                    let partial = kind == .agy
+                    if partial, let sp = shownPart(rows), sp.above { headHidden = true }
+                    return Composer.arrived(pasted, rows: rows, standIn: standIn, before: before, partial: partial)
+                }
+                return true
             }
             switch kind {
             case .claude, .agy:
                 // Primary-screen pastes tall enough to scroll the top ruled line off row 0 leave `❯` at `at == 0`.
-                let topScrolledOff = kind == .claude && afterPaste && pasted != nil && at == 0
+                let topScrolledOff = kind == .claude && afterPaste && pasted != nil && at == 0 && alternate == false
                 guard topScrolledOff || (at > 0 && isRuledLine(foot[at - 1].text)),
                       let closing = foot.indices.first(where: { $0 > at && isRuledLine(foot[$0].text) }) else { return nil }
                 if afterPaste {
@@ -285,17 +302,21 @@ public enum Composer {
                 if afterPaste, let pasted {
                     if first.hasSuffix("↑"), !bare(pasted).hasSuffix("↑"), at + 1 < foot.count {
                         // Codex 0.169.0 inline-scrolls multi-line pastes below its placeholder threshold,
-                        // marking column end of the `›` row with `↑` and pushing earlier rows off the top.
+                        // drawing `↑` in the last column of the `›` row and separating the footer with an empty row.
+                        guard let cols = columns, cols > 0, upArrowColumn(rawFoot[at]) == cols else { return nil }
                         let cleanFirst = String(first.dropLast()).trimmingCharacters(in: blank)
-                        guard let last = (at..<foot.count).first(where: { endIdx in
+                        guard let last = ((at + 1)..<foot.count).first(where: { endIdx in
                             let slice = foot[(at + 1)..<(endIdx + 1)]
                             guard slice.allSatisfy({ $0.text.isEmpty || ($0.setIn && !startsWithBoxDrawing($0.text) && !isNumberedChoice($0.text)) })
                             else { return false }
+                            let afterBox = endIdx + 1
+                            if afterBox < foot.count, !foot[afterBox].text.isEmpty { return false }
                             let candidate = [cleanFirst] + slice.map(\.text)
                             guard !candidate.contains(where: { $0.hasSuffix("↓") }),
                                   bare(candidate.joined()).count >= editedRun else { return false }
                             return ShownPart(rows: candidate, above: true, below: false).isPart(of: pasted)
                         }) else { return nil }
+                        headHidden = true
                         end = last + 1
                     } else {
                         // the pasted text may have empty rows of its own: it ends where it has all been seen
@@ -323,7 +344,7 @@ public enum Composer {
         if afterPaste, compareFooter, let before {
             guard footerUnchanged(under.map(\.text), since: before.under, kind: kind) else { return nil }
         }
-        return Look(composer: first, under: under.map(\.text))
+        return Look(composer: first, under: under.map(\.text), headHidden: headHidden)
     }
 
     /// Where the footer under agy's composer starts: after the rows of the commands agy runs in the
@@ -403,34 +424,40 @@ public enum Composer {
         return ShownPart(rows: rows, above: above, below: below)
     }
 
-    /// How many wrapped rows `text` takes inside a box of `width` columns. Used when a capped banner
-    /// claims rows are hidden above: if the paste alone fits within the visible rows, something before it
-    /// pushed rows off the top (D43).
-    static func wrappedRows(_ text: String, width: Int) -> Int {
-        guard width > 0 else { return 1 }
-        var total = 0
-        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
-            var col = 0
-            var rows = 1
-            for (i, word) in line.split(separator: " ", omittingEmptySubsequences: false).enumerated() {
-                let len = word.count
-                if i > 0 {
-                    if col + 1 + len <= width {
-                        col += 1 + len
-                        continue
-                    }
-                    rows += 1
-                }
-                if len <= width {
-                    col = len
-                } else {
-                    rows += (len - 1) / width
-                    col = ((len - 1) % width) + 1
-                }
+    /// Display column of the trailing `↑` on a Codex scrolled row (trimmed of trailing spaces).
+    static func upArrowColumn(_ rawRow: String) -> Int {
+        var end = rawRow.endIndex
+        while end > rawRow.startIndex {
+            let prev = rawRow.index(before: end)
+            if rawRow[prev].unicodeScalars.allSatisfy({ $0.properties.isWhitespace || $0 == "\u{a0}" }) {
+                end = prev
+            } else {
+                break
             }
-            total += rows
         }
-        return max(total, 1)
+        var cols = 0
+        for scalar in rawRow[..<end].unicodeScalars {
+            cols += cellWidth(scalar)
+        }
+        return cols
+    }
+
+    private static func cellWidth(_ s: Unicode.Scalar) -> Int {
+        switch s.properties.generalCategory {
+        case .nonspacingMark, .enclosingMark: return 0
+        default: break
+        }
+        let v = s.value
+        if v == 0x200D || (0xFE00...0xFE0F).contains(v) || (0xE0100...0xE01EF).contains(v) { return 0 }
+        if (0x1100...0x115F).contains(v) || v == 0x2329 || v == 0x232A ||
+           (0x2E80...0x303E).contains(v) || (0x3040...0xA4CF).contains(v) ||
+           (0xAC00...0xD7A3).contains(v) || (0xF900...0xFAFF).contains(v) ||
+           (0xFE10...0xFE19).contains(v) || (0xFE30...0xFE6F).contains(v) ||
+           (0xFF00...0xFF60).contains(v) || (0xFFE0...0xFFE6).contains(v) ||
+           (0x1F300...0x1FAFF).contains(v) || (0x20000...0x3FFFF).contains(v) {
+            return 2
+        }
+        return 1
     }
 
     /// "─── ↑ 3 more ───": Claude Code's ruled line over a composer taller than it shows (D41, a pane on

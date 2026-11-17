@@ -353,7 +353,6 @@ final class AppModel: NSObject, ObservableObject {
         }
         // The bus holds relayed messages while the owner types in the pane and while unsent text sits there.
         view.onOwnerInput = { [weak self, weak view] key in if let view { self?.bus.noteOwnerInput(view.paneName, key) } }
-        view.onScreenChange = { [weak self, weak view] in if let view { self?.bus.noteScreenChange(view.paneName) } }
         let token = bus.add(name: name, kind: kind, host: host, unrestricted: unrestricted, io: view)
         tokens[name] = token
         if !host.isEmpty { recentHosts = RecentHosts.remember(host, in: AppModel.hostsFile) }

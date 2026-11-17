@@ -45,13 +45,13 @@ import XHSCore
         return try! JSONDecoder().decode([SweepCase].self, from: data)
     }()
 
-    static func screenLines(id: String, cols: Int, rows: Int, offset: Int) -> [String] {
+    static func liveScreen(id: String, cols: Int, rows: Int, offset: Int) -> (screen: PaneScreen, columns: Int) {
         _ = NSApplication.shared
         let bytes = try! Data(contentsOf: sweepDir.appendingPathComponent("\(id).bin"))
         let pane = TerminalPane(name: id)
         pane.resize(cols: cols, rows: rows)
         pane.show(Array(bytes.prefix(offset)))
-        return pane.liveScreen().lines
+        return (pane.liveScreen(), pane.columns)
     }
 
     static func footPreview(_ lines: [String]) -> String {
@@ -69,45 +69,50 @@ import XHSCore
             as: UTF8.self
         )
         let kind = entry.harnessKind
-        let beforeIdleLines = Self.screenLines(id: entry.id, cols: entry.cols, rows: entry.rows, offset: entry.beforeOffset)
-        let beforeIdle = Composer.look(kind: kind, lines: beforeIdleLines, cursorLine: nil)
+        let beforeIdleScreen = Self.liveScreen(id: entry.id, cols: entry.cols, rows: entry.rows, offset: entry.beforeOffset)
+        let beforeIdle = Composer.look(kind: kind, lines: beforeIdleScreen.screen.lines, cursorLine: nil,
+                                       alternate: beforeIdleScreen.screen.alternate, columns: beforeIdleScreen.columns)
 
         if entry.expectEnter {
             let look = try #require(
                 beforeIdle,
-                "\(entry.id): before-paste composer not read.\nScreen:\n\(Self.footPreview(beforeIdleLines))"
+                "\(entry.id): before-paste composer not read.\nScreen:\n\(Self.footPreview(beforeIdleScreen.screen.lines))"
             )
-            let afterLines = Self.screenLines(id: entry.id, cols: entry.cols, rows: entry.rows, offset: entry.afterOffset)
+            let afterScreen = Self.liveScreen(id: entry.id, cols: entry.cols, rows: entry.rows, offset: entry.afterOffset)
             let held = try #require(
-                Composer.holding(kind: kind, lines: afterLines, cursorLine: nil, pasted: pasted, before: look),
-                "\(entry.id): paste not seen in composer.\nBefore under: \(look.under)\nAfter screen:\n\(Self.footPreview(afterLines))"
+                Composer.holding(kind: kind, lines: afterScreen.screen.lines, cursorLine: nil, pasted: pasted, before: look,
+                                 alternate: afterScreen.screen.alternate, columns: afterScreen.columns),
+                "\(entry.id): paste not seen in composer.\nBefore under: \(look.under)\nAfter screen:\n\(Self.footPreview(afterScreen.screen.lines))"
             )
             let sameFooter = Composer.footerUnchanged(held.under, since: look.under, kind: kind)
             #expect(
                 sameFooter,
-                "\(entry.id): footer changed after paste.\nBefore under: \(look.under)\nAfter under:  \(held.under)\nAfter screen:\n\(Self.footPreview(afterLines))"
+                "\(entry.id): footer changed after paste.\nBefore under: \(look.under)\nAfter under:  \(held.under)\nAfter screen:\n\(Self.footPreview(afterScreen.screen.lines))"
             )
             #expect(
-                Composer.shown(kind: kind, lines: afterLines, cursorLine: nil, afterPaste: true, pasted: pasted, before: look) == true,
-                "\(entry.id): Composer.shown denied Enter.\nAfter screen:\n\(Self.footPreview(afterLines))"
+                Composer.shown(kind: kind, lines: afterScreen.screen.lines, cursorLine: nil, afterPaste: true, pasted: pasted, before: look,
+                               alternate: afterScreen.screen.alternate, columns: afterScreen.columns) == true,
+                "\(entry.id): Composer.shown denied Enter.\nAfter screen:\n\(Self.footPreview(afterScreen.screen.lines))"
             )
         } else {
-            let beforePasteLines = Self.screenLines(id: entry.id, cols: entry.cols, rows: entry.rows, offset: entry.beforePasteOffset)
+            let beforePasteScreen = Self.liveScreen(id: entry.id, cols: entry.cols, rows: entry.rows, offset: entry.beforePasteOffset)
             #expect(
-                !Composer.shownEmpty(kind: kind, screen: beforePasteLines.joined(separator: "\n")),
-                "\(entry.id): draft screen must not read empty.\nDraft screen:\n\(Self.footPreview(beforePasteLines))"
+                !Composer.shownEmpty(kind: kind, screen: beforePasteScreen.screen.lines.joined(separator: "\n")),
+                "\(entry.id): draft screen must not read empty.\nDraft screen:\n\(Self.footPreview(beforePasteScreen.screen.lines))"
             )
-            let beforeDraft = Composer.look(kind: kind, lines: beforePasteLines, cursorLine: nil)
-            let afterLines = Self.screenLines(id: entry.id, cols: entry.cols, rows: entry.rows, offset: entry.afterOffset)
+            let beforeDraft = Composer.look(kind: kind, lines: beforePasteScreen.screen.lines, cursorLine: nil,
+                                            alternate: beforePasteScreen.screen.alternate, columns: beforePasteScreen.columns)
+            let afterScreen = Self.liveScreen(id: entry.id, cols: entry.cols, rows: entry.rows, offset: entry.afterOffset)
             if let beforeIdle {
                 let check = {
                     #expect(
-                        Composer.shown(kind: kind, lines: afterLines, cursorLine: nil, afterPaste: true, pasted: pasted, before: beforeIdle) != true,
-                        "\(entry.id): composer holds owner draft, Enter must NOT go out (vs idle).\nDraft screen:\n\(Self.footPreview(beforePasteLines))\nAfter screen:\n\(Self.footPreview(afterLines))"
+                        Composer.shown(kind: kind, lines: afterScreen.screen.lines, cursorLine: nil, afterPaste: true, pasted: pasted, before: beforeIdle,
+                                       alternate: afterScreen.screen.alternate, columns: afterScreen.columns) != true,
+                        "\(entry.id): composer holds owner draft, Enter must NOT go out (vs idle).\nDraft screen:\n\(Self.footPreview(beforePasteScreen.screen.lines))\nAfter screen:\n\(Self.footPreview(afterScreen.screen.lines))"
                     )
                 }
                 if entry.id == "claude-105x14-short-draft-s300" || entry.id == "claude-105x14-short-draft-w550" {
-                    withKnownIssue("\(entry.id): 5-char draft fits inside row 0's wrap slack giving identical ↑ count and tail rows as an idle paste (and delayed-echo Bus path)") {
+                    withKnownIssue("\(entry.id): 5-char draft fits inside row 0's wrap slack giving identical ↑ count and tail rows as an idle paste (Bus Enter rule still blocks Enter)") {
                         check()
                     }
                 } else {
@@ -117,8 +122,9 @@ import XHSCore
             if let beforeDraft {
                 let check = {
                     #expect(
-                        Composer.shown(kind: kind, lines: afterLines, cursorLine: nil, afterPaste: true, pasted: pasted, before: beforeDraft) != true,
-                        "\(entry.id): composer holds owner draft, Enter must NOT go out (vs draft).\nDraft screen:\n\(Self.footPreview(beforePasteLines))\nAfter screen:\n\(Self.footPreview(afterLines))"
+                        Composer.shown(kind: kind, lines: afterScreen.screen.lines, cursorLine: nil, afterPaste: true, pasted: pasted, before: beforeDraft,
+                                       alternate: afterScreen.screen.alternate, columns: afterScreen.columns) != true,
+                        "\(entry.id): composer holds owner draft, Enter must NOT go out (vs draft).\nDraft screen:\n\(Self.footPreview(beforePasteScreen.screen.lines))\nAfter screen:\n\(Self.footPreview(afterScreen.screen.lines))"
                     )
                 }
                 if entry.id == "claude-105x14-short-draft-s300" || entry.id == "claude-105x14-short-draft-w550" {
@@ -170,7 +176,6 @@ import XHSCore
         bus.submitDelay = 0.15
         let sender = bus.add(name: "probe", kind: .claude, io: nil)
         let target = bus.add(name: "worker", kind: entry.harnessKind, io: io)
-        io.pane.onScreenChange = { bus.noteScreenChange("worker") }
         _ = bus.handle(path: "/hook", token: target, body: try! JSONSerialization.data(withJSONObject: ["hook_event_name": "SessionStart"]))
         return (bus, sender, target, io, bytes, { dt in clock.addTimeInterval(dt) }, {
             let work = pending
@@ -217,48 +222,56 @@ import XHSCore
             let entry = try #require(Self.cases.first { $0.id == id })
             let pasted = String(decoding: try Data(contentsOf: Self.sweepDir.appendingPathComponent("\(entry.id).txt")), as: UTF8.self)
             let rig = Self.makeBusRig(entry: entry)
+            let recDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: recDir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: recDir) }
+            rig.bus.record = BusRecord(directory: recDir)
             // 1. Composer starts empty; owner types "wip: ", whose echo is delayed > 3 s.
             rig.io.show(rig.bytes.prefix(entry.beforeOffset))
             rig.bus.noteOwnerInput("worker", .text)
             rig.advance(4)
-            // 2. Spinner/status redraw above an empty composer must not clear the hold either.
-            rig.io.show(Data("\u{1b}[1;1H* Working (4s)".utf8)[...])
-            rig.advance(4)
-            // 3. Peer message arrives while screen is still stale (unchanged empty composer).
+            // 2. Peer message arrives while screen still shows empty; paste goes in, capped box hides head.
             let body = try JSONSerialization.data(withJSONObject: ["pane": "worker", "text": Self.sendPayload(from: pasted)])
-            let (_, resData) = rig.bus.handle(path: "/send", token: rig.sender, body: body)
-            let res = try JSONSerialization.jsonObject(with: resData) as! [String: Any]
-            #expect(res["delivered"] as? Bool == false, "\(id): stale empty screen must not release hasDraft")
-            #expect(rig.bus.info("worker")?.draft == true, "\(id): draft hold dropped on stale screen")
-            #expect(rig.io.writes.isEmpty, "\(id): Bus pasted onto un-echoed owner draft")
-            // 4. Ctrl-C ends the hold when an echo never comes (delivers once quiet interval passes).
+            _ = rig.bus.handle(path: "/send", token: rig.sender, body: body)
+            rig.io.show(rig.bytes[entry.beforeOffset..<entry.afterOffset])
+            rig.fire()
+            for _ in 0..<5 { rig.advance(1); rig.bus.tick() }
+            // 3. Rule at Enter: owner typed without proof it emptied & composer head is hidden -> Enter NOT sent, owner told why.
+            #expect(rig.io.enterCount == 0, "\(id): Enter must NOT be sent when owner typed and head is hidden")
+            #expect(rig.bus.info("worker")?.needsOwnerEnter == true, "\(id): header must tell owner Enter is needed")
+            let logText = BusRecord.files(in: recDir).compactMap { try? String(contentsOf: $0, encoding: .utf8) }.joined()
+            #expect(logText.contains("owner typed before paste and composer head is hidden"), "\(id): record missing explanation")
+            // 4. Ctrl-C clears the hold cleanly.
             rig.bus.noteOwnerInput("worker", .clear)
-            rig.advance(4)
-            rig.bus.tick()
-            #expect(rig.bus.info("worker")?.draft == false)
-            #expect(rig.io.pasteCount == 1)
+            #expect(rig.bus.info("worker")?.needsOwnerEnter == false)
         }
     }
 
     @Test func quickEchoReleasesDraftHoldThroughRealBus() throws {
         let entry = try #require(Self.cases.first { $0.id == "claude-105x14-short-draft-s300" })
-        let pasted = String(decoding: try Data(contentsOf: Self.sweepDir.appendingPathComponent("\(entry.id).txt")), as: UTF8.self)
         let rig = Self.makeBusRig(entry: entry)
         // 1. Owner types on empty composer.
         rig.io.show(rig.bytes.prefix(entry.beforeOffset))
         rig.bus.noteOwnerInput("worker", .text)
-        // 2. Quick echo shows the draft on screen, observed via TerminalPane.onScreenChange.
+        // 2. Quick echo shows the draft on screen, then owner deletes it back to empty.
         rig.io.show(rig.bytes[entry.beforeOffset..<entry.beforePasteOffset])
-        // 3. Owner deletes it / refused turn empties composer back to idle empty screen.
         rig.io.show(Data("\u{1b}[2J\u{1b}[H".utf8)[...])
         rig.io.show(rig.bytes.prefix(entry.beforeOffset))
         rig.advance(4)
         rig.bus.tick()
-        let body = try JSONSerialization.data(withJSONObject: ["pane": "worker", "text": Self.sendPayload(from: pasted)])
+        let body = try JSONSerialization.data(withJSONObject: ["pane": "worker", "text": "short"])
         let (_, resData) = rig.bus.handle(path: "/send", token: rig.sender, body: body)
         let res = try JSONSerialization.jsonObject(with: resData) as! [String: Any]
-        #expect(res["delivered"] as? Bool == true, "ordinary quick echo + empty composer must release hold")
+        #expect(res["delivered"] as? Bool == true)
         #expect(rig.bus.info("worker")?.draft == false)
+        // Whole composer is visible and holds only the paste -> Enter goes out!
+        let cols = entry.cols
+        let rule = String(repeating: "─", count: cols)
+        let footUnder = (Composer.look(kind: .claude, lines: rig.io.liveScreen().lines, cursorLine: nil)?.under ?? []).map { "  " + $0 }.joined(separator: "\r\n")
+        let afterVisible = "\u{1b}[2J\u{1b}[H\(rule)\r\n❯\u{a0}[from: probe] short\r\n\(rule)\r\n\(footUnder)\r\n"
+        rig.io.show(Data(afterVisible.utf8)[...])
+        rig.fire()
+        #expect(rig.io.enterCount == 1)
     }
 
     @Test func relaxedShapesHoldOnDialogBufferSwitchAndOwnerKey() throws {
