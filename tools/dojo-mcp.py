@@ -112,6 +112,14 @@ class BusError(Exception):
     pass
 
 
+def bus_trouble(port, e):
+    """A failed call in words. An answer that broke off says so: the request was sent, and the bus may have
+    acted on it (a send may have gone out), which "not reachable" would deny."""
+    if isinstance(e, http.client.HTTPException) and not isinstance(e, http.client.InvalidURL):
+        return "bus answer on 127.0.0.1:%s broke off, the request may have been taken: %s" % (port, e)
+    return "bus not reachable on 127.0.0.1:%s: %s" % (port, e)
+
+
 def bus_call(op, payload, timeout=10):
     token = os.environ.get("DOJO_TOKEN", "")
     if not token:
@@ -137,7 +145,7 @@ def bus_call(op, payload, timeout=10):
     except (urllib.error.URLError, OSError, http.client.HTTPException) as e:
         # http.client's own errors are neither of the first two: an answer cut short when the app quits
         # (IncompleteRead), a port that is no number (InvalidURL). D52: they came out as tracebacks.
-        raise BusError("bus not reachable on 127.0.0.1:%s: %s" % (port, e))
+        raise BusError(bus_trouble(port, e))
     return json.loads(body.decode("utf-8")) if body else {}
 
 
@@ -174,7 +182,7 @@ def outside_send(pane, text, timeout=10):
             pass
         raise BusError("bus refused (%d): %s" % (e.code, detail))
     except (urllib.error.URLError, OSError, http.client.HTTPException) as e:
-        raise BusError("bus not reachable on 127.0.0.1:%d: %s" % (port, e))
+        raise BusError(bus_trouble(port, e))
     return json.loads(body.decode("utf-8")) if body else {}
 
 
@@ -187,7 +195,8 @@ def outside_send(pane, text, timeout=10):
 BUS_BODY_LIMIT = 1024 * 1024
 HOOK_READ_LIMIT = 64 << 20  # characters of one event; past this it is dropped, as any event that is not JSON
 HOOK_NEVER_READ = ("tool_input", "tool_response")
-HOOK_STATE_FIELDS = ("hook_event_name", "session_id", "model", "to_model", "notification_type", "harness")
+HOOK_STATE_FIELDS = ("hook_event_name", "session_id", "model", "to_model", "notification_type", "harness",
+                     "transcript_path")  # with the prompt, every field the bus reads
 
 
 def hook_payload(event):
@@ -685,7 +694,9 @@ def audit_text(entry):
     route = route if isinstance(route, str) else json.dumps(route)
     rest = ", ".join("%s %s" % (k, ",".join(map(str, v)) if isinstance(v, list) else json.dumps(v) if isinstance(v, bool) else v)
                      for k, v in sorted(entry.items()) if k not in AUDIT_SHOWN)
-    line = " ".join(x for x in (when, "%-12s" % entry.get("op", "?"), route, entry.get("outcome", ""),
+    outcome = entry.get("outcome", "")
+    outcome = outcome if isinstance(outcome, str) else json.dumps(outcome)
+    line = " ".join(x for x in (when, "%-12s" % entry.get("op", "?"), route, outcome,
                                 "(%s)" % rest if rest else "") if x)
     text = entry.get("text")
     if isinstance(text, str):

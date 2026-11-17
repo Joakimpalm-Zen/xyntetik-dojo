@@ -1450,13 +1450,21 @@ class HardeningSweep(unittest.TestCase):
         self.env["DOJO_PORT"] = str(cut.port)
         code, _, err = self.cli("panes")
         self.assertEqual(code, 1)
-        self.assertIn("dojo: bus", err)
+        self.assertIn("dojo: bus answer", err)
+        self.assertIn("may have been taken", err)  # the request went out: not "not reachable"
+
+    def test_the_last_resort_keeps_every_field_the_bus_reads_but_the_prompt(self):
+        event = {"hook_event_name": "Stop", "session_id": "s-1", "transcript_path": "/t", "model": "m",
+                 "something_huge": "h" * (2 << 20), "prompt": "p"}
+        self.cli("hook", stdin=json.dumps(event))
+        self.assertEqual(self.hooks(), [{"hook_event_name": "Stop", "session_id": "s-1", "model": "m",
+                                         "transcript_path": "/t"}])
 
     def test_a_port_that_is_no_number_is_a_refusal_in_words(self):
         self.env["DOJO_PORT"] = "seven"
         code, _, err = self.cli("state", "codex-1")
         self.assertEqual(code, 1)
-        self.assertIn("dojo: bus", err)
+        self.assertIn("dojo: bus not reachable", err)
 
     def test_the_mcp_tool_says_so_too(self):
         cut = CutShortBus()
@@ -1480,7 +1488,7 @@ class HardeningSweep(unittest.TestCase):
         os.makedirs(folder)
         first = json.dumps({"time": "2026-11-17T10:00:00Z", "op": "send", "from": "a", "pane": "b", "text": "hi"})
         second = json.dumps({"prev": hashlib.sha256(first.encode()).hexdigest(), "time": 5, "op": 7, "from": 3,
-                             "pane": None, "text": "odd"})
+                             "pane": None, "outcome": 404, "senders": 9, "extra": [1, 2], "text": "odd"})
         with open(os.path.join(folder, "2026-11-17.jsonl"), "w") as f:
             f.write(first + "\n" + second + "\n")
         shim = load_shim()
