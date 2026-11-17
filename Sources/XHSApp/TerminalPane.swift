@@ -31,8 +31,8 @@ final class TerminalPane: TerminalView, PaneIO {
     var paneName: String
     /// Called on the main thread when the process ends, with its exit code.
     var onExit: ((Int32?) -> Void)?
-    /// Called with what each batch of the owner's keystrokes did to the composer.
-    var onOwnerInput: ((Bus.OwnerKey) -> Void)?
+    /// Called with each batch of the owner's raw keystroke bytes sent to the pane.
+    var onOwnerInput: ((ArraySlice<UInt8>) -> Void)?
     /// Called each time the pane arrives in a window, as a move between the grid and a tab does.
     var onLanded: (() -> Void)?
     private var process: LocalProcess!
@@ -291,7 +291,7 @@ extension TerminalPane: LocalProcessDelegate {
 
 extension TerminalPane: TerminalViewDelegate {
     func send(source: TerminalView, data: ArraySlice<UInt8>) {
-        onOwnerInput?(OwnerInput.key(data))
+        onOwnerInput?(data)
         process.send(data: data)
     }
 

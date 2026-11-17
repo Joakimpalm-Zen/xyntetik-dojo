@@ -138,5 +138,133 @@ import Testing
         }
         #expect(rig.io.enterCount == 0, "earlier owner queued prompt hook cleared ownerTypedUnproven and sent Enter")
         #expect(rig.bus.info("worker")?.needsOwnerEnter == true)
+
+        // Positive control: when both queued prompts' submit hooks have arrived, the capped message sends Enter.
+        let control = Self.makeRig(cols: fx.cols, rows: fx.rows)
+        control.io.showBytes(fx.before)
+        control.bus.setState("worker", .running)
+        control.bus.noteOwnerInput("worker", .text)
+        control.bus.noteOwnerInput("worker", .submit)
+        control.bus.noteOwnerInput("worker", .text)
+        control.bus.noteOwnerInput("worker", .submit)
+        try control.hook("UserPromptSubmit", prompt: "earlier owner prompt")
+        try control.hook("UserPromptSubmit", prompt: "later draft")
+        try control.hook("Stop")
+        control.step(4)
+        control.bus.tick()
+        let controlReply = try control.send(fx.payload)
+        #expect(controlReply["delivered"] as? Bool == true)
+        control.io.showBytes(fx.after)
+        control.fire()
+        for _ in 0..<5 {
+            control.step(1)
+            control.bus.tick()
+        }
+        #expect(control.io.enterCount == 1)
+        #expect(control.bus.info("worker")?.needsOwnerEnter == false)
+    }
+
+    @Test func byteTrackedEarlierQueuedPromptHoldsWhileMatchingLatestDraftClears() throws {
+        let fx = try Self.loadCappedCase()
+        let rig = Self.makeRig(cols: fx.cols, rows: fx.rows)
+        rig.io.showBytes(fx.before)
+        rig.bus.setState("worker", .running)
+
+        // Bus did not observe the earlier prompt's keystrokes (e.g., queued before Bus attached or from history);
+        // it only sees the owner's delayed draft bytes + Enter.
+        rig.bus.noteOwnerInput("worker", bytes: Array("later draft text".utf8)[...])
+        rig.bus.noteOwnerInput("worker", bytes: [0x0D][...])
+
+        // Earlier queued prompt's UserPromptSubmit disagrees with "later draft text": MUST NOT clear.
+        try rig.hook("UserPromptSubmit", prompt: "unseen earlier prompt")
+        try rig.hook("Stop")
+        rig.step(4)
+        rig.bus.tick()
+
+        let blocked = try rig.send(fx.payload)
+        #expect(blocked["delivered"] as? Bool == true)
+        #expect(rig.io.pasteCount == 1)
+        rig.io.showBytes(fx.after)
+        rig.fire()
+        for _ in 0..<5 {
+            rig.step(1)
+            rig.bus.tick()
+        }
+        #expect(rig.io.enterCount == 0)
+        #expect(rig.bus.info("worker")?.needsOwnerEnter == true)
+
+        // Fresh control where the matching latest draft submit hook arrives: MUST clear and send Enter.
+        let matching = Self.makeRig(cols: fx.cols, rows: fx.rows)
+        matching.io.showBytes(fx.before)
+        matching.bus.setState("worker", .running)
+        matching.bus.noteOwnerInput("worker", bytes: Array("later draft text".utf8)[...])
+        matching.bus.noteOwnerInput("worker", bytes: [0x0D][...])
+        try matching.hook("UserPromptSubmit", prompt: "unseen earlier prompt")
+        try matching.hook("UserPromptSubmit", prompt: "later draft text")
+        try matching.hook("Stop")
+        matching.step(4)
+        matching.bus.tick()
+
+        let cleared = try matching.send(fx.payload)
+        #expect(cleared["delivered"] as? Bool == true)
+        matching.io.showBytes(fx.after)
+        matching.fire()
+        for _ in 0..<5 {
+            matching.step(1)
+            matching.bus.tick()
+        }
+        #expect(matching.io.enterCount == 1)
+        #expect(matching.bus.info("worker")?.needsOwnerEnter == false)
+    }
+
+    @Test func completionEnterTabAndBackspaceEditStillClearOnMatchingSubmit() throws {
+        let fx = try Self.loadCappedCase()
+
+        // 1. Backspace edits exact byte-tracked draft text cleanly so matching UserPromptSubmit still clears.
+        let edited = Self.makeRig(cols: fx.cols, rows: fx.rows)
+        edited.io.showBytes(fx.before)
+        edited.bus.setState("worker", .running)
+        edited.bus.noteOwnerInput("worker", bytes: Array("hello!".utf8)[...])
+        edited.bus.noteOwnerInput("worker", bytes: [0x7F][...])
+        edited.bus.noteOwnerInput("worker", bytes: Array(" world".utf8)[...])
+        edited.bus.noteOwnerInput("worker", bytes: [0x0D][...])
+        // An unrelated unseen prompt hook still must not clear "hello world".
+        try edited.hook("UserPromptSubmit", prompt: "unrelated earlier prompt")
+        try edited.hook("UserPromptSubmit", prompt: "hello world")
+        try edited.hook("Stop")
+        edited.step(4)
+        edited.bus.tick()
+        _ = try edited.send(fx.payload)
+        edited.io.showBytes(fx.after)
+        edited.fire()
+        for _ in 0..<5 {
+            edited.step(1)
+            edited.bus.tick()
+        }
+        #expect(edited.io.enterCount == 1)
+        #expect(edited.bus.info("worker")?.needsOwnerEnter == false)
+
+        // 2. Completion workflow: type prefix, Enter accepts completion (adds no new text before second Enter),
+        //    or Tab invalidates exact text, then final Enter submits full completion text.
+        let completed = Self.makeRig(cols: fx.cols, rows: fx.rows)
+        completed.io.showBytes(fx.before)
+        completed.bus.setState("worker", .running)
+        completed.bus.noteOwnerInput("worker", bytes: Array("/stat".utf8)[...])
+        completed.bus.noteOwnerInput("worker", bytes: [0x09][...]) // Tab invalidates exact string
+        completed.bus.noteOwnerInput("worker", bytes: [0x0D][...]) // Enter accepts completion
+        completed.bus.noteOwnerInput("worker", bytes: [0x0D][...]) // Second Enter submits (no new text)
+        try completed.hook("UserPromptSubmit", prompt: "/status")
+        try completed.hook("Stop")
+        completed.step(4)
+        completed.bus.tick()
+        _ = try completed.send(fx.payload)
+        completed.io.showBytes(fx.after)
+        completed.fire()
+        for _ in 0..<5 {
+            completed.step(1)
+            completed.bus.tick()
+        }
+        #expect(completed.io.enterCount == 1)
+        #expect(completed.bus.info("worker")?.needsOwnerEnter == false)
     }
 }

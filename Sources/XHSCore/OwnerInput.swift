@@ -9,6 +9,72 @@
 /// The terminal's own answers to the program's queries (cursor position, colours, device attributes,
 /// window size, mode reports) are not input at all.
 public enum OwnerInput {
+    /// What a batch of owner keystrokes does to the linear draft text tracked for matching against `UserPromptSubmit`.
+    public enum TypedEdit: Equatable {
+        case append(String)
+        case backspace
+        case invalidate
+        case none
+    }
+
+    public static func typedEdit(_ bytes: ArraySlice<UInt8>) -> TypedEdit {
+        guard let first = bytes.first else { return .none }
+        if bytes.count == 1 {
+            switch first {
+            case 0x0D, 0x03, 0x1B: return .none
+            case 0x7F, 0x08: return .backspace
+            case 0x0A: return .append("\n")
+            case 0x20...0x7E: return .append(String(UnicodeScalar(first)))
+            default: return .invalidate
+            }
+        }
+        if first != 0x1B {
+            let s = String(decoding: bytes, as: UTF8.self)
+            let isClean = s.unicodeScalars.allSatisfy { scalar in
+                scalar.value == 0x0A || scalar.value == 0x0D || (scalar.value >= 0x20 && scalar.value != 0x7F)
+            }
+            return isClean ? .append(s.replacingOccurrences(of: "\r", with: "\n")) : .invalidate
+        }
+        let s = String(decoding: bytes, as: UTF8.self)
+        if s.hasPrefix("\u{1b}]") || s.hasPrefix("\u{1b}P") { return .none }
+        if s.hasPrefix("\u{1b}[?"), s.hasSuffix("u") { return .none }
+        if s.hasPrefix("\u{1b}["), let last = s.last, "RcnIO".contains(last) { return .none }
+        if s.hasPrefix("\u{1b}["), s.hasSuffix("$y") { return .none }
+        if s.hasPrefix("\u{1b}["), s.hasSuffix("t"), s.dropFirst(2).first?.isNumber == true { return .none }
+        if s.hasPrefix("\u{1b}["), s.hasSuffix("u"), let (code, mods, event) = kittyKey(s) {
+            if event == 3 { return .none }
+            let control = mods & 4 != 0, shiftOrAlt = mods & 3 != 0
+            switch code {
+            case 13 where !shiftOrAlt: return .none
+            case 13: return .append("\n")
+            case 99 where control: return .none
+            case 27: return .none
+            case 127, 8: return .backspace
+            case 9: return .invalidate
+            case 57344...57600: return functionalKeyAddsText(code) ? .invalidate : .none
+            default:
+                if (mods & 6) != 0 { return .invalidate }
+                if let scalar = UnicodeScalar(code),
+                   (scalar.value >= 0x20 && scalar.value != 0x7F && !(0x80...0x9F).contains(scalar.value)) || scalar.value == 0x0A {
+                    return .append(String(scalar))
+                }
+                return .invalidate
+            }
+        }
+        if pointer(bytes) { return .none }
+        if s.hasPrefix("\u{1b}[200~") {
+            let innerStart = "\u{1b}[200~"
+            let innerEnd = "\u{1b}[201~"
+            if s.hasSuffix(innerEnd) {
+                let inner = String(s.dropFirst(innerStart.count).dropLast(innerEnd.count))
+                if !inner.contains("\u{1b}") { return .append(inner.replacingOccurrences(of: "\r", with: "\n")) }
+            }
+            return .invalidate
+        }
+        if moves(s) { return .invalidate }
+        return .invalidate
+    }
+
     public static func key(_ bytes: ArraySlice<UInt8>) -> Bus.OwnerKey {
         guard let first = bytes.first else { return .other }
         if bytes.count == 1 {

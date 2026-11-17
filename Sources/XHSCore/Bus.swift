@@ -146,6 +146,11 @@ public final class Bus {
         var ownerTypedUnproven = false
         /// The owner pressed Enter since their last unproven text key (`ownerTypedUnproven`).
         var ownerSubmitted = false
+        /// Linear draft text typed since the last clear/submit, when raw keystrokes stay unambiguous.
+        var ownerDraftText: String? = ""
+        var ownerDraftExact = true
+        /// Pending owner Enter presses paired against future `UserPromptSubmit` hooks (`nil` when draft text is unknown).
+        var ownerSubmits: [String?] = []
         /// Pastes the bus submitted by Enter and has not yet matched to a `UserPromptSubmit` hook.
         var busPastes: [String] = []
         /// An Enter is held because `ownerTypedUnproven` is true while the composer's head is hidden above.
@@ -390,7 +395,16 @@ public final class Bus {
     }
 
     /// The owner typed into the pane: hold relayed messages for a moment, and while text may be unsent.
+    public func noteOwnerInput(_ name: String, bytes: ArraySlice<UInt8>) {
+        recordOwnerInput(name, OwnerInput.key(bytes), edit: OwnerInput.typedEdit(bytes))
+    }
+
+    /// The owner typed into the pane: hold relayed messages for a moment, and while text may be unsent.
     public func noteOwnerInput(_ name: String, _ key: OwnerKey = .text) {
+        recordOwnerInput(name, key, edit: nil)
+    }
+
+    private func recordOwnerInput(_ name: String, _ key: OwnerKey, edit: OwnerInput.TypedEdit?) {
         guard let p = pane(named: name), key != .reply, key != .pointer else { return }
         p.lastOwnerInput = now()
         if key == .text || key == .history { p.lastOwnerText = now() }
@@ -413,6 +427,7 @@ public final class Bus {
         case .text:
             p.hasDraft = true
             p.typedSinceSubmit = true
+            applyOwnerDraftEdit(p, edit)
             if keyReachesComposer(p) {
                 p.ownerTypedUnproven = true
                 p.ownerSubmitted = false
@@ -420,22 +435,88 @@ public final class Bus {
         case .history:
             p.hasDraft = true
             p.typedSinceSubmit = true
+            p.ownerDraftExact = false
+            p.ownerDraftText = nil
         case .clear:
             p.hasDraft = false
             p.typedSinceSubmit = false
-            p.ownerTypedUnproven = false
-            p.ownerSubmitted = false
+            clearOwnerTypedUnproven(p)
+            p.ownerDraftText = ""
+            p.ownerDraftExact = true
         case .submit:
+            let hadNewText = p.typedSinceSubmit
             p.typedSinceSubmit = false
-            if p.ownerTypedUnproven { p.ownerSubmitted = true }
+            if p.ownerTypedUnproven {
+                p.ownerSubmitted = true
+                if hadNewText {
+                    if p.ownerSubmits.count >= 32 { p.ownerSubmits.removeFirst() }
+                    p.ownerSubmits.append(p.ownerDraftExact ? p.ownerDraftText : nil)
+                } else if !p.ownerSubmits.isEmpty {
+                    p.ownerSubmits[p.ownerSubmits.count - 1] = nil
+                }
+            }
+            p.ownerDraftText = ""
+            p.ownerDraftExact = true
             if p.kind == .shell || p.kind == .runner {
                 p.hasDraft = false
-                p.ownerTypedUnproven = false
-                p.ownerSubmitted = false
+                clearOwnerTypedUnproven(p)
             }   // no hooks there: Enter is it
-        case .other, .reply, .pointer: break
+        case .other, .reply, .pointer:
+            if let edit { applyOwnerDraftEdit(p, edit) }
         }
         if before != p.hasDraft { onChange?() }
+    }
+
+    private func applyOwnerDraftEdit(_ p: Pane, _ edit: OwnerInput.TypedEdit?) {
+        guard let edit else {
+            p.ownerDraftExact = false
+            p.ownerDraftText = nil
+            return
+        }
+        switch edit {
+        case .append(let added):
+            if p.ownerDraftExact {
+                p.ownerDraftText = (p.ownerDraftText ?? "") + added
+            }
+        case .backspace:
+            if p.ownerDraftExact, var current = p.ownerDraftText {
+                if !current.isEmpty { current.removeLast() }
+                p.ownerDraftText = current
+            } else {
+                p.ownerDraftExact = false
+                p.ownerDraftText = nil
+            }
+        case .invalidate:
+            p.ownerDraftExact = false
+            p.ownerDraftText = nil
+        case .none:
+            break
+        }
+    }
+
+    private func clearOwnerTypedUnproven(_ p: Pane) {
+        p.ownerTypedUnproven = false
+        p.ownerSubmitted = false
+        p.ownerSubmits.removeAll()
+    }
+
+    private func shouldClearOwnerTypedUnproven(_ p: Pane, prompt: String?) -> Bool {
+        guard !p.ownerSubmits.isEmpty else { return true }
+        if let prompt, !prompt.isEmpty {
+            if let match = p.ownerSubmits.lastIndex(where: { entry in
+                guard let entry else { return false }
+                return Composer.sameText(entry, prompt)
+            }) {
+                if match == p.ownerSubmits.count - 1 { return true }
+                p.ownerSubmits.remove(at: match)
+                return false
+            }
+            if let latest = p.ownerSubmits.last ?? nil, !Composer.sameText(latest, prompt) {
+                return false
+            }
+        }
+        p.ownerSubmits.removeFirst()
+        return p.ownerSubmits.isEmpty
     }
 
     /// Delivers what can be delivered now and notices turns that ended without a Stop hook.
@@ -893,8 +974,9 @@ public final class Bus {
                 let wasDraft = pane.hasDraft
                 pane.hasDraft = false
                 if pane.ownerSubmitted && (prompt != nil || pane.kind == .pi || pane.busPastes.isEmpty) {
-                    pane.ownerTypedUnproven = false
-                    pane.ownerSubmitted = false
+                    if self.shouldClearOwnerTypedUnproven(pane, prompt: prompt) {
+                        self.clearOwnerTypedUnproven(pane)
+                    }
                 }
                 if wasDraft { onChange?() }
             }
@@ -1031,8 +1113,7 @@ public final class Bus {
                         self.recordBusPaste(p, p.pasted)
                         io.write(Delivery.enter)
                         if !headHidden {
-                            p.ownerTypedUnproven = false
-                            p.ownerSubmitted = false
+                            self.clearOwnerTypedUnproven(p)
                         }
                         self.nothingWaits(p)
                         self.note(["op": "enter", "pane": p.name, "outcome": "sent"])
@@ -1205,8 +1286,7 @@ public final class Bus {
         p.enterOwed = false
         if did == .sentIt {
             recordBusPaste(p, p.pasted)
-            p.ownerTypedUnproven = false
-            p.ownerSubmitted = false
+            clearOwnerTypedUnproven(p)
         }
         nothingWaits(p)
         if did == .leftADraft {
@@ -1275,7 +1355,7 @@ public final class Bus {
             switch ownersEnter(p, io) {
             case .sentIt:
                 p.enterOwed = false
-                p.ownerTypedUnproven = false
+                clearOwnerTypedUnproven(p)
                 nothingWaits(p)
                 note(["op": "enter", "pane": p.name, "outcome": "dropped", "why": "the composer no longer holds the paste"])
                 onChange?()
@@ -1322,8 +1402,7 @@ public final class Bus {
             recordBusPaste(p, p.pasted)
             io.write(Delivery.enter)
             if !headHidden && !unproven {
-                p.ownerTypedUnproven = false
-                p.ownerSubmitted = false
+                clearOwnerTypedUnproven(p)
             }
             nothingWaits(p)
             if unproven {
