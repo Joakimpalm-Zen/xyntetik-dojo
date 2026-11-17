@@ -187,6 +187,32 @@ import Testing
         #expect(other.recorded("enter").last?["outcome"] as? String == "owed")
     }
 
+    /// The second read of #114: a message taller than agy's composer whose end, as the composer shows it, is
+    /// shorter than `Composer.editedRun` (a few rows of a letter or two): the Enter stayed owed. When the rows
+    /// shown are the paste's last lines, one for one, the paste is there; rows that only hold its last letters,
+    /// or none, are not.
+    @Test func aPasteTallerThanTheComposerWithAShortEndGetsItsEnter() {
+        let text = "a first line of a relayed message, long enough to wrap over more rows than the composer shows, "
+            + "and then some more words to make sure of it\n" + ["a", "b", "c", "ok"].joined(separator: "\n")
+        let rig = Rig(kind: .agy, submitDelay: 0.15)
+        rig.io.screen = Self.idle
+        rig.io.bracketedPasteEnabled = true
+        rig.send(text)
+        rig.io.screen = [Self.rule, "> ↑ 3 more lines", "  a", "  b", "  c", "  ok", Self.rule, Self.status].joined(separator: "\n")
+        rig.fire()
+        #expect(rig.enters == 1)
+        #expect(rig.recorded("enter").last?["outcome"] as? String == "sent")
+        for shown in [["  ab", "  cok"], ["  ok"], ["  "], ["  c", "  ok", "  more"]] {
+            let other = Rig(kind: .agy, submitDelay: 0.15)
+            other.io.screen = Self.idle
+            other.io.bracketedPasteEnabled = true
+            other.send(text)
+            other.io.screen = ([Self.rule, "> ↑ 3 more lines"] + shown + [Self.rule, Self.status]).joined(separator: "\n")
+            other.fire()
+            #expect(other.enters == (shown == ["  ok"] ? 1 : 0), "\(shown)")
+        }
+    }
+
     /// What agy draws of a paste: a short one row by row, a long one as its stand-in. The Enter waits for it.
     @Test func aPasteGetsItsEnterOnceAgyShowsIt() {
         let rig = Rig(kind: .agy, submitDelay: 0.15)
