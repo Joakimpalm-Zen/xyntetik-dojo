@@ -43,6 +43,25 @@ import Testing
         #expect(BusRecord.files(in: folder).map(\.lastPathComponent) == ["2026-10-26.jsonl"])
     }
 
+    @Test func twoWritersKeepOneChainAfterAnInterveningBurst() {
+        defer { try? FileManager.default.removeItem(at: folder) }
+        record.append(["op": "first"])
+        let other = BusRecord(directory: folder)
+        let start = clock
+        other.now = { start }
+        other.append(["op": "second"])
+        other.append(["op": "third"])
+        record.append(["op": "fourth"])
+        other.append(["op": "fifth"])
+
+        let raw = rawLines()
+        let parsed = lines()
+        #expect(parsed.compactMap { $0["op"] as? String } == ["first", "second", "third", "fourth", "fifth"])
+        for index in 1..<raw.count {
+            #expect(parsed[index]["prev"] as? String == BusRecord.hash(Data(raw[index - 1].utf8)))
+        }
+    }
+
     @Test func onlyTheOwnerCanReadIt() throws {
         record.append(["op": "panes", "from": "a"])
         let fm = FileManager.default
