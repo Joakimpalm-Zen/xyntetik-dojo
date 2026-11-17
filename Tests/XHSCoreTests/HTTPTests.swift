@@ -24,6 +24,29 @@ import Testing
         #expect(HTTPRequest.parse(Data(repeating: 65, count: HTTPRequest.maxHeaderBytes + 1)) == .invalid)
     }
 
+    @Test func theHeaderLimitAlsoAppliesWhenTheTerminatorIsPresent() {
+        let prefix = Data("POST /send HTTP/1.1\r\nX-Pad: ".utf8)
+        let suffix = Data("\r\nContent-Length: 2\r\n\r\n".utf8)
+        let padding = HTTPRequest.maxHeaderBytes + 8 - prefix.count - suffix.count
+        let header = prefix + Data(repeating: 65, count: padding) + suffix
+        #expect(header.count == HTTPRequest.maxHeaderBytes + 8)
+        // A TCP receive boundary must not turn a rejected header into an accepted request.
+        #expect(HTTPRequest.parse(header.dropLast(4)) == .invalid)
+        #expect(HTTPRequest.parse(header + Data("{}".utf8)) == .invalid)
+    }
+
+    @Test func aHeaderAtTheLimitCanStillCarryALargerBody() throws {
+        let payload = Data(repeating: 65, count: HTTPRequest.maxHeaderBytes * 2)
+        let prefix = Data("POST /send HTTP/1.1\r\nX-Pad: ".utf8)
+        let suffix = Data("\r\nContent-Length: \(payload.count)\r\n\r\n".utf8)
+        let header = prefix + Data(repeating: 65, count: HTTPRequest.maxHeaderBytes - prefix.count - suffix.count) + suffix
+        guard case .complete(let request) = HTTPRequest.parse(header + payload) else {
+            Issue.record("valid header and body were rejected")
+            return
+        }
+        #expect(request.body == payload)
+    }
+
     @Test func responseHasLengthAndClose() {
         let text = String(decoding: HTTPRequest.response(status: 401, body: Data("{}".utf8)), as: UTF8.self)
         #expect(text.hasPrefix("HTTP/1.1 401 Unauthorized\r\n"))
