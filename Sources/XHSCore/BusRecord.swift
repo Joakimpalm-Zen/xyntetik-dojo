@@ -1,4 +1,5 @@
 import CryptoKit
+import Darwin
 import Foundation
 
 /// The record of bus traffic (D21.2): one JSON line per bus operation, in a file per day under
@@ -15,7 +16,6 @@ public final class BusRecord {
     public static let origin = String(repeating: "0", count: 64)
 
     public var now: () -> Date = { Date() }
-    private var lastHash: String?
     private var prunedFor: String?
 
     public init(directory: URL) {
@@ -23,42 +23,72 @@ public final class BusRecord {
     }
 
     /// Appends one line: `fields` plus the time and the previous line's hash. A record that cannot be
-    /// written never stops the bus.
+    /// written never stops the bus. Competing writers wait, then read the tail under the same lock.
     public func append(_ fields: [String: Any]) {
+        do {
+            try appendLocked(fields)
+        } catch {
+            let message = "Dojo: cannot write bus record: \(error.localizedDescription)\n"
+            try? FileHandle.standardError.write(contentsOf: Data(message.utf8))
+        }
+    }
+
+    private func appendLocked(_ fields: [String: Any]) throws {
         let fm = FileManager.default
-        try? fm.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        let day = BusRecord.day(now())
+        try fm.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        // Never unlink this file: all writers must lock the same inode, including after a crash.
+        let lock = open(directory.appendingPathComponent(".writer.lock").path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
+        guard lock >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        defer { close(lock) }
+        while flock(lock, LOCK_EX) != 0 {
+            if errno != EINTR { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        }
+        defer { flock(lock, LOCK_UN) }
+        let date = now()
+        let day = BusRecord.day(date)
         if prunedFor != day {
             prune(today: day)
             prunedFor = day
         }
         var line = fields
-        line["time"] = BusRecord.stamp(now())
-        line["prev"] = lastHash ?? newestHash() ?? BusRecord.origin
-        guard let data = try? JSONSerialization.data(withJSONObject: line, options: [.sortedKeys, .withoutEscapingSlashes])
-        else { return }
+        line["time"] = BusRecord.stamp(date)
+        line["prev"] = try newestHash() ?? BusRecord.origin
+        let data = try JSONSerialization.data(withJSONObject: line, options: [.sortedKeys, .withoutEscapingSlashes])
         let file = directory.appendingPathComponent(day + ".jsonl")
         if !fm.fileExists(atPath: file.path) {
-            guard fm.createFile(atPath: file.path, contents: nil, attributes: [.posixPermissions: 0o600]) else { return }
+            guard fm.createFile(atPath: file.path, contents: nil, attributes: [.posixPermissions: 0o600])
+            else { throw CocoaError(.fileWriteUnknown) }
         }
-        guard let handle = try? FileHandle(forWritingTo: file) else { return }
+        let handle = try FileHandle(forWritingTo: file)
         defer { try? handle.close() }
-        do {
-            try handle.seekToEnd()
-            try handle.write(contentsOf: data + Data("\n".utf8))
-        } catch {
-            return
-        }
-        lastHash = BusRecord.hash(data)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: data + Data("\n".utf8))
     }
 
-    /// The hash of the last line of the newest file, to carry the chain on across launches.
-    private func newestHash() -> String? {
-        guard let newest = BusRecord.files(in: directory).last,
-              let text = try? String(contentsOf: newest, encoding: .utf8),
-              let last = text.split(separator: "\n", omittingEmptySubsequences: true).last
-        else { return nil }
-        return BusRecord.hash(Data(last.utf8))
+    /// Read only the tail, not the day's whole record on every append. Called with the writer lock held.
+    private func newestHash() throws -> String? {
+        for file in BusRecord.files(in: directory).reversed() {
+            let handle = try FileHandle(forReadingFrom: file)
+            defer { try? handle.close() }
+            var offset = try handle.seekToEnd()
+            var reversedLine = Data()
+            while offset > 0 {
+                let count = Int(min(offset, 4096))
+                offset -= UInt64(count)
+                try handle.seek(toOffset: offset)
+                guard let chunk = try handle.read(upToCount: count), chunk.count == count
+                else { throw CocoaError(.fileReadUnknown) }
+                for byte in chunk.reversed() {
+                    if byte == 10 {
+                        if !reversedLine.isEmpty { return BusRecord.hash(Data(reversedLine.reversed())) }
+                    } else {
+                        reversedLine.append(byte)
+                    }
+                }
+            }
+            if !reversedLine.isEmpty { return BusRecord.hash(Data(reversedLine.reversed())) }
+        }
+        return nil
     }
 
     private func prune(today: String) {
