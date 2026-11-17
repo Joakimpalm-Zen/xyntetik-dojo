@@ -227,7 +227,9 @@ public enum Composer {
             // paste leaves the cursor at its end, so only the owner scrolls it; the Enter then waits, as before.
             guard let closing = foot.indices.first(where: { $0 > top && isRuledLine(foot[$0].text) }) else { return nil }
             let shown = foot[(top + 1)..<closing].map(\.text)
-            guard !shown.isEmpty, ShownPart(rows: shown, above: true, below: false).isPart(of: pasted) else { return nil }
+            let innerWidth = max(foot[top].text.count - 4, shown.map(\.count).max() ?? 1)
+            guard !shown.isEmpty, wrappedRows(pasted, width: innerWidth) > shown.count,
+                  ShownPart(rows: shown, above: true, below: false).isPart(of: pasted) else { return nil }
             (at, first, end, block) = (top + 1, shown[0], closing + 1, closing)
         } else {
             guard let row = marked, let text = afterMark(row), !isNumberedChoice(text) else { return nil }
@@ -355,6 +357,36 @@ public enum Composer {
         if below { rows.removeLast() }
         guard above || below else { return nil }
         return ShownPart(rows: rows, above: above, below: below)
+    }
+
+    /// How many wrapped rows `text` takes inside a box of `width` columns. Used when a capped banner
+    /// claims rows are hidden above: if the paste alone fits within the visible rows, something before it
+    /// pushed rows off the top (D43).
+    static func wrappedRows(_ text: String, width: Int) -> Int {
+        guard width > 0 else { return 1 }
+        var total = 0
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            var col = 0
+            var rows = 1
+            for (i, word) in line.split(separator: " ", omittingEmptySubsequences: false).enumerated() {
+                let len = word.count
+                if i > 0 {
+                    if col + 1 + len <= width {
+                        col += 1 + len
+                        continue
+                    }
+                    rows += 1
+                }
+                if len <= width {
+                    col = len
+                } else {
+                    rows += (len - 1) / width
+                    col = ((len - 1) % width) + 1
+                }
+            }
+            total += rows
+        }
+        return max(total, 1)
     }
 
     /// "─── ↑ 3 more ───": Claude Code's ruled line over a composer taller than it shows (D41, a pane on
