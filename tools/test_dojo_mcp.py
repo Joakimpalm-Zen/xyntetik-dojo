@@ -1322,6 +1322,22 @@ class AuditTest(unittest.TestCase):
         self.assertEqual((code, out), (0, ""))
         self.assertIn("no bus record", err)
 
+    def test_the_writer_lock_is_never_a_record(self):
+        path = os.path.join(self.folder, ".writer.lock")
+        with open(path, "wb") as fh:
+            fh.write(b"not a record\n")
+        code, out, err = self.run_audit()
+        self.assertEqual((code, out), (0, ""))
+        self.assertIn("no bus record", err)
+        self.write("2026-11-10", [{"op": "panes"}])
+        code, out, err = self.run_audit()
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(out.splitlines()), 1)
+        self.assertNotIn("not a record", out + err)
+        self.assertNotIn(".writer.lock", out + err)
+        with open(path, "rb") as fh:
+            self.assertEqual(fh.read(), b"not a record\n")
+
     def test_a_fork_names_the_earlier_line_and_leaves_the_record_alone(self):
         first = self.write("2026-11-10", [{"op": "first"}])
         path = os.path.join(self.folder, "2026-11-10.jsonl")
