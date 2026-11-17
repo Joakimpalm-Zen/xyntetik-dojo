@@ -75,4 +75,55 @@ import Testing
                              label: "", since: Date(), idleFlag: nil)])
         #expect(!FileManager.default.fileExists(atPath: url.path), "write() recreated live.json after live.remove() shutdown")
     }
+
+    // MARK: D56: BusRecord unterminated EOF line and DST spring-forward prune boundary
+
+    @Test func busRecordSeparatesAppendAfterTruncatedLineWithoutNewline() throws {
+        let root = try Self.makeTempDir("audit-eol")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let day = "2026-11-17"
+        let file = root.appendingPathComponent("\(day).jsonl")
+        let truncated = Data(#"{"op":"partial","unfinished":1"#.utf8)
+        try truncated.write(to: file)
+
+        let record = BusRecord(directory: root)
+        var components = DateComponents()
+        components.calendar = Calendar(identifier: .gregorian)
+        components.timeZone = TimeZone(identifier: "UTC")
+        components.year = 2026; components.month = 11; components.day = 17; components.hour = 12
+        let fixedDate = try #require(components.date)
+        record.now = { fixedDate }
+
+        record.append(["op": "send", "pane": "worker"])
+
+        let raw = String(decoding: try Data(contentsOf: file), as: UTF8.self)
+        let lines = raw.split(separator: "\n", omittingEmptySubsequences: false).dropLast()
+        #expect(lines.count == 2, "new record was glued onto truncated trailing line")
+        let secondLineData = Data(String(lines.last ?? "").utf8)
+        let parsed = try #require(try? JSONSerialization.jsonObject(with: secondLineData) as? [String: Any])
+        #expect(parsed["op"] as? String == "send")
+        #expect(parsed["prev"] as? String == BusRecord.hash(truncated))
+    }
+
+    @Test func busRecordPruneUsesUTCAcrossSpringForwardDST() throws {
+        let root = try Self.makeTempDir("audit-dst")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let keptFile = root.appendingPathComponent("2026-03-02.jsonl")
+        let expiredFile = root.appendingPathComponent("2026-03-01.jsonl")
+        try Data("{\"op\":\"open\"}\n".utf8).write(to: keptFile)
+        try Data("{\"op\":\"open\"}\n".utf8).write(to: expiredFile)
+
+        let record = BusRecord(directory: root)
+        var components = DateComponents()
+        components.calendar = Calendar(identifier: .gregorian)
+        components.timeZone = TimeZone(identifier: "UTC")
+        components.year = 2026; components.month = 4; components.day = 1; components.hour = 12
+        let aprilFirst = try #require(components.date)
+        record.now = { aprilFirst }
+
+        record.append(["op": "open", "pane": "worker"])
+
+        #expect(FileManager.default.fileExists(atPath: keptFile.path), "30-day-old file 2026-03-02 was deleted early across DST")
+        #expect(!FileManager.default.fileExists(atPath: expiredFile.path), "31-day-old file 2026-03-01 should be pruned")
+    }
 }
