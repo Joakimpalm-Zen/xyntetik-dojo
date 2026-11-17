@@ -137,6 +137,8 @@ class ShimTest(unittest.TestCase):
         self.assertEqual(m.tool_payload("send", {"pane": "p", "type": "merged", "fields": {"repo": "r", "pr": 92, "sha": "abcdef1"}}),
                          {"pane": "p", "type": "merged", "fields": {"repo": "r", "pr": "92", "sha": "abcdef1"}})
         self.assertEqual(m.tool_payload("send", {"pane": "p", "text": "hi"}), {"pane": "p", "text": "hi"})
+        # D39: a text of null is no text, not the word None
+        self.assertNotEqual(m.tool_payload("send", {"pane": "p", "text": None}).get("text"), "None")
         with self.assertRaises(ValueError):
             m.tool_payload("send", {"pane": "p", "type": "bug", "fields": "not an object"})
         send = next(t for t in m.TOOLS if t["name"] == "send")
@@ -855,6 +857,20 @@ class AgyHookTest(unittest.TestCase):
             self.assertEqual(self.hook(self.event("SessionStart"), env=env), {}, pid)
             self.statusline(self.status(agent_state="working"), env=env)
         self.assertEqual(self.bus.requests, [])
+
+    # D39 (an outside read at 9e022af): a confirmation dialog is up, the status line has put the pane at
+    # prompt, and another tool agy runs meanwhile reports through its hooks: the pane went back to running
+    # until the next status-line refresh put it at prompt again, a second prompt for the same dialog.
+
+    def test_another_tools_hooks_while_a_confirmation_waits_leave_the_pane_at_prompt(self):
+        self.statusline(self.status(agent_state="tool_use", tool_confirmation_pending=True))
+        self.hook(self.event("PreToolUse", toolCall={"id": "call_2", "name": "view_file"}))
+        self.hook(self.event("PostToolUse", toolCall={"id": "call_2", "name": "view_file"}))
+        self.statusline(self.status(agent_state="tool_use", tool_confirmation_pending=True))
+        self.assertEqual([e["hook_event_name"] for e in self.posted()], ["PermissionRequest"])
+        # the owner answered: the status line no longer says pending, and the work goes on
+        self.statusline(self.status(agent_state="tool_use"))
+        self.assertEqual([e["hook_event_name"] for e in self.posted()], ["PermissionRequest", "PostToolUse"])
 
     def test_what_the_agy_pane_posts_says_it_is_agys(self):
         self.hook(self.event("Stop"))
