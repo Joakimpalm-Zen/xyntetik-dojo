@@ -438,4 +438,32 @@ import Testing
         rig.fire()
         #expect(rig.io.enterCount == 2, "owner's own UserPromptSubmit should clear fact and allow next capped Enter")
     }
+
+    @Test func probeANoOpDownAndEmptyUpThenCappedMessageGetsEnter() throws {
+        let id = "claude-105x14-short-draft-s300"
+        let bytes = try Data(contentsOf: Self.sweepDir.appendingPathComponent("\(id).bin"))
+        let manifest = try JSONDecoder().decode(
+            [D43SweepScreensTests.SweepCase].self,
+            from: Data(contentsOf: Self.sweepDir.appendingPathComponent("manifest.json"))
+        )
+        let entry = try #require(manifest.first { $0.id == id })
+        let pasted = String(decoding: try Data(contentsOf: Self.sweepDir.appendingPathComponent("\(id).txt")), as: UTF8.self)
+        let payload = D43SweepScreensTests.sendPayload(from: pasted)
+
+        for keySeq in ["\u{1b}[B", "\u{1b}[A"] {
+            let rig = Self.makeRig(kind: .claude, cols: entry.cols, rows: entry.rows)
+            rig.io.showBytes(bytes.prefix(entry.beforeOffset))
+            rig.bus.noteOwnerInput("worker", OwnerInput.key(Array(keySeq.utf8)[...]))
+            // Empty composer stays unchanged (no history to recall); wait 4s quiet.
+            rig.advance(4)
+            let res = rig.send(payload)
+            #expect(res["delivered"] as? Bool == true)
+            #expect(rig.io.pasteCount == 1)
+            rig.io.showBytes(bytes[entry.beforeOffset..<entry.afterOffset])
+            rig.fire()
+            for _ in 0..<30 { rig.advance(1); rig.bus.tick() }
+            #expect(rig.io.enterCount == 1, "\(keySeq.debugDescription): no-op history arrow held capped Enter")
+            #expect(rig.bus.info("worker")?.needsOwnerEnter == false)
+        }
+    }
 }
