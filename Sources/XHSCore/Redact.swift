@@ -4,8 +4,9 @@ import Foundation
 /// switch. The owner's own view of a pane is never changed; only the text that leaves the bus is.
 ///
 /// Three passes. Every live bus token is replaced exactly, even when the terminal wrapped it across two rows:
-/// the bus knows them all, so that one is a guarantee. Then the keys with a fixed shape that the screen
-/// wrapped at the pane's width (D35.4), and then the known secret shapes in `rules`, the short list below, after
+/// the bus knows them all, so that one is a guarantee. Then the secret shapes the screen wrapped at the
+/// pane's width (D35.4; since D39 every shape, not only keys with a fixed prefix), and then the known secret
+/// shapes in `rules`, the short list below, after
 /// the rule sets of gitleaks and detect-secrets. A pattern list misses things, so this is a backstop; who may
 /// read at all is the primary control (step 3, roles).
 ///
@@ -137,10 +138,15 @@ public enum Redact {
             var hits: [(range: NSRange, kind: String)] = []
             for rule in rules where rule.wraps {
                 for m in rule.regex.matches(in: joined, range: NSRange(location: 0, length: line.length)) {
+                    // what goes: the match, less the part the rule keeps in front of the marker ("NAME=")
+                    let start = rule.keep > 0 ? NSMaxRange(m.range(at: rule.keep)) : m.range.location
                     let end = m.range.location + m.range.length
-                    guard starts.dropFirst().contains(where: { m.range.location < $0 && $0 < end }) else { continue }
-                    guard !hits.contains(where: { NSIntersectionRange($0.range, m.range).length > 0 }) else { continue }
-                    hits.append((m.range, rule.kind))
+                    let range = NSRange(location: start, length: end - start)
+                    // the match crosses a row break, though what goes may stand in one row ("-u bob:" at a
+                    // row's end, the password the whole next row): no rule that reads row by row sees it
+                    guard starts.dropFirst().contains(where: { m.range.location < $0 && $0 < end }), range.length > 0 else { continue }
+                    guard !hits.contains(where: { NSIntersectionRange($0.range, range).length > 0 }) else { continue }
+                    hits.append((range, rule.kind))
                 }
             }
             // from the last hit back, so the places of the earlier ones hold
@@ -213,22 +219,22 @@ public enum Redact {
         Rule("slack token", #"\bxox[abposr]-[A-Za-z0-9\-]{10,}"#, wraps: true),
         Rule("slack webhook", #"https://hooks\.slack\.com/(?:services|workflows)/[A-Za-z0-9+/_\-]{20,}"#, wraps: true),
         Rule("jwt", #"\beyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}"#, wraps: true),
-        Rule("bearer token", #"(?i)(\bauthorization\s*[:=]\s*["']?bearer\s+)(?!\[(?:dojo token|redacted))[A-Za-z0-9._~+/=\-]{8,}"#, keep: 1),
-        Rule("url credentials", #"(?i)(\b[a-z][a-z0-9+.\-]{1,20}://)(?!\[(?:dojo token|redacted))[^\s:/@]+:[^\s@/]+(?=@)"#, keep: 1),
+        Rule("bearer token", #"(?i)(\bauthorization\s*[:=]\s*["']?bearer\s+)(?!\[(?:dojo token|redacted))[A-Za-z0-9._~+/=\-]{8,}"#, keep: 1, wraps: true),
+        Rule("url credentials", #"(?i)(\b[a-z][a-z0-9+.\-]{1,20}://)(?!\[(?:dojo token|redacted))[^\s:/@]+:[^\s@/]+(?=@)"#, keep: 1, wraps: true),
         // curl -u name:password, in the forms curl takes: after a blank or attached to -u, with no name, and
         // in quotes, where the password runs to the closing quote and may have blanks in it. Without quotes
         // it ends at a blank or at a shell's separator, which is never taken; a backslash and the character
         // after it are part of it, as the shell reads them ("\;secret" gives curl ";secret"). The name stays.
-        Rule("password", #"(?i)(\bcurl\b[^\n]*?[ \t](?:-u[ \t]*|--user[ \t=]+)'[^':\n]*:)(?!\[(?:dojo token|redacted))[^'\n]+(?=')"#, keep: 1),
-        Rule("password", #"(?i)(\bcurl\b[^\n]*?[ \t](?:-u[ \t]*|--user[ \t=]+)"[^":\n]*:)(?!\[(?:dojo token|redacted))(?:[^"\\\n]|\\.)+(?=")"#, keep: 1),
-        Rule("password", #"(?i)(\bcurl\b[^\n]*?[ \t](?:-u[ \t]*|--user[ \t=]+)[^\s:"']*:)(?!\[(?:dojo token|redacted))(?:\\.|[^\s"';&|)\\])+"#, keep: 1),
+        Rule("password", #"(?i)(\bcurl\b[^\n]*?[ \t](?:-u[ \t]*|--user[ \t=]+)'[^':\n]*:)(?!\[(?:dojo token|redacted))[^'\n]+(?=')"#, keep: 1, wraps: true),
+        Rule("password", #"(?i)(\bcurl\b[^\n]*?[ \t](?:-u[ \t]*|--user[ \t=]+)"[^":\n]*:)(?!\[(?:dojo token|redacted))(?:[^"\\\n]|\\.)+(?=")"#, keep: 1, wraps: true),
+        Rule("password", #"(?i)(\bcurl\b[^\n]*?[ \t](?:-u[ \t]*|--user[ \t=]+)[^\s:"']*:)(?!\[(?:dojo token|redacted))(?:\\.|[^\s"';&|)\\])+"#, keep: 1, wraps: true),
         // NAME=value where the name says what it holds; not MAX_TOKENS, not a bare number (which also ends at
         // a shell's separator, and never takes it). The name may be the word alone (PASSWORD=, API_KEY=): the
         // part in front of it is optional (D35.4). A quoted value is read to its closing quote, whatever
         // blanks it holds; in double quotes a quote after a backslash is not the end.
         Rule("secret",
              #"(?im)((?:^|[ \t])(?:export[ \t]+)?(?:[A-Z_][A-Z0-9_]*)?(?:TOKEN(?!S)|SECRET|PASSWORD|PASSWD|API_?KEY)[A-Z0-9_]*[ \t]*=[ \t]*)(?!\[(?:dojo token|redacted))(?![0-9]+(?:[\s;&|)]|$))(?:"(?:[^"\\\n]|\\.){4,}"|'[^'\n]{4,}'|["']?[^\s"']{4,}["']?)"#,
-             keep: 1),
+             keep: 1, wraps: true),
         // The same names as a YAML or JSON key: `password: value` where the key starts its row, and a quoted
         // `"api_key": "value"` after a brace or a comma. Not `token: String` in the middle of a row of code,
         // and not a type on a row of its own: one bare word of a type's letters that ends its row with a
@@ -236,6 +242,6 @@ public enum Redact {
         // that is exactly such a word passes with them.
         Rule("secret",
              #"(?im)((?:^[ \t]*(?:-[ \t]+)?["']?(?:[A-Z_][A-Z0-9_\-]*)?(?:TOKEN(?!S)|SECRET|PASSWORD|PASSWD|API[_\-]?KEY)[A-Z0-9_\-]*["']?|[{,][ \t]*["'](?:[A-Z_][A-Z0-9_\-]*)?(?:TOKEN(?!S)|SECRET|PASSWORD|PASSWD|API[_\-]?KEY)[A-Z0-9_\-]*["'])[ \t]*:[ \t]*)(?!\[(?:dojo token|redacted))(?![0-9]+(?:[\s,}]|$))(?![A-Za-z0-9_<>\[\]?.]+[,;][ \t]*$)(?!(?:string|str|int|bool|boolean|number|any|bytes|data|optional<[A-Za-z0-9_.]+>)[?!]?[ \t]*$)(?:"(?:[^"\\\n]|\\.){4,}"|'[^'\n]{4,}'|[^\s"',}]{4,})"#,
-             keep: 1),
+             keep: 1, wraps: true),
     ]
 }

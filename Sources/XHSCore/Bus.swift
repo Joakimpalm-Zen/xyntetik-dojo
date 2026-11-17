@@ -745,7 +745,7 @@ public final class Bus {
             case .success(let typed):
                 text = Delivery.sanitize(typed.text)
                 // Kept apart for `dojo audit --type`, with secrets taken out as on any route out of the bus.
-                let tokens = panes.map(\.token)
+                let tokens = secretTokens
                 line["type"] = type
                 line["fields"] = typed.fields.mapValues { Redact.apply($0, tokens: tokens).text }
             }
@@ -757,7 +757,7 @@ public final class Bus {
         // The owner's choice (D21.2): the record keeps the text of each send. With secrets taken out, as on
         // any route out of the bus (D35.5): the record stays on disk for 30 days. What is typed into the
         // target is the text as sent.
-        line["text"] = Redact.apply(text, tokens: panes.map(\.token)).text
+        line["text"] = Redact.apply(text, tokens: secretTokens).text
         line["chars"] = text.count
         let before = target.queue.count
         target.queue.append((sender: sender, text: text))
@@ -794,7 +794,7 @@ public final class Bus {
         let picked = Bus.lastRows(target.io?.screenText() ?? "", cells: target.io?.usedCells(last: lines), lines)
         let screen = picked.text
         // D21.2: secrets are taken out of what leaves the bus, always; the pane's own screen is untouched.
-        let clean = Redact.apply(screen, tokens: panes.map(\.token), width: target.io?.columns ?? 0, cells: picked.cells)
+        let clean = Redact.apply(screen, tokens: secretTokens, width: target.io?.columns ?? 0, cells: picked.cells)
         line["lines"] = screen.isEmpty ? 0 : screen.components(separatedBy: "\n").count
         line["redacted"] = clean.count
         return ok(["pane": target.name, "state": target.state.rawValue, "text": clean.text, "redacted": clean.count])
@@ -865,6 +865,10 @@ public final class Bus {
         setState(pane.name, next)
         if let attention { onAttention?(pane.name, attention) }
     }
+
+    /// Every token of the bus's that a screen or a message may show: the panes', and the outside route's
+    /// while it is on (D39, an outside read: it left the bus as it was).
+    private var secretTokens: [String] { panes.map(\.token) + (outsideToken.map { [$0] } ?? []) }
 
     /// Whether a submission hook may end the draft hold (D39, an outside read). No text keys since the
     /// owner's last Enter is not enough: an Enter that accepts a completion leaves the draft unsent, and the

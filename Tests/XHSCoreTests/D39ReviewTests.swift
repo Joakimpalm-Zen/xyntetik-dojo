@@ -178,7 +178,7 @@ import Testing
             ("$ echo postgres://alice:longsecretvalue1", "2@db.internal:5432/app", ["longsecretvalue1"]),
             ("$ curl -H 'Authorization: Bearer abcdefg", "hijklmnop0123456789' https://x", ["abcdefg", "hijklmnop0123456789"]),
             ("$ export SERVICE_API_KEY=abcdefghijklmno", "pqrstuvwxyz0123456789", ["pqrstuvwxyz0123456789"]),
-            ("$ curl -u alice:abcdefgh https://x.examp", "le.com -u bob:ijklmnopqrstuvw0123456789", ["ijklmnopqrstuvw0123456789"]),
+            ("$ curl -s https://api.example.co -u bob:", "ijklmnopqrstuvw0123456789", ["ijklmnopqrstuvw0123456789"]),
             ("$ curl https://x.example.com -u bob:ijkl", "mnopqrstuvw0123456789", ["mnopqrstuvw0123456789"]),
         ]
         for (row1, row2, secrets) in cases {
