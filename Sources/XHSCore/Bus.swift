@@ -360,8 +360,10 @@ public final class Bus {
 
     /// What an owner keystroke did to the pane's composer.
     public enum OwnerKey: Equatable {
-        /// May have put text in the composer: a character, a paste, a recalled prompt, an editing chord.
+        /// May have put text in the composer: a character, a paste, an editing chord.
         case text
+        /// History recall (Up/Down): harness draws recalled prompt immediately without echo delay.
+        case history
         /// Enter: a submission in a shell; in a harness only its UserPromptSubmit hook proves one.
         case submit
         /// Emptied the composer (Ctrl-C): known empty.
@@ -391,7 +393,7 @@ public final class Bus {
     public func noteOwnerInput(_ name: String, _ key: OwnerKey = .text) {
         guard let p = pane(named: name), key != .reply, key != .pointer else { return }
         p.lastOwnerInput = now()
-        if key == .text { p.lastOwnerText = now() }
+        if key == .text || key == .history { p.lastOwnerText = now() }
         // The owner emptied the composer themselves: the bus's owed Enter would only send an empty line.
         if p.enterOwed, key == .clear {
             p.enterOwed = false
@@ -415,6 +417,9 @@ public final class Bus {
                 p.ownerTypedUnproven = true
                 p.ownerSubmitted = false
             }
+        case .history:
+            p.hasDraft = true
+            p.typedSinceSubmit = true
         case .clear:
             p.hasDraft = false
             p.typedSinceSubmit = false

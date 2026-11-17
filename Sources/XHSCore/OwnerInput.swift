@@ -44,14 +44,14 @@ public enum OwnerInput {
         if pointer(bytes) { return .pointer }
         // Bracketed paste inserts text.
         if s.hasPrefix("\u{1b}[200~") { return .text }
-        // Up and Down (CSI or SS3) recall saved prompts into the composer; all other CSI/SS3 sequences
-        // (Left/Right/Home/End, Shift-Tab, navigation/function keys) only move or act on UI chrome.
+        // Up and Down (CSI or SS3) recall saved prompts into the composer (`.history`); all other CSI/SS3
+        // sequences (Left/Right/Home/End, Shift-Tab, navigation/function keys) only move or act on UI chrome.
         if moves(s) { return .other }
         if s.hasPrefix("\u{1b}O") {
-            return (s.last.map { "AB".contains($0) } ?? false) ? .text : .other
+            return (s.last.map { "AB".contains($0) } ?? false) ? .history : .other
         }
         if s.hasPrefix("\u{1b}[") {
-            return (s.last.map { "AB".contains($0) } ?? false) ? .text : .other
+            return (s.last.map { "AB".contains($0) } ?? false) ? .history : .other
         }
         // Anything else (for example Alt-key chords): may insert text.
         return .text
