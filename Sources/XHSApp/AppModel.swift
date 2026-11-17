@@ -5,7 +5,33 @@ import XHSCore
 /// The window's state: the panes, the bus and its HTTP server.
 @MainActor
 final class AppModel: NSObject, ObservableObject {
-    static let shared = AppModel()
+    struct StatePaths {
+        let root: URL
+        var runnerHome: URL { root.appendingPathComponent("runner") }
+        var hostsFile: URL { root.appendingPathComponent("hosts") }
+        var foldersFile: URL { root.appendingPathComponent("folders") }
+        var panesFile: URL { root.appendingPathComponent("panes.json") }
+        var unrestrictedFile: URL { root.appendingPathComponent("unrestricted") }
+        var notificationsFile: URL { root.appendingPathComponent("notifications") }
+        var relayFile: URL { root.appendingPathComponent("relay") }
+        var auditFolder: URL { root.appendingPathComponent("audit") }
+        var liveFile: URL { root.appendingPathComponent("live.json") }
+        var outsideSwitch: URL { root.appendingPathComponent("outside") }
+        var outsideTokenFile: URL { root.appendingPathComponent("outside-token") }
+    }
+
+    enum ServicePolicy {
+        /// Normal app or `DOJO_SMOKE=1` process: manages tools (when non-smoke), HTTP server, and 1s timer.
+        case app
+        /// Isolated unit-test instance: never touches `~/.dojo`, never installs tools, never binds a listener.
+        case test
+    }
+
+    static let shared = AppModel(stateRoot: Headless.state(), smoke: Headless.isRequested, policy: .app)
+
+    static func forTesting(stateRoot: URL) -> AppModel {
+        AppModel(stateRoot: stateRoot, smoke: true, policy: .test)
+    }
 
     struct Item: Identifiable {
         /// The pane's identity for the grid: the terminal view, which outlives a rename.
@@ -61,7 +87,7 @@ final class AppModel: NSObject, ObservableObject {
     /// What a smoke would have notified, in place of notifying.
     private var smokeNotified: [String] = []
     private lazy var notifier: Notifier = {
-        let notifier = Notifier(record: AppModel.notificationsFile)
+        let notifier = Notifier(record: state.notificationsFile)
         notifier.onOpen = { [weak self] pane in self?.open(pane) }
         return notifier
     }()
@@ -82,6 +108,8 @@ final class AppModel: NSObject, ObservableObject {
     let bus = Bus()
     let port: Int
     let smoke: Bool
+    let state: StatePaths
+    private let policy: ServicePolicy
     private let loginShell: String
     private var tokens: [String: String] = [:]
     private var remoteShells: [String: RemoteShell] = [:]
@@ -91,31 +119,34 @@ final class AppModel: NSObject, ObservableObject {
     private var runnerForwards: [ObjectIdentifier: Int] = [:]
     private var server: BusServer?
     private var timer: Timer?
-    private lazy var powerHold: PowerHold? = smoke ? nil : PowerHold()
-    /// D15: ~/.dojo/live.json (a smoke's goes in its throwaway folder).
-    let live = LiveState(url: AppModel.liveFile)
+    private lazy var powerHold: PowerHold? = (smoke || policy == .test) ? nil : PowerHold()
+    /// D15: ~/.dojo/live.json (a smoke's or test's goes in its isolated folder).
+    let live: LiveState
     /// D15 (b): sending from outside Dojo, while the owner's ~/.dojo/outside is there (Outside).
-    private(set) lazy var outside = OutsideRoute(switchFile: AppModel.outsideSwitch, tokenFile: AppModel.outsideTokenFile, port: port)
+    private(set) lazy var outside = OutsideRoute(switchFile: state.outsideSwitch, tokenFile: state.outsideTokenFile, port: port)
 
-    override init() {
+    init(stateRoot: URL, smoke: Bool = Headless.isRequested, policy: ServicePolicy = .app) {
         let env = ProcessInfo.processInfo.environment
         // DOJO_PORT must be a port; anything else is said and the default used.
         let wanted = env["DOJO_PORT"].flatMap { Int($0) }
         port = wanted.flatMap { (1...65535).contains($0) ? $0 : nil } ?? Launcher.defaultPort
-        smoke = Headless.isRequested
+        self.smoke = smoke
+        self.policy = policy
+        self.state = StatePaths(root: stateRoot)
+        self.live = LiveState(url: self.state.liveFile)
         loginShell = AppModel.userShell()
         super.init()
         if let wanted, wanted != port { problem = "DOJO_PORT is \(wanted); a port is 1 to 65535. Using \(port)." }
         // The tools (and the move from ~/.xhs) come first, so the recent lists are read from the right folder.
-        if !smoke, let trouble = ToolInstall.copy() {
+        if policy == .app, !smoke, let trouble = ToolInstall.copy() {
             problem = trouble
         }
-        recentHosts = RecentHosts.load(AppModel.hostsFile)
-        recentFolders = RecentHosts.load(AppModel.foldersFile, valid: RecentHosts.isFolder)
-        unrestrictedKinds = Permissions.remembered(AppModel.unrestrictedFile)
-        lastPanes = SavedPanes.load(AppModel.panesFile)
-        // D21.2: one line per bus operation, in the app's own folder (a smoke's is a throwaway one).
-        bus.record = BusRecord(directory: AppModel.auditFolder)
+        recentHosts = RecentHosts.load(state.hostsFile)
+        recentFolders = RecentHosts.load(state.foldersFile, valid: RecentHosts.isFolder)
+        unrestrictedKinds = Permissions.remembered(state.unrestrictedFile)
+        lastPanes = SavedPanes.load(state.panesFile)
+        // D21.2: one line per bus operation, in the app's own folder (a smoke's/test's is an isolated one).
+        bus.record = BusRecord(directory: state.auditFolder)
         bus.onChange = { [weak self] in
             guard let self else { return }
             self.revision &+= 1
@@ -126,6 +157,7 @@ final class AppModel: NSObject, ObservableObject {
         live.write([])
         bus.onSession = { [weak self] in self?.savePanes() }
         bus.onAttention = { [weak self] name, attention in self?.attend(name, attention) }
+        guard policy == .app else { return }
         startServer()
         // "dojo install" once the bus is up, off the main thread (D39)
         if !smoke {
@@ -147,6 +179,16 @@ final class AppModel: NSObject, ObservableObject {
                 }
             }
         }
+    }
+
+    /// Stops timers/listeners, closes every pane, and removes `live.json` when a test finishes.
+    func stopForTesting() {
+        timer?.invalidate()
+        timer = nil
+        for name in items.map(\.name) { close(name) }
+        server?.stop()
+        server = nil
+        live.remove()
     }
 
     private var ticks = 0
@@ -211,7 +253,7 @@ final class AppModel: NSObject, ObservableObject {
         guard let item = items.first(where: { $0.name == name }) else { return }
         if !Seen.viewed(active: ownerInFront, keys: focusedPane, pane: item.id) { unseen.insert(item.id) }
         guard Seen.notifies(active: ownerInFront, shown: selectedTab, pane: item.id) else { return }
-        if smoke { smokeNotified.append("\(name) \(attention.rawValue)") } else { notifier.post(pane: name, attention) }
+        if smoke || policy == .test { smokeNotified.append("\(name) \(attention.rawValue)") } else { notifier.post(pane: name, attention) }
     }
 
     /// The pane with the keys is viewed, once the owner is in front.
@@ -223,6 +265,7 @@ final class AppModel: NSObject, ObservableObject {
     /// Starts listening for clicks on notifications, also those from before a relaunch, and records what
     /// macOS allows the app (D23).
     func startNotifying() {
+        guard policy == .app else { return }
         _ = notifier
     }
 
@@ -281,12 +324,10 @@ final class AppModel: NSObject, ObservableObject {
         return nil
     }
 
-    static let runnerHome = Headless.state().appendingPathComponent("runner")
-
     /// Asks Runner what it serves and reads what the start script found to fit, for the picker.
     func refreshRunner() {
-        runnerFits = RunnerFit.parse((try? String(contentsOf: AppModel.runnerHome.appendingPathComponent("fits"), encoding: .utf8)) ?? "")
-        runnerChoice = ((try? String(contentsOf: AppModel.runnerHome.appendingPathComponent("model"), encoding: .utf8)) ?? "")
+        runnerFits = RunnerFit.parse((try? String(contentsOf: state.runnerHome.appendingPathComponent("fits"), encoding: .utf8)) ?? "")
+        runnerChoice = ((try? String(contentsOf: state.runnerHome.appendingPathComponent("model"), encoding: .utf8)) ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         Task {
             let served = await Launcher.fetchServed()
@@ -297,8 +338,8 @@ final class AppModel: NSObject, ObservableObject {
 
     /// Serves `spelling` in a Runner pane from now on: remembers it, replaces the Runner pane that is up.
     func chooseRunnerModel(_ spelling: String) {
-        try? FileManager.default.createDirectory(at: AppModel.runnerHome, withIntermediateDirectories: true)
-        try? (spelling + "\n").write(to: AppModel.runnerHome.appendingPathComponent("model"), atomically: true, encoding: .utf8)
+        try? FileManager.default.createDirectory(at: state.runnerHome, withIntermediateDirectories: true)
+        try? (spelling + "\n").write(to: state.runnerHome.appendingPathComponent("model"), atomically: true, encoding: .utf8)
         runnerChoice = spelling
         if let pane = runnerPane { close(pane.name) }
         addPane(kind: .runner, host: "", name: "")
@@ -355,8 +396,8 @@ final class AppModel: NSObject, ObservableObject {
         view.onOwnerInput = { [weak self, weak view] key in if let view { self?.bus.noteOwnerInput(view.paneName, key) } }
         let token = bus.add(name: name, kind: kind, host: host, unrestricted: unrestricted, io: view)
         tokens[name] = token
-        if !host.isEmpty { recentHosts = RecentHosts.remember(host, in: AppModel.hostsFile) }
-        if !directory.isEmpty { recentFolders = RecentHosts.remember(directory, in: AppModel.foldersFile, valid: RecentHosts.isFolder) }
+        if !host.isEmpty { recentHosts = RecentHosts.remember(host, in: state.hostsFile) }
+        if !directory.isEmpty { recentFolders = RecentHosts.remember(directory, in: state.foldersFile, valid: RecentHosts.isFolder) }
         items.append(Item(name: name, kind: kind, unrestricted: unrestricted, view: view, directory: directory))
         syncPowerHold()
         if let session { bus.setSession(name, session) }
@@ -535,7 +576,7 @@ final class AppModel: NSObject, ObservableObject {
             SavedPane(kind: item.kind, host: bus.info(item.name)?.host ?? "", directory: item.directory, name: item.name,
                       unrestricted: item.unrestricted, session: bus.sessionId(item.name),
                       coordinator: bus.coordinatorName == item.name, mayRead: bus.info(item.name)?.reads ?? [])
-        }, to: AppModel.panesFile)
+        }, to: state.panesFile)
     }
 
     /// The button in the empty window. Nothing reopens by itself. The coordinator mark and the read grants
@@ -604,7 +645,7 @@ final class AppModel: NSObject, ObservableObject {
             let server = try BusServer(port: UInt16(port)) { path, token, body in
                 bus.handle(path: path, token: token, body: body)
             }
-            bus.relayConfig = AppModel.relayFile
+            bus.relayConfig = state.relayFile
             server.deferred = { path, token, body, reply in bus.relay(path: path, token: token, body: body, reply: reply) }
             self.server = server
             let port = self.port
@@ -626,6 +667,99 @@ final class AppModel: NSObject, ObservableObject {
 
     /// DOJO_SMOKE=1: open one pane running `echo ok` (locally, or on DOJO_SMOKE_HOST over ssh), check its screen
     /// and the bus, then quit.
+    /// Whether `view` has landed in a window at least `minAttachCount` times, is visible, and has non-trivial
+    /// bounds enclosing the smoke click point `(20, 20)`.
+    static func isClickReady(_ view: TerminalPane, minAttachCount: Int = 1) -> Bool {
+        view.window != nil
+            && view.windowAttachCount >= minAttachCount
+            && !view.isHiddenOrHasHiddenAncestor
+            && view.bounds.width > 20
+            && view.bounds.height > 20
+    }
+
+    /// Clears `firstResponder` and clicks `(20, 20)` inside `view`, returning whether `view` became first responder.
+    static func clickToFocus(_ view: TerminalPane) -> Bool {
+        // Focus comes from the click, not from the model, as in the window.
+        let windowNumber = view.window?.windowNumber ?? 0
+        view.window?.makeFirstResponder(nil)
+        if let down = NSEvent.mouseEvent(with: .leftMouseDown, location: NSPoint(x: 20, y: 20), modifierFlags: [],
+                                         timestamp: 0, windowNumber: windowNumber, context: nil, eventNumber: 0,
+                                         clickCount: 1, pressure: 1) {
+            view.mouseDown(with: down)
+        }
+        if let up = NSEvent.mouseEvent(with: .leftMouseUp, location: NSPoint(x: 20, y: 20), modifierFlags: [],
+                                       timestamp: 0, windowNumber: windowNumber, context: nil, eventNumber: 0,
+                                       clickCount: 1, pressure: 0) {
+            view.mouseUp(with: up)
+        }
+        return view.window?.firstResponder === view
+    }
+
+    private static func waitUntil(deadline: Date, condition: @MainActor () -> Bool) async -> Bool {
+        while !condition() {
+            if Date() >= deadline { return false }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        return true
+    }
+
+    /// Drives the smoke swap -> tab -> click -> type sequence by waiting for actual window attachment and layout
+    /// conditions instead of blind fixed delays.
+    @discardableResult
+    func runSmokeSwapTabClick(name: String, partner: String, typed: String, deadline: Date,
+                              onFailure: (String) -> Void) async -> Bool {
+        guard let item1 = items.first(where: { $0.name == name }),
+              let item2 = items.first(where: { $0.name == partner }) else {
+            onFailure("missing smoke panes \(name)/\(partner)")
+            return false
+        }
+        let view1 = item1.view
+        let view2 = item2.view
+
+        guard await Self.waitUntil(deadline: deadline, condition: {
+            Self.isClickReady(view1, minAttachCount: 1) && Self.isClickReady(view2, minAttachCount: 1)
+        }) else {
+            onFailure("panes did not land in a window before swap (window \(view1.window != nil), attaches \(view1.windowAttachCount))")
+            return false
+        }
+
+        swap(name, with: partner)
+        CATransaction.flush()
+        try? await Task.sleep(for: .milliseconds(20))
+        guard await Self.waitUntil(deadline: deadline, condition: {
+            Self.isClickReady(view1, minAttachCount: 1)
+        }) else {
+            onFailure("pane left the window after swap")
+            return false
+        }
+
+        let nextAttach = view1.windowAttachCount + 1
+        show(tab: item1.id)
+        guard await Self.waitUntil(deadline: deadline, condition: {
+            Self.isClickReady(view1, minAttachCount: nextAttach)
+        }) else {
+            onFailure("pane did not land in tab before click (window \(view1.window != nil), attaches \(view1.windowAttachCount)/\(nextAttach))")
+            return false
+        }
+
+        guard Self.clickToFocus(view1) else {
+            onFailure("a click did not focus the pane")
+            return false
+        }
+        checkPanePointer(view1)
+        guard !typed.isEmpty else { return true }
+        for character in typed + "\r" {
+            let c = String(character)
+            if let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                            windowNumber: view1.window?.windowNumber ?? 0, context: nil,
+                                            characters: c, charactersIgnoringModifiers: c, isARepeat: false,
+                                            keyCode: character == "\r" ? 36 : 0) {
+                view1.keyDown(with: event)
+            }
+        }
+        return true
+    }
+
     func runSmoke() {
         let name = "shell-1"
         let host = ProcessInfo.processInfo.environment["DOJO_SMOKE_HOST"] ?? ""
@@ -634,36 +768,18 @@ final class AppModel: NSObject, ObservableObject {
             exit(1)
         }
         let deadline = Date().addingTimeInterval(15)
-        // A local pane gets a line typed in through the view, as keys, after it has had a second to start.
+        // A local pane gets a line typed in through the view, as keys, once re-parenting has settled.
         let typed = host.isEmpty ? "typed" : ""
         let expected = host.isEmpty ? "ok typed" : "ok"
         if host.isEmpty {
             // A second pane, swapped with the first as a drag would do it, then the first shown in its own tab:
             // re-parented twice, it must still take keys.
             addPane(kind: .shell, host: "", name: "shell-2")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.swap(name, with: "shell-2") }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) { [weak self] in
+            Task { @MainActor [weak self] in
                 guard let self else { return }
-                self.show(tab: self.items.first(where: { $0.name == name })?.id)
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
-                guard let view = self?.items.first(where: { $0.name == name })?.view else { return }
-                // Focus comes from the click, not from the model, as in the window.
-                view.window?.makeFirstResponder(nil)
-                view.mouseDown(with: NSEvent.mouseEvent(with: .leftMouseDown, location: NSPoint(x: 20, y: 20), modifierFlags: [], timestamp: 0,
-                                                        windowNumber: view.window?.windowNumber ?? 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!)
-                view.mouseUp(with: NSEvent.mouseEvent(with: .leftMouseUp, location: NSPoint(x: 20, y: 20), modifierFlags: [], timestamp: 0,
-                                                      windowNumber: view.window?.windowNumber ?? 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 0)!)
-                guard view.window?.firstResponder === view else { print("DOJO_SMOKE failed: a click did not focus the pane"); exit(1) }
-                self?.checkPanePointer(view)
-                for character in typed + "\r" {
-                    let c = String(character)
-                    if let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
-                                                    windowNumber: view.window?.windowNumber ?? 0, context: nil,
-                                                    characters: c, charactersIgnoringModifiers: c, isARepeat: false,
-                                                    keyCode: character == "\r" ? 36 : 0) {
-                        view.keyDown(with: event)
-                    }
+                await self.runSmokeSwapTabClick(name: name, partner: "shell-2", typed: typed, deadline: deadline) { reason in
+                    print("DOJO_SMOKE failed: \(reason)")
+                    exit(1)
                 }
             }
         }
@@ -696,7 +812,7 @@ final class AppModel: NSObject, ObservableObject {
     /// What a pane is given, and what a login shell finds, as a pane runs it: the throwaway home, and no way to
     /// the owner's. A login shell reads the owner's profile, so it is the one to ask, not this process.
     private func proveContained() async {
-        let home = Headless.state().deletingLastPathComponent().path
+        let home = state.root.deletingLastPathComponent().path
         let real = Headless.realHome
         let pane = Launcher.paneEnvironment(from: ProcessInfo.processInfo.environment, adding: [:])
         let shell = #"printf '<%s>' "$HOME""#
@@ -912,7 +1028,7 @@ final class AppModel: NSObject, ObservableObject {
             exit(1)
         }
         try? await Task.sleep(nanoseconds: UInt64((LiveState.interval + 0.5) * 1_000_000_000))
-        let listed = LiveState.read(AppModel.liveFile)?.first { $0["name"] as? String == name }
+        let listed = LiveState.read(state.liveFile)?.first { $0["name"] as? String == name }
         guard listed?["label"] as? String == "SMOKE1", listed?["state"] as? String == bus.info(name)?.state.rawValue else {
             print("DOJO_SMOKE failed: live.json has \(String(describing: listed)), not the pane with its label")
             exit(1)
@@ -946,19 +1062,19 @@ final class AppModel: NSObject, ObservableObject {
             exit(1)
         }
         let fm = FileManager.default
-        if fm.fileExists(atPath: AppModel.outsideTokenFile.path) || bus.outsideToken != nil { fail("is on with no switch") }
+        if fm.fileExists(atPath: state.outsideTokenFile.path) || bus.outsideToken != nil { fail("is on with no switch") }
         if await status("anything") != 401 { fail("answers with no switch") }
-        fm.createFile(atPath: AppModel.outsideSwitch.path, contents: Data(), attributes: [.posixPermissions: 0o600])
+        fm.createFile(atPath: state.outsideSwitch.path, contents: Data(), attributes: [.posixPermissions: 0o600])
         refreshOutside()
-        guard let data = fm.contents(atPath: AppModel.outsideTokenFile.path),
+        guard let data = fm.contents(atPath: state.outsideTokenFile.path),
               let token = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["token"] as? String else {
             fail("wrote no token file with the switch there")
         }
         if await status(token) != 404 { fail("did not reach the bus with the token file's token") }
         if await status("wrong") != 401 { fail("took a wrong token") }
-        try? fm.removeItem(at: AppModel.outsideSwitch)
+        try? fm.removeItem(at: state.outsideSwitch)
         refreshOutside()
-        if fm.fileExists(atPath: AppModel.outsideTokenFile.path) { fail("left its token file after the switch went") }
+        if fm.fileExists(atPath: state.outsideTokenFile.path) { fail("left its token file after the switch went") }
         if await status(token) != 401 { fail("still answers after the switch went") }
     }
 
@@ -975,12 +1091,12 @@ final class AppModel: NSObject, ObservableObject {
         }
         closeAll()
         // D15: a Dojo that quit leaves no live.json for a reader to take for running.
-        if FileManager.default.fileExists(atPath: AppModel.liveFile.path) {
+        if FileManager.default.fileExists(atPath: state.liveFile.path) {
             print("DOJO_SMOKE failed: live.json is still there after quitting")
             exit(1)
         }
         if local {
-            lastPanes = SavedPanes.load(AppModel.panesFile)
+            lastPanes = SavedPanes.load(state.panesFile)
             guard lastPanes.map(\.name) == names, lastPanes.contains(where: { $0.session != nil }) else {
                 print("DOJO_SMOKE failed: after quitting, the list holds \(lastPanes.map(\.name)), not \(names), or no session")
                 exit(1)
@@ -999,7 +1115,7 @@ final class AppModel: NSObject, ObservableObject {
             closeAll()
             await smokeFreshHeader(in: window)
         }
-        try? FileManager.default.removeItem(at: Headless.state())
+        try? FileManager.default.removeItem(at: state.root)
         exit(0)
     }
 
@@ -1072,21 +1188,10 @@ final class AppModel: NSObject, ObservableObject {
         }
     }
 
-    static let hostsFile = Headless.state().appendingPathComponent("hosts")
-    static let foldersFile = Headless.state().appendingPathComponent("folders")
-    static let panesFile = Headless.state().appendingPathComponent("panes.json")
-    static let unrestrictedFile = Headless.state().appendingPathComponent("unrestricted")
-    static let notificationsFile = Headless.state().appendingPathComponent("notifications")
-
     /// The picker opened a pane of `kind` with the tick as given: the next one starts the same way.
     func rememberTick(_ kind: HarnessKind, _ ticked: Bool) {
-        unrestrictedKinds = Permissions.remember(kind, ticked: ticked, in: AppModel.unrestrictedFile)
+        unrestrictedKinds = Permissions.remember(kind, ticked: ticked, in: state.unrestrictedFile)
     }
-    static let relayFile = Headless.state().appendingPathComponent("relay")
-    static let auditFolder = Headless.state().appendingPathComponent("audit")
-    static let liveFile = Headless.state().appendingPathComponent("live.json")
-    static let outsideSwitch = Headless.state().appendingPathComponent("outside")
-    static let outsideTokenFile = Headless.state().appendingPathComponent("outside-token")
 
     /// A folder picker for the New terminal sheet; nil when cancelled.
     static func chooseFolder() -> String? {
