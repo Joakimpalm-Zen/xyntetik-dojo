@@ -882,6 +882,16 @@ class AgyHookTest(unittest.TestCase):
         self.statusline(self.status(agent_state="tool_use"))
         self.assertEqual([e["hook_event_name"] for e in self.posted()], ["PermissionRequest", "PostToolUse"])
 
+    def test_a_confirmation_ends_with_its_turn(self):
+        # the second read of #116: the turn ends with the dialog's flag still set (no status-line refresh in
+        # between), and the next turn's prompt and work were held against it
+        self.statusline(self.status(agent_state="tool_use", tool_confirmation_pending=True))
+        self.hook(self.event("Stop", terminationReason="NO_TOOL_CALL"))
+        self.hook(self.event("PreInvocation", invocationNum=0, lastUserInput="next"))
+        self.hook(self.event("PostToolUse", toolCall={"id": "call_3", "name": "view_file"}))
+        self.assertEqual([e["hook_event_name"] for e in self.posted()],
+                         ["PermissionRequest", "Stop", "UserPromptSubmit", "PostToolUse"])
+
     def test_what_the_agy_pane_posts_says_it_is_agys(self):
         self.hook(self.event("Stop"))
         self.statusline(self.status(agent_state="working"))
