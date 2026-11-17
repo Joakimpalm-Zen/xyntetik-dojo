@@ -1,0 +1,2 @@
+[from: probe] D42, a relayed message of about the shape the owner saw: several sentences in one paragraph, long enough that the composer wraps it over many rows of a short pane. It names nothing real and asks for nothing; it is here so that Claude Code caps the composer's height and writes how many rows it does not show. The second part keeps the text going with plain words, so that the wrapped rows outnumber what a pane of this height lets the composer show, and the top line of the composer carries the arrow and the count.
+A last line, short.
