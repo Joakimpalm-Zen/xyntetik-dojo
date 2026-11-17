@@ -8,10 +8,11 @@ import Testing
 /// 45 rows, with no terminal, and where stty gives nothing to go by: agy starts in every case.
 @Suite struct AgyFootStartTests {
     /// The script, then a stand-in for agy that writes a mark: what the pane would see before agy draws.
-    static func run(rows: Int?, path: String = "/usr/bin:/bin") throws -> (status: Int32, out: String) {
+    static func run(rows: Int?, path: String = "/usr/bin:/bin", agy: [String] = ["/usr/bin/printf", "AGY-STARTED"]) throws
+        -> (status: Int32, out: String) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        let command = ["/bin/sh", "-c", Launcher.agyFootStart, "sh", "/usr/bin/printf", "AGY-STARTED"]
+        let command = ["/bin/sh", "-c", Launcher.agyFootStart, "sh"] + agy
         if let rows {
             // a pty of that size, as a pane's; python3 is on every test machine (the shim's tests need it)
             let harness = """
@@ -79,6 +80,22 @@ import Testing
             let odd = try Self.run(rows: 45, path: folder.path + ":" + Self.pythonFolder())
             #expect(odd.status == 0, "\(answer)")
             #expect(odd.out == "AGY-STARTED", "\(answer): \(odd.out.debugDescription)")
+        }
+    }
+
+    /// The second read of #114: the script puts its own pid in DOJO_AGY_PID, and agy, run with exec, keeps
+    /// that pid. So the variable names the pane's own agy, the one Dojo's plugin acts for, and not an agy the
+    /// pane's agent runs under it, which inherits the variable with a pid of its own. With a terminal and
+    /// without: the stand-in for agy says its own pid and the variable's.
+    @Test func itTellsAgyItsOwnPid() throws {
+        let says = ["/bin/sh", "-c", #"printf 'pid %s is %s' "$DOJO_AGY_PID" "$$""#]
+        for rows in [45, nil] as [Int?] {
+            let (status, out) = try Self.run(rows: rows, path: "/usr/bin:/bin:" + (ProcessInfo.processInfo.environment["PATH"] ?? ""),
+                                             agy: says)
+            #expect(status == 0)
+            let words = out.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: " ").map(String.init)
+            #expect(words.count == 4 && words[0] == "pid" && words[2] == "is" && Int32(words[1]) != nil && words[1] == words[3],
+                    "\(String(describing: rows)): \(out.debugDescription)")
         }
     }
 

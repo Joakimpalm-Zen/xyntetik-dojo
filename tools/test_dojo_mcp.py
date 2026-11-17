@@ -458,9 +458,10 @@ class AgyHookTest(unittest.TestCase):
         self.bus = FakeBus()
         # the status line keeps what it last told the bus in the temporary folder: one of its own per test
         self.tmp = tempfile.mkdtemp()
-        # an agy pane's own agy: the launch line sets DOJO_HARNESS=agy, and only it
+        # an agy pane's own agy: the launch line sets DOJO_HARNESS=agy, and DOJO_AGY_PID to agy's pid. This
+        # test process stands in for that agy: the shim runs as its child, as agy runs its commands.
         self.env = dict(os.environ, DOJO_TOKEN="tok-1", DOJO_PORT=str(self.bus.port), DOJO_PANE="agy-1",
-                        DOJO_PEER_RULE=self.RULE, DOJO_HARNESS="agy", TMPDIR=self.tmp)
+                        DOJO_PEER_RULE=self.RULE, DOJO_HARNESS="agy", DOJO_AGY_PID=str(os.getpid()), TMPDIR=self.tmp)
 
     def tearDown(self):
         self.bus.close()
@@ -790,7 +791,7 @@ class AgyHookTest(unittest.TestCase):
     # posted with that pane's DOJO_TOKEN: the Claude pane went idle, running, idle and took agy's model.
 
     def test_an_agy_run_inside_another_kind_of_pane_tells_the_bus_nothing(self):
-        claude = {k: v for k, v in self.env.items() if k not in ("DOJO_HARNESS", "DOJO_PEER_RULE")}
+        claude = {k: v for k, v in self.env.items() if k not in ("DOJO_HARNESS", "DOJO_AGY_PID", "DOJO_PEER_RULE")}
         claude["DOJO_PANE"] = "claude-1"
         self.assertEqual(self.hook(self.event("SessionStart"), env=claude), {}, "no rule injected")
         self.hook(self.event("PreInvocation", invocationNum=0, initialNumSteps=1, lastUserInput="reply ok"), env=claude)
@@ -801,6 +802,59 @@ class AgyHookTest(unittest.TestCase):
         # agy's question is still let through there: an empty answer would stop the tool
         self.assertEqual(self.hook(self.event("PreToolUse", toolCall={"id": "q", "name": "ask_question"}), env=claude),
                          {"decision": "allow"})
+
+    # The second read of #114: an agy the agy pane's own agent runs (agy -p, through its shell tool) inherits
+    # the pane's whole environment, DOJO_HARNESS=agy too, and took the pane's peer rule, moved its state,
+    # model and conversation and its question. Only the pane's own agy reports: the one whose pid the launch
+    # line put in DOJO_AGY_PID, which runs the shim as its child (a probe on 2026-11-17: agy runs its hook and
+    # status-line commands, and its shell tool's, as its own children), or through a shell.
+
+    # Another agy under this one: a process of its own that runs the shim as its child, with all it inherited.
+    NESTED = "import subprocess, sys; sys.exit(subprocess.run(sys.argv[1:]).returncode)"
+
+    def nested(self, args, stdin, through_shell=False):
+        inner = [sys.executable, SHIM] + args
+        if through_shell:
+            inner = ["/bin/sh", "-c", '"$0" "$@"; exit $?'] + inner
+        r = subprocess.run([sys.executable, "-c", self.NESTED] + inner, input=stdin, capture_output=True, text=True,
+                           env=self.env, timeout=20)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r.stdout
+
+    def test_an_agy_run_inside_the_agy_pane_tells_the_bus_nothing(self):
+        for through_shell in (False, True):
+            def hook(event):
+                return json.loads(self.nested(["hook", "agy"], json.dumps(event), through_shell))
+            self.assertEqual(hook(self.event("SessionStart")), {}, "no rule injected")
+            self.assertEqual(hook(self.event("PreInvocation", invocationNum=0, lastUserInput="summarize foo")), {})
+            # its question is let through, as anywhere, and is not the pane's
+            self.assertEqual(hook(self.event("PreToolUse", toolCall={"id": "q", "name": "ask_question"})), {"decision": "allow"})
+            hook(self.event("Stop", terminationReason="NO_TOOL_CALL"))
+            out = self.nested(["statusline", "agy"], json.dumps(self.status(agent_state="working")), through_shell)
+            self.assertTrue(out.startswith("Usage: "), "the line is still printed")
+            self.assertEqual(self.bus.requests, [], "through a shell: %s" % through_shell)
+        # the pane's own agy goes on as before: it reports work, which a question of the nested one's would hold
+        self.statusline(self.status(agent_state="working"))
+        self.assertEqual([e["hook_event_name"] for e in self.posted()], ["PostToolUse"])
+
+    def test_the_panes_own_agy_reports_through_a_shell_too(self):
+        # agy may run a command through a shell that does not exec it: the shell's parent is the pane's agy
+        r = subprocess.run(["/bin/sh", "-c", '"$0" "$@"; exit $?', sys.executable, SHIM, "hook", "agy"],
+                           input=json.dumps(self.event("SessionStart")), capture_output=True, text=True, env=self.env, timeout=20)
+        self.assertEqual(json.loads(r.stdout), {"injectSteps": [{"systemMessage": {"systemMessage": self.RULE}}]})
+        self.assertEqual([e["hook_event_name"] for e in self.posted()], ["SessionStart"])
+
+    def test_without_the_pid_of_the_panes_agy_nothing_is_reported(self):
+        # a launch line from before (DOJO_HARNESS only), or a pid that is not the caller's: nothing, as outside
+        for pid in (None, "", "not-a-pid", str(os.getppid())):
+            env = dict(self.env)
+            if pid is None:
+                del env["DOJO_AGY_PID"]
+            else:
+                env["DOJO_AGY_PID"] = pid
+            self.assertEqual(self.hook(self.event("SessionStart"), env=env), {}, pid)
+            self.statusline(self.status(agent_state="working"), env=env)
+        self.assertEqual(self.bus.requests, [])
 
     def test_what_the_agy_pane_posts_says_it_is_agys(self):
         self.hook(self.event("Stop"))
