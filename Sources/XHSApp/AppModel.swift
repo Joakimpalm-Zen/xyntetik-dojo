@@ -106,7 +106,7 @@ final class AppModel: NSObject, ObservableObject {
         super.init()
         if let wanted, wanted != port { problem = "DOJO_PORT is \(wanted); a port is 1 to 65535. Using \(port)." }
         // The tools (and the move from ~/.xhs) come first, so the recent lists are read from the right folder.
-        if !smoke, let trouble = ToolInstall.run() {
+        if !smoke, let trouble = ToolInstall.copy() {
             problem = trouble
         }
         recentHosts = RecentHosts.load(AppModel.hostsFile)
@@ -125,6 +125,14 @@ final class AppModel: NSObject, ObservableObject {
         bus.onSession = { [weak self] in self?.savePanes() }
         bus.onAttention = { [weak self] name, attention in self?.attend(name, attention) }
         startServer()
+        // "dojo install" once the bus is up, off the main thread (D39)
+        if !smoke {
+            ToolInstall.install { [weak self] trouble in
+                MainActor.assumeIsolated {
+                    if let trouble { self?.problem = trouble }
+                }
+            }
+        }
         refreshOutside()
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
