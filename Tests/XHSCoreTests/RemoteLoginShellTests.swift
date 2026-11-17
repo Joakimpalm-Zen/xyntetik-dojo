@@ -133,26 +133,25 @@ import Testing
                  extra: [String: String] = [:]) throws -> Seen? {
             for part in ["folder", "argv", "env"] { try? fm.removeItem(atPath: seen.path + "." + part) }
             guard command.hasPrefix("exec ssh ") else { return nil }
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: local)
-            process.arguments = ["-l", "-i", "-c", "exec " + sshStandIn.path + " " + String(command.dropFirst("exec ssh ".count))]
             var environment = ["HOME": localHome.path, "PATH": "/usr/bin:/bin", "SHELL": local, "LANG": "en_US.UTF-8",
                                "DOJO_TEST_REMOTE_HOME": remoteHome.path, "DOJO_TEST_REMOTE_SHELL": remote,
                                "DOJO_TEST_REMOTE_PATH": remotePath, "DOJO_TEST_SEEN": seen.path]
             for (key, value) in extra { environment[key] = value }
-            process.environment = environment
-            process.standardInput = FileHandle.nullDevice
-            process.standardOutput = FileHandle.nullDevice
             let errors = root.appendingPathComponent("errors-\(UUID().uuidString)")
             fm.createFile(atPath: errors.path, contents: nil)
-            process.standardError = try FileHandle(forWritingTo: errors)
-            process.qualityOfService = .utility
-            try process.run()
-            let stuck = DispatchWorkItem { process.terminate() }
+            // In a session of its own, as helpLists starts its shell: with Process, an interactive login shell
+            // is in a background group of the terminal `swift test` was run from, and stops there (the second
+            // read of #114: 30 seconds a case, from an agy pane's shell tool).
+            let shell = ["-l", "-i", "-c", "exec " + sshStandIn.path + " " + String(command.dropFirst("exec ssh ".count))]
+            guard let child = Launcher.Detached(local, shell, environment: environment, errors: errors.path, qos: QOS_CLASS_UTILITY) else {
+                throw CocoaError(.executableLoad)
+            }
+            let stuck = DispatchWorkItem { child.stop() }
             DispatchQueue.global().asyncAfter(deadline: .now() + 30, execute: stuck)
-            process.waitUntilExit()
+            _ = child.output.readDataToEndOfFile()
+            child.outputEnded()
+            lastStatus = child.exitCode()
             stuck.cancel()
-            lastStatus = process.terminationStatus
             lastErrors = (try? String(contentsOf: errors, encoding: .utf8)) ?? ""
             guard let folder = fm.contents(atPath: seen.path + ".folder"), let argv = fm.contents(atPath: seen.path + ".argv"),
                   let env = fm.contents(atPath: seen.path + ".env") else { return nil }

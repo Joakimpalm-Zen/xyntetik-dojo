@@ -490,8 +490,9 @@ public enum Launcher {
         }
     }
 
-    /// A program started in a session of its own, so that it has no controlling terminal: stdin and stderr
-    /// /dev/null, stdout a pipe, nothing else of this process's files. D38: Foundation's Process puts its child
+    /// A program started in a session of its own, so that it has no controlling terminal: stdin /dev/null,
+    /// stdout a pipe, stderr /dev/null or a file (`errors`), nothing else of this process's files, and this
+    /// process's environment unless it is given one. D38: Foundation's Process puts its child
     /// in a process group of its own; where Dojo has a controlling terminal (started from a terminal, as
     /// `make smoke` in an agy pane, whose shell tool runs commands on one), that group is a background one,
     /// and an interactive login shell there is stopped by SIGTTIN until the time runs out. A pane's harness
@@ -508,10 +509,13 @@ public enum Launcher {
         let output: FileHandle
         private let lock = NSLock()
         private var exited = false, ended = false, stopped = false, reaped = false
+        private var code: Int32 = 0
+        private let gone = DispatchSemaphore(value: 0)
         /// For a test: called with the pid once the program has ended, before it is reaped.
         private let onExit: (@Sendable (pid_t) -> Void)?
 
-        init?(_ executable: String, _ arguments: [String], onExit: (@Sendable (pid_t) -> Void)? = nil) {
+        init?(_ executable: String, _ arguments: [String], environment: [String: String]? = nil, errors: String? = nil,
+              qos: qos_class_t = QOS_CLASS_DEFAULT, onExit: (@Sendable (pid_t) -> Void)? = nil) {
             self.onExit = onExit
             var fds: [Int32] = [0, 0]
             guard pipe(&fds) == 0 else { return nil }
@@ -525,11 +529,13 @@ public enum Launcher {
             }
             posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0)
             posix_spawn_file_actions_adddup2(&actions, fds[1], 1)
-            posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0)
+            posix_spawn_file_actions_addopen(&actions, 2, errors ?? "/dev/null", O_WRONLY | O_CREAT | O_APPEND, 0o644)
             posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETSID | POSIX_SPAWN_CLOEXEC_DEFAULT))
+            posix_spawnattr_set_qos_class_np(&attributes, qos)
             let argv: [UnsafeMutablePointer<CChar>?] = ([executable] + arguments).map { strdup($0) } + [nil]
             // this process's environment, as Process gives its child
-            let envp: [UnsafeMutablePointer<CChar>?] = ProcessInfo.processInfo.environment.map { strdup($0.key + "=" + $0.value) } + [nil]
+            let envp: [UnsafeMutablePointer<CChar>?] = (environment ?? ProcessInfo.processInfo.environment)
+                .map { strdup($0.key + "=" + $0.value) } + [nil]
             defer { (argv + envp).forEach { free($0) } }
             var pid: pid_t = 0
             let started = posix_spawn(&pid, executable, &actions, &attributes, argv, envp)
@@ -598,7 +604,20 @@ public enum Launcher {
             guard exited, ended || stopped, !reaped else { return }
             var status: Int32 = 0
             waitpid(pid, &status, 0)  // it has ended: this does not wait
+            // the exit code, or 128 and the signal that ended it, as a shell says
+            code = status & 0x7f == 0 ? (status >> 8) & 0xff : 128 + status & 0x7f
             reaped = true
+            gone.signal()
+        }
+
+        /// Waits until the program has been reaped (its output has ended, or it was stopped) and gives its exit
+        /// code.
+        func exitCode() -> Int32 {
+            gone.wait()
+            gone.signal()
+            lock.lock()
+            defer { lock.unlock() }
+            return code
         }
     }
 
