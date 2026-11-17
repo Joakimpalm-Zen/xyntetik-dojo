@@ -294,6 +294,9 @@ public enum Composer {
     }
 
     /// "● [07:46:48] " and the command: agy's row for a task it runs in the background, from its start time.
+    /// agy writes that time in 24 hours on a Mac whose clock shows 12 ("[07:43:22]" at 7:43 in the morning,
+    /// "[01:12:07]" after midnight), and cuts a long command short in the one row ("..."). Any other row there
+    /// is no task's, and the composer is not read: a miss holds the message, as before (the re-read of #114).
     static func isAgyTaskRow(_ text: String) -> Bool {
         guard text.hasPrefix("● ["), let close = text.firstIndex(of: "]") else { return false }
         let time = text[text.index(text.startIndex, offsetBy: 3)..<close].split(separator: ":", omittingEmptySubsequences: false)

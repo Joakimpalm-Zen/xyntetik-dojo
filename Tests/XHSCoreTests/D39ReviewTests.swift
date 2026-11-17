@@ -175,7 +175,7 @@ import Testing
         }
         // each first row is the pane's whole width: the terminal wrapped it there
         let cases: [(row1: String, row2: String, secrets: [String])] = [
-            ("$ echo postgres://alice:longsecretvalue1", "2@db.internal:5432/app", ["longsecretvalue1"]),
+            ("$ echo postgres://alice:longsecretvalue1", "2@localhost:5432/app", ["longsecretvalue1"]),
             ("$ curl -H 'Authorization: Bearer abcdefg", "hijklmnop0123456789' https://x", ["abcdefg", "hijklmnop0123456789"]),
             ("$ export SERVICE_API_KEY=abcdefghijklmno", "pqrstuvwxyz0123456789", ["pqrstuvwxyz0123456789"]),
             ("$ curl -s https://api.example.co -u bob:", "ijklmnopqrstuvw0123456789", ["ijklmnopqrstuvw0123456789"]),
