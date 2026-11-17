@@ -282,10 +282,26 @@ public enum Composer {
                 end = kind == .agy ? afterTaskRows(foot, from: closing + 1) : closing + 1
             case .codex:
                 guard at == 0 || foot[at - 1].text.isEmpty else { return nil }
-                if afterPaste, pasted != nil {
-                    // the pasted text may have empty rows of its own: it ends where it has all been seen
-                    guard let last = (at..<foot.count).first(where: { arrived(rows(to: $0 + 1)) }) else { return nil }
-                    end = last + 1
+                if afterPaste, let pasted {
+                    if first.hasSuffix("↑"), !bare(pasted).hasSuffix("↑"), at + 1 < foot.count {
+                        // Codex 0.169.0 inline-scrolls multi-line pastes below its placeholder threshold,
+                        // marking column end of the `›` row with `↑` and pushing earlier rows off the top.
+                        let cleanFirst = String(first.dropLast()).trimmingCharacters(in: blank)
+                        guard let last = (at..<foot.count).first(where: { endIdx in
+                            let slice = foot[(at + 1)..<(endIdx + 1)]
+                            guard slice.allSatisfy({ $0.text.isEmpty || ($0.setIn && !startsWithBoxDrawing($0.text) && !isNumberedChoice($0.text)) })
+                            else { return false }
+                            let candidate = [cleanFirst] + slice.map(\.text)
+                            guard !candidate.contains(where: { $0.hasSuffix("↓") }),
+                                  bare(candidate.joined()).count >= editedRun else { return false }
+                            return ShownPart(rows: candidate, above: true, below: false).isPart(of: pasted)
+                        }) else { return nil }
+                        end = last + 1
+                    } else {
+                        // the pasted text may have empty rows of its own: it ends where it has all been seen
+                        guard let last = (at..<foot.count).first(where: { arrived(rows(to: $0 + 1)) }) else { return nil }
+                        end = last + 1
+                    }
                 } else if afterPaste {
                     end = foot.indices.first(where: { $0 > at && (foot[$0].text.isEmpty || !foot[$0].setIn) }) ?? foot.count
                 } else {
