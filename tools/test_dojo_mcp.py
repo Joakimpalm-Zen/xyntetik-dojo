@@ -1369,3 +1369,125 @@ class AuditTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CutShortBus:
+    """A bus whose answer ends before its Content-Length says: the app quit while it answered."""
+
+    def __init__(self):
+        import socketserver
+
+        class Handler(socketserver.StreamRequestHandler):
+            def handle(self):
+                length = 0
+                while True:
+                    line = self.rfile.readline()
+                    if line.lower().startswith(b"content-length:"):
+                        length = int(line.split(b":", 1)[1])
+                    if line in (b"\r\n", b"\n", b""):
+                        break
+                self.rfile.read(length)
+                self.wfile.write(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n{\"pa")
+
+        self.server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), Handler)
+        self.port = self.server.server_address[1]
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+class HardeningSweep(unittest.TestCase):
+    """D49: what a sweep of the shim found. Each test failed before its fix."""
+
+    def setUp(self):
+        self.bus = FakeBus()
+        self.env = {"DOJO_TOKEN": "tok-1", "DOJO_PORT": str(self.bus.port)}
+
+    def tearDown(self):
+        self.bus.close()
+
+    def cli(self, *argv, stdin=""):
+        out, err = io.StringIO(), io.StringIO()
+        saved = dict(os.environ)
+        os.environ.update(self.env)
+        try:
+            return load_shim().cli(list(argv), out=out, err=err, stdin=io.StringIO(stdin)), out.getvalue(), err.getvalue()
+        finally:
+            os.environ.clear()
+            os.environ.update(saved)
+
+    def hooks(self):
+        return [body for path, _, body in self.bus.requests if path == "/hook"]
+
+    # D51: a hook event larger than the bus takes (1 MiB) never reached it, so the pane's state was not told.
+
+    def test_a_hook_with_a_large_tool_result_still_reaches_the_bus(self):
+        event = {"hook_event_name": "PostToolUse", "session_id": "s-1", "tool_name": "Read",
+                 "tool_input": {"file_path": "/big"}, "tool_response": "x" * (2 << 20)}
+        code, _, _ = self.cli("hook", stdin=json.dumps(event))
+        self.assertEqual(code, 0)
+        self.assertEqual(self.hooks(), [{"hook_event_name": "PostToolUse", "session_id": "s-1", "tool_name": "Read"}])
+
+    def test_a_hook_never_posts_more_than_the_bus_takes(self):
+        # a prompt larger than the limit: the state still goes, without the prompt (the bus then proves nothing by it)
+        event = {"hook_event_name": "UserPromptSubmit", "session_id": "s-1", "prompt": "p" * (3 << 20)}
+        self.cli("hook", stdin=json.dumps(event))
+        self.assertEqual(self.hooks(), [{"hook_event_name": "UserPromptSubmit", "session_id": "s-1"}])
+
+    def test_an_ordinary_hook_goes_as_it_came_apart_from_the_tool_payload(self):
+        event = {"hook_event_name": "UserPromptSubmit", "session_id": "s-1", "prompt": "hello", "model": "m",
+                 "transcript_path": "/t", "notification_type": "n", "something_new": {"a": 1}}
+        self.cli("hook", stdin=json.dumps(event))
+        self.assertEqual(self.hooks(), [event])
+
+    # D52: an answer cut short, or a port that is no number, came out as a Python traceback.
+
+    def test_an_answer_cut_short_is_a_refusal_in_words(self):
+        cut = CutShortBus()
+        self.addCleanup(cut.close)
+        self.env["DOJO_PORT"] = str(cut.port)
+        code, _, err = self.cli("panes")
+        self.assertEqual(code, 1)
+        self.assertIn("dojo: bus", err)
+
+    def test_a_port_that_is_no_number_is_a_refusal_in_words(self):
+        self.env["DOJO_PORT"] = "seven"
+        code, _, err = self.cli("state", "codex-1")
+        self.assertEqual(code, 1)
+        self.assertIn("dojo: bus", err)
+
+    def test_the_mcp_tool_says_so_too(self):
+        cut = CutShortBus()
+        self.addCleanup(cut.close)
+        saved = dict(os.environ)
+        os.environ.update(self.env, DOJO_PORT=str(cut.port))
+        try:
+            reply = load_shim().handle({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                        "params": {"name": "state", "arguments": {"pane": "codex-1"}}})
+        finally:
+            os.environ.clear()
+            os.environ.update(saved)
+        self.assertTrue(reply["result"]["isError"])
+
+    # D53: a record line that is an object with fields of another kind stopped dojo audit with a traceback.
+
+    def test_audit_prints_a_line_whose_fields_are_not_text(self):
+        home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home)
+        folder = os.path.join(home, ".dojo", "audit")
+        os.makedirs(folder)
+        first = json.dumps({"time": "2026-11-17T10:00:00Z", "op": "send", "from": "a", "pane": "b", "text": "hi"})
+        second = json.dumps({"prev": hashlib.sha256(first.encode()).hexdigest(), "time": 5, "op": 7, "from": 3,
+                             "pane": None, "text": "odd"})
+        with open(os.path.join(folder, "2026-11-17.jsonl"), "w") as f:
+            f.write(first + "\n" + second + "\n")
+        shim = load_shim()
+        for argv in ([], ["--since", "2026-11-17T09:00"], ["--pane", "b"]):
+            out, err = io.StringIO(), io.StringIO()
+            self.assertEqual(shim.audit(argv, out, err, home=home), 0, err.getvalue())
+            self.assertIn("hi", out.getvalue())
+        out = io.StringIO()
+        shim.audit([], out, io.StringIO(), home=home)
+        self.assertIn("odd", out.getvalue())
