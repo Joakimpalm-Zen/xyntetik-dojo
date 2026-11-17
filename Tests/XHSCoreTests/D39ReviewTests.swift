@@ -72,6 +72,18 @@ import Testing
         #expect(!rig.io.typed.contains("ping"), "typed onto the owner's draft: \(rig.io.typed.debugDescription)")
     }
 
+    /// The same in Claude Code and agy: a draft that starts with a new line has the mark alone in its first
+    /// row and an empty row under it, where an empty composer has its closing ruled line.
+    @Test func aDraftThatStartsWithANewLineIsNotAnEmptyComposer() {
+        let rule = String(repeating: "─", count: 60)
+        for (kind, mark) in [(HarnessKind.claude, "❯\u{a0}"), (.agy, ">")] {
+            let screen = [rule, mark, "", "  rm -rf build", rule, "  status"].joined(separator: "\n")
+            #expect(!Composer.shownEmpty(kind: kind, screen: screen), "\(kind)")
+            // and a row that only starts with the mark after blanks is not the composer's
+            #expect(!Composer.shownEmpty(kind: kind, screen: ["text", "  " + mark, rule].joined(separator: "\n")), "\(kind)")
+        }
+    }
+
     // MARK: P2 B. The owner erases the bus's paste
 
     /// The bus pasted "hi"; the owner erased it with Backspace before the Enter: the composer is empty, the
