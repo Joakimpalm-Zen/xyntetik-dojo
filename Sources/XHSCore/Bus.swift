@@ -920,10 +920,6 @@ public final class Bus {
         p.queue.removeAll()
         p.pasted = message
         io.write(Delivery.bytes(message, bracketedPaste: io.bracketedPasteEnabled))
-        if p.kind != .shell, p.state != .running {
-            p.state = .running
-            p.stateSince = now()
-        }
         if submitDelay > 0 {
             // Enter comes a moment later, and only if nothing changed meanwhile: a prompt that opened, or
             // owner keys typed after the paste, would make Enter send the wrong thing.
@@ -952,6 +948,7 @@ public final class Bus {
                     io.write(Delivery.enter)
                     self.nothingWaits(p)
                     self.note(["op": "enter", "pane": p.name, "outcome": "sent"])
+                    self.enterStartedATurn(p)
                 } else {
                     // A prompt opened, the composer left the screen or something new stands under it (a dialog
                     // with no hook, D35.1), or the owner pressed a key that adds no text: the Enter waits for the guard to clear (D26). Before, it
@@ -970,8 +967,16 @@ public final class Bus {
             p.pasted = nil
             p.look = nil
             note(["op": "enter", "pane": p.name, "outcome": "sent"])
+            enterStartedATurn(p)
         }
         onChange?()
+    }
+
+    /// The bus's Enter went out: the harness has a prompt, so the pane is running (a shell has no turns). Only
+    /// then, and through setState, so the record has the change (D39, an outside read: the paste set it, with
+    /// no record, and a dropped Enter left the pane running till its screen had been still for 15 seconds).
+    private func enterStartedATurn(_ p: Pane) {
+        if p.kind != .shell { setState(p.name, .running) }
     }
 
     /// The Enter the bus owed is pressed, or no longer its to press: nothing of its waits in the composer,
@@ -1109,10 +1114,13 @@ public final class Bus {
             note(["op": "enter", "pane": p.name, "outcome": "dropped", "why": "the owner typed after the paste"])
             return
         }
+        // Once the owner has been quiet: the screen has caught up with their keys by then. A hook that comes
+        // right after their Enter, while a dialog they answered is still drawn, cannot settle what the Enter
+        // did before the composer is back (D39: the pane's change to running at that hook flushes it).
+        if let last = p.lastOwnerInput, now().timeIntervalSince(last) < ownerQuietInterval { return }
         // The owner pressed Enter over the bus's text, and it is gone, or no longer the bus's.
         if p.ownerEnterAfterPaste, ownersEnterSettledIt(p, io) { return }
         guard p.state == .idle || p.state == .running, !p.hasDraft else { return }
-        if let last = p.lastOwnerInput, now().timeIntervalSince(last) < ownerQuietInterval { return }
         // What is left of the paste (D39, an outside read): keys that add no text, Backspace or Escape, take
         // it out of the composer, or part of it, and the owner's own Enter is not the only way it goes. Gone,
         // there is nothing to press Enter on, and an Enter owed for it held every later message for good;
@@ -1150,8 +1158,8 @@ public final class Bus {
             p.hasDraft = true
             p.typedSinceSubmit = false
         }
-        if p.kind != .shell { p.state = .running }
         note(["op": "enter", "pane": p.name, "outcome": "sent", "late": true])
+        enterStartedATurn(p)
         onChange?()
     }
 

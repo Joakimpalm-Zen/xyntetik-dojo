@@ -84,7 +84,8 @@ import Testing
         rig.bus.noteOwnerInput("worker", .submit)                             // the owner sends the text
         rig.hook("UserPromptSubmit", ["prompt": "[from: fable] status?"])     // and the hook says so
         rig.io.screen = Self.claude("❯ Try \"fix the failing test\"", "  status")
-        rig.wait(1)
+        // what the owner's Enter did is read once they have been quiet, from the screen as it is then (D39)
+        rig.wait(4)
         #expect(rig.enters == 0)
         #expect(rig.recorded("enter").last?["outcome"] as? String == "dropped")
         #expect(rig.bus.info("worker")?.draft == false, "the suggestion is the harness's, and the hook proved the submission")
