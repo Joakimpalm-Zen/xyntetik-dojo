@@ -542,6 +542,8 @@ import Testing
 
     @Test func enterWaitsForTheDelayAndIsDroppedIfAPromptOpensMeanwhile() {
         var fire: (() -> Void)?
+        var clock = Date(timeIntervalSince1970: 1_000)
+        bus.now = { clock }
         bus.schedule = { _, work in fire = work }
         bus.submitDelay = 0.15
         hook(targetToken, "SessionStart")
@@ -552,9 +554,13 @@ import Testing
         #expect(targetIO.typed == "[from: claude-1] one")
         #expect(bus.info("codex-1")?.queued == 1)
         fire?()
+        // and then for a look of the screen after that Enter, not the same turn (the second read of #116)
+        #expect(targetIO.typed == "[from: claude-1] one\r")
+        clock += 1; bus.tick()
         #expect(targetIO.typed == "[from: claude-1] one\r[from: claude-1] two")
         fire?()
         #expect(targetIO.typed == "[from: claude-1] one\r[from: claude-1] two\r")
+        clock += 1
         // A prompt that opens between the paste and its Enter: no Enter.
         hook(targetToken, "Stop")
         _ = call("send", ["pane": "codex-1", "text": "three"])

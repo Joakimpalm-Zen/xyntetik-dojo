@@ -129,6 +129,8 @@ public final class Bus {
         var enterOwed = false
         /// When the owed text went into the composer.
         var pastedAt: Date?
+        /// When the bus last pressed Enter in this pane (the second read of #116).
+        var enterSentAt: Date?
         /// The owner may have unsent text in the composer: set by any key that can add text, cleared by
         /// Ctrl-C or by the harness reporting a submission that nothing was typed after.
         var hasDraft = false
@@ -220,6 +222,9 @@ public final class Bus {
     public var submitDelay: TimeInterval = 0.15
     /// The bus does not type into a pane the owner typed into this recently.
     public var ownerQuietInterval: TimeInterval = 3
+    /// How long after its own Enter the bus waits before it types the next message: the harness takes the
+    /// Enter, and the screen shows what it did, a moment later (the second read of #116).
+    public var enterSettleInterval: TimeInterval = 0.5
     /// A `running` pane whose screen has not changed for this long is idle again: its turn ended without
     /// a Stop hook (an API error, a lost hook). Every harness animates a spinner while it works.
     public var idleAfterQuiet: TimeInterval = 15
@@ -898,6 +903,11 @@ public final class Bus {
         }
         guard p.state == .idle || p.state == .running, !p.queue.isEmpty, !p.enterPending, let io = p.io else { return }
         if let last = p.lastOwnerInput, now().timeIntervalSince(last) < ownerQuietInterval { return }
+        // The bus's own Enter came just before: what it did (a turn, a dialog) is on the screen a moment later,
+        // and the next message is looked at against that screen, not the one from before. A message that came
+        // during another's submit delay went in right behind its Enter, on main as well (the second read of
+        // #116); a tick later the screen has caught up.
+        if let sent = p.enterSentAt, now().timeIntervalSince(sent) < enterSettleInterval { return }
         // A hook ends a draft hold, but a turn the harness refuses fires none, and the owner's text is gone
         // from the composer all the same. The screen showing it empty ends the hold too (D18). Only after the
         // owner has been quiet, so a key not yet drawn cannot be missed.
@@ -983,6 +993,9 @@ public final class Bus {
     /// then, and through setState, so the record has the change (D39, an outside read: the paste set it, with
     /// no record, and a dropped Enter left the pane running till its screen had been still for 15 seconds).
     private func enterStartedATurn(_ p: Pane) {
+        // with no submit delay (the tests' own setting) the Enter goes with the paste and the bus reads no
+        // screen between them, as before; with one, the next message waits for the screen after this Enter
+        if submitDelay > 0 { p.enterSentAt = now() }
         if p.kind != .shell { setState(p.name, .running) }
     }
 

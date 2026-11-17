@@ -220,9 +220,11 @@ import Testing
         rig.fire()
         #expect(rig.enters == 1)
         rig.io.bracketedPasteEnabled = true
+        rig.wait(1)   // the next message after a look of the screen that follows the Enter (the second read of #116)
         rig.send("one\ntwo\nthree")
         rig.fire()
         #expect(rig.enters == 2)
+        rig.wait(1)
         rig.send((1...20).map { "line \($0)" }.joined(separator: "\n"))
         rig.fire()
         #expect(rig.enters == 3)
