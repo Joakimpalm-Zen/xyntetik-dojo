@@ -22,6 +22,7 @@ public struct HTTPRequest: Equatable, Sendable {
         guard let end = data.range(of: Data("\r\n\r\n".utf8)) else {
             return data.count > maxHeaderBytes ? .invalid : .incomplete
         }
+        guard data.distance(from: data.startIndex, to: end.upperBound) <= maxHeaderBytes else { return .invalid }
         guard let head = String(data: data[data.startIndex..<end.lowerBound], encoding: .utf8) else { return .invalid }
         var lines = head.components(separatedBy: "\r\n")
         let start = lines.removeFirst().split(separator: " ")
