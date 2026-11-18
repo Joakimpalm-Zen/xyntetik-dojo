@@ -1,8 +1,9 @@
 name: ci
 
 # The Swift tests, the shim's Python tests, the Runner pick test, the hygiene tree check and the app
-# bundle, on macOS. It runs on pull requests (where it gates the merge) and once a week on main, not on
-# every push: a merged pull request was just checked. The SwiftPM build directory is cached on the
+# bundle, on macOS. It runs on pull requests (where it gates the merge), on every push to main and once
+# a week. On main too since 2026-11-18 (D61): each pull request is checked alone, so several merged close
+# together were never run as one, and main had no run to read. The SwiftPM build directory is cached on the
 # dependency lock, so SwiftTerm compiles once per lock change rather than twice per run. The smoke (two
 # panes, a click, typed keys echoed back) gates the merge like the tests. Its record on the hosted runners
 # before it did, counted from the logs: 61 of the 62 runs that reached it from 2026-11-10 to 2026-11-15
@@ -10,6 +11,8 @@ name: ci
 # A smoke that is red on its own: run the job again once, and file it if it is red a second time.
 on:
   pull_request:
+  push:
+    branches: [main]
   schedule:
     - cron: "17 6 * * 1"
   workflow_dispatch:
