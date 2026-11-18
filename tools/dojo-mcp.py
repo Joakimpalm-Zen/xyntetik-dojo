@@ -1049,10 +1049,21 @@ def agy_hook_cli(stdin, out):
 
 # ---------------------------------------------------------------- CLI
 
-USAGE = """usage: dojo panes | send <pane> <text...> | send <pane> - (text on stdin) | read <pane> [lines] | state <pane> | watch <pane> | label [text...] | relay <words...> | hook | install | audit [--pane P] [--since WHEN]"""
+USAGE = """usage: dojo panes | send <pane> <text...> | send <pane> - (text on stdin) | read <pane> [lines] | state <pane> | watch <pane> | label [text...] | relay <words...> | hook | install | audit [--pane P] [--since WHEN]
+
+Typed messages:
+  dojo send <pane> --type assign item=... what=... [next=...] [by=...]
+  dojo send <pane> --type report repo=... pr=... head=... checks=... mergeable=... [note=...]
+  dojo send <pane> --type merged repo=... pr=... sha=... [item=...] [note=...]
+  dojo send <pane> --type bug command=... observed=... expected=... [cause=...] [where=...]
+  head/sha: 7 to 40 hex digits; checks: name=pass|fail|pending|skipped words
+  mergeable: yes|no|unknown; quote values containing spaces."""
 
 
 def cli(argv, out=sys.stdout, err=sys.stderr, stdin=sys.stdin):
+    if argv in (["help"], ["--help"], ["send", "--help"]):
+        out.write(USAGE + "\n")
+        return 0
     if not argv:
         err.write(USAGE + "\n")
         return 2
