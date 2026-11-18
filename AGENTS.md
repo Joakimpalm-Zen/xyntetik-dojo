@@ -49,3 +49,16 @@ type into a terminal that is at a permission prompt, and the harness
 instructions shipped with this app say that `[from: ...]` lines are peer
 messages. Tokens, keys and SSH credentials are never stored by this app; it
 relies on what the host already has.
+
+## 6. Version control
+
+- Run `make hooks` once on the main checkout to install `.githooks`
+  (`core.hooksPath`).
+- In each new linked worktree, set the worktree-local `user.name` and
+  `user.email` before committing (`.githooks/pre-commit` refuses
+  linked-worktree commits without a `--worktree` `user.email`). Use one of the
+  three agent identities (an address of the form `name@users.noreply.github.com`
+  credits whoever holds that username):
+  - `Claude Code`: `git config --worktree user.name "Claude Code" && git config --worktree user.email "noreply@anthropic.com"`
+  - `Codex`: `git config --worktree user.name "Codex" && git config --worktree user.email "267193182+codex@users.noreply.github.com"`
+  - `Antigravity`: `git config --worktree user.name "Antigravity" && git config --worktree user.email "antigravity@noreply.xyntetik.com"`

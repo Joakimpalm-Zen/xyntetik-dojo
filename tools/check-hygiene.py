@@ -40,7 +40,7 @@ PERSONAL = [
     (re.compile(r"\b[a-z0-9-]+\.ts\.net\b", re.I), "a host name on the home network"),
     (re.compile(r"\b(?:gh[pousr]|github_pat|hf|sk|xox[abp])_[A-Za-z0-9_-]{10,}"), "an access token"),
     (re.compile(r"://[^/\s:@]+:[^/\s@]+@"), "credentials in a URL"),
-    (re.compile(r"(?<![\w.+-])(?!noreply@)[\w.+-]+@(?!users\.noreply\.github\.com\b)(?![\w.-]*example\.)[\w-]+\.[\w.-]*[A-Za-z]"), "an e-mail address"),
+    (re.compile(r"(?<![\w.+-])(?!noreply@)[\w.+-]+@(?!users\.noreply\.github\.com\b|noreply\.xyntetik\.com\b)(?![\w.-]*example\.)[\w-]+\.[\w.-]*[A-Za-z]"), "an e-mail address"),
 ]
 PROSE_SUFFIXES = (".md",)
 
@@ -115,7 +115,7 @@ def self_test():
         ok &= any(p.search(sample) for p, _ in PERSONAL) or print("missed", what) or False
     ok &= not any(p.search("/Users/me/repo") or p.search('home: "/c/Users/me"') for p, _ in PERSONAL)
     for clean in ["127.0.0.1:7788", "100.1.2.3", "the local network", "/home/me/x", "$tmp/home/heads", "C:\\Users\\me",
-                  "noreply@users.noreply.github.com", "user@lab.example.org", "<noreply@anthropic.com>", "pi-2.local"]:
+                  "noreply@users.noreply.github.com", "antigravity@noreply.xyntetik.com", "user@lab.example.org", "<noreply@anthropic.com>", "pi-2.local"]:
         ok &= not any(p.search(clean) for p, _ in PERSONAL) or print("false alarm", clean) or False
     print("check-hygiene self-test", "ok" if ok else "FAILED")
     return 0 if ok else 1
