@@ -10,7 +10,11 @@ SIGN := $(shell security find-identity -v -p codesigning 2>/dev/null | grep -q '
 # sandbox cannot start inside Homebrew's.
 SWIFT_BUILD_FLAGS ?=
 
-.PHONY: build test icon app run smoke stage remote-setup clean cert install
+.PHONY: build test icon app run smoke stage remote-setup hooks clean cert install
+
+hooks:
+	git config core.hooksPath .githooks
+	@echo "pre-commit hook installed (core.hooksPath = .githooks)"
 
 build:
 	swift build -c release $(SWIFT_BUILD_FLAGS)
