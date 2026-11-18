@@ -60,7 +60,8 @@ TOOLS = [
                 "text": {"type": "string", "description": "The message (free text). Leave it out for a typed message."},
                 "type": {"type": "string", "enum": ["assign", "report", "merged", "bug"],
                          "description": "A typed message instead of text: assign (item, what; next, by), report "
-                         "(repo, pr, head, checks as name=pass|fail|pending|skipped, mergeable yes|no|unknown; note), "
+                         "(repo, head, checks as name=pass|fail|pending|skipped, mergeable yes|no|unknown; optional pr, note). "
+                         "For a report without a pull request, omit pr or use none; pr=0 is refused. "
                          "merged (repo, pr, sha; item, note), bug (command, observed, expected; cause, where). "
                          "The bus checks the fields and refuses with what is wrong."},
                 "fields": {"type": "object", "description": "The typed message's fields, each one line of text",
@@ -1049,10 +1050,22 @@ def agy_hook_cli(stdin, out):
 
 # ---------------------------------------------------------------- CLI
 
-USAGE = """usage: dojo panes | send <pane> <text...> | send <pane> - (text on stdin) | read <pane> [lines] | state <pane> | watch <pane> | label [text...] | relay <words...> | hook | install | audit [--pane P] [--since WHEN]"""
+USAGE = """usage: dojo panes | send <pane> <text...> | send <pane> - (text on stdin) | read <pane> [lines] | state <pane> | watch <pane> | label [text...] | relay <words...> | hook | install | audit [--pane P] [--since WHEN]
+
+Typed messages:
+  dojo send <pane> --type assign item=... what=... [next=...] [by=...]
+  dojo send <pane> --type report repo=... [pr=number|none] head=... checks=... mergeable=... [note=...]
+  dojo send <pane> --type merged repo=... pr=... sha=... [item=...] [note=...]
+  dojo send <pane> --type bug command=... observed=... expected=... [cause=...] [where=...]
+  report pr: a positive number; omit it or use none for work without a pull request, never 0
+  head/sha: 7 to 40 hex digits; checks: name=pass|fail|pending|skipped words
+  mergeable: yes|no|unknown; quote values containing spaces."""
 
 
 def cli(argv, out=sys.stdout, err=sys.stderr, stdin=sys.stdin):
+    if argv in (["help"], ["--help"], ["send", "--help"]):
+        out.write(USAGE + "\n")
+        return 0
     if not argv:
         err.write(USAGE + "\n")
         return 2

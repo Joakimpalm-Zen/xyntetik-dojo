@@ -209,11 +209,14 @@ an item is whatever the sender's plan calls it.
   next: the D28 sheet
 ```
 
-**report**: a pull request is ready. Fields: `repo`, `pr` (a number), `head` (7 to 40 hex digits), `checks`
-(`name=pass|fail|pending|skipped` words), `mergeable` (`yes`, `no` or `unknown`); optional `note`.
+**report**: work is ready, with or without a pull request. Fields: `repo`, `head` (7 to 40 hex digits), `checks`
+(`name=pass|fail|pending|skipped` words), `mergeable` (`yes`, `no` or `unknown`); optional `pr` and `note`.
+Use a positive number for `pr`, or leave it out or use `none` when the work has no pull request. The card then
+shows no number. `pr=0` is refused with a reminder to leave it out. For work without a PR, `mergeable=unknown`
+can describe the result.
 
 ```
-[from: macbook] report xyntetik-dojo #92
+[from: worker] report xyntetik-dojo #92
   repo: xyntetik-dojo
   pr: 92
   head: e07bd8afce6f74907b6938260341b5ff5ea19571

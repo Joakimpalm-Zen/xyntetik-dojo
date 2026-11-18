@@ -19,6 +19,15 @@ struct ContentView: View {
                     .padding(6)
                     .background(Color(Theme.coral))
             }
+            if !model.lastPanes.isEmpty {
+                HStack(spacing: 8) {
+                    Text("Saved panes waiting to reopen: \(model.lastPanes.count)").font(.callout)
+                    Spacer()
+                    Button("Reopen") { model.reopenLast() }.buttonStyle(.primary)
+                    Button("Dismiss") { model.dismissLastPanes() }.buttonStyle(.quiet)
+                }
+                .padding(8)
+            }
             // Agents fill the grid; Runner, the local model server, lives in a strip along the bottom.
             let agents = model.agents
             if agents.isEmpty {
@@ -32,10 +41,6 @@ struct ContentView: View {
                         .font(.callout)
                         .foregroundStyle(Color(Theme.muted))
                         .padding(.top, 10)
-                    if !model.lastPanes.isEmpty {
-                        Button("Reopen the last panes (\(model.lastPanes.count))") { model.reopenLast() }
-                            .buttonStyle(.primary)
-                    }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {

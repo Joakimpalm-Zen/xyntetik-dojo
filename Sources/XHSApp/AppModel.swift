@@ -106,8 +106,11 @@ final class AppModel: NSObject, ObservableObject {
         notifier.onOpen = { [weak self] pane in self?.open(pane) }
         return notifier
     }()
-    /// The panes of the last run, for the button in the empty window, until a pane opens in this one.
+    /// Saved panes not opened yet, offered until they reopen or the owner dismisses them.
     @Published private(set) var lastPanes: [SavedPane] = []
+    private var reopenProblem = ""
+    /// Saved read grants whose owner is open but whose target is still waiting to reopen.
+    private var pendingReads: [String: Set<String>] = [:]
     /// Set while quitting: the panes close, and the list of them must outlive that.
     private var keepingList = false
     private var piFlagCheck: Task<Bool, Never>?
@@ -363,11 +366,31 @@ final class AppModel: NSObject, ObservableObject {
 
     // MARK: panes
 
+    private func takenPaneNames(excludingLive: Set<String> = [], claiming saved: String? = nil) -> Set<String> {
+        var pending = lastPanes
+        if let saved, let index = pending.firstIndex(where: { $0.name == saved }) { pending.remove(at: index) }
+        return Set(bus.names.filter { !excludingLive.contains($0) } + pending.map(\.name))
+    }
+
+    private func paneNameProblem(_ name: String, excludingLive: Set<String> = [],
+                                 claiming saved: String? = nil) -> String? {
+        guard PaneNames.isValid(name) else { return PaneNames.rule }
+        guard takenPaneNames(excludingLive: excludingLive, claiming: saved).contains(name) else { return nil }
+        return bus.names.contains(name) && !excludingLive.contains(name) ? "\(name) is already open."
+            : "Reopen or dismiss the saved pane named \(name) first."
+    }
+
     /// Adds a pane and starts its harness. Returns a message for the picker when the input is not usable.
     /// `directory` is the start folder: on this Mac it must exist (~ is expanded); on a host it is passed as typed.
     @discardableResult
     func addPane(kind: HarnessKind, host rawHost: String, name rawName: String, directory rawDirectory: String = "", unrestricted: Bool = false,
                  session: String? = nil, reopened: Bool = false) -> String? {
+        addPane(kind: kind, host: rawHost, name: rawName, directory: rawDirectory, unrestricted: unrestricted,
+                session: session, reopened: reopened, claiming: nil)
+    }
+
+    private func addPane(kind: HarnessKind, host rawHost: String, name rawName: String, directory rawDirectory: String,
+                         unrestricted: Bool, session: String?, reopened: Bool, claiming saved: String?) -> String? {
         let host = rawHost.trimmingCharacters(in: .whitespaces)
         if !host.isEmpty, !Hosts.isValid(host) {
             return "Host is an ssh destination such as box or user@box."
@@ -379,11 +402,10 @@ final class AppModel: NSObject, ObservableObject {
         if kind == .runner, host.isEmpty, foreignServer {
             return "\(servedBy) is serving \(runnerModel) on 127.0.0.1:8080; the pi panes use it. Stop it to let Runner serve."
         }
-        // A stopped Runner pane gives way to the new one.
-        if kind == .runner {
-            for stopped in items where stopped.kind == .runner && bus.info(stopped.name)?.state == .exited
-                && bus.info(stopped.name)?.host == host { close(stopped.name) }
-        }
+        // Plan a stopped Runner's replacement, but validate before closing anything.
+        let replacing = kind == .runner ? items.filter {
+            $0.kind == .runner && bus.info($0.name)?.state == .exited && bus.info($0.name)?.host == host
+        }.map(\.name) : []
         var directory = rawDirectory.trimmingCharacters(in: .whitespaces)
         if host.isEmpty, !directory.isEmpty {
             directory = (directory as NSString).expandingTildeInPath
@@ -394,12 +416,10 @@ final class AppModel: NSObject, ObservableObject {
         }
         var name = rawName.trimmingCharacters(in: .whitespaces).lowercased()
         if name.isEmpty {
-            name = PaneNames.next(for: kind, taken: Set(bus.names))
-        } else if !PaneNames.isValid(name) {
-            return PaneNames.rule
-        } else if bus.names.contains(name) {
-            return "\(name) is already open."
+            name = PaneNames.next(for: kind, taken: takenPaneNames(excludingLive: Set(replacing), claiming: saved))
         }
+        if let problem = paneNameProblem(name, excludingLive: Set(replacing), claiming: saved) { return problem }
+        for name in replacing { close(name) }
         let view = TerminalPane(name: name)
         if fontSize != TerminalPane.defaultFont.pointSize { view.setTextSize(fontSize) }
         view.onExit = { [weak self, weak view] _ in if let view { self?.bus.setState(view.paneName, .exited) } }
@@ -417,7 +437,7 @@ final class AppModel: NSObject, ObservableObject {
         items.append(Item(name: name, kind: kind, unrestricted: unrestricted, view: view, directory: directory))
         syncPowerHold()
         if let session { bus.setSession(name, session) }
-        lastPanes = []
+        if let saved, let index = lastPanes.firstIndex(where: { $0.name == saved }) { lastPanes.remove(at: index) }
         savePanes()
         Task { await launch(view, kind: kind, host: host, token: token, directory: directory, unrestricted: unrestricted, saved: session, reopened: reopened) }
         give(keys: view)
@@ -501,11 +521,14 @@ final class AppModel: NSObject, ObservableObject {
     func rename(_ name: String, to rawNew: String) -> String? {
         let new = rawNew.trimmingCharacters(in: .whitespaces).lowercased()
         guard let index = items.firstIndex(where: { $0.name == name }) else { return "no pane named '\(name)'" }
+        if let problem = paneNameProblem(new, excludingLive: [name]) { return problem }
         if let problem = bus.rename(name, to: new) { return problem }
         tokens[new] = tokens.removeValue(forKey: name)
         remoteShells[new] = remoteShells.removeValue(forKey: name)
         items[index].name = new
         items[index].view.paneName = new
+        pendingReads[new] = pendingReads.removeValue(forKey: name)
+        mapPendingReadTargets { $0 == name ? new : $0 }
         savePanes()
         return nil
     }
@@ -525,8 +548,9 @@ final class AppModel: NSObject, ObservableObject {
         if let focused { give(keys: focused) }
     }
 
-    func close(_ name: String) {
+    func close(_ name: String, preservingPendingReads: Bool = false) {
         guard let item = items.first(where: { $0.name == name }) else { return }
+        if !preservingPendingReads { discardPendingReads(for: name) }
         // Re-parenting the grid drops the first responder; give it back to the pane that had it.
         var focused = items.first { $0.view !== item.view && $0.view.window?.firstResponder === $0.view }?.view
         let hadKeys = item.view.window?.firstResponder === item.view
@@ -597,44 +621,100 @@ final class AppModel: NSObject, ObservableObject {
 
     private func savePanes() {
         guard !keepingList else { return }
-        SavedPanes.save(items.map { item in
+        let live = Set(items.map(\.name)), pending = Set(lastPanes.map(\.name))
+        pendingReads = pendingReads.reduce(into: [:]) { kept, entry in
+            let targets = entry.value.intersection(pending)
+            if live.contains(entry.key), !targets.isEmpty { kept[entry.key] = targets }
+        }
+        let opened = items.map { item in
             SavedPane(kind: item.kind, host: bus.info(item.name)?.host ?? "", directory: item.directory, name: item.name,
                       unrestricted: item.unrestricted, session: bus.sessionId(item.name),
-                      coordinator: bus.coordinatorName == item.name, mayRead: bus.info(item.name)?.reads ?? [])
-        }, to: state.panesFile)
+                      coordinator: bus.coordinatorName == item.name,
+                      mayRead: Set(bus.info(item.name)?.reads ?? []).union(pendingReads[item.name] ?? []).sorted())
+        }
+        SavedPanes.save(opened + lastPanes, to: state.panesFile)
     }
 
-    /// The button in the empty window. Nothing reopens by itself. The coordinator mark and the read grants
+    /// The saved-pane button. Nothing reopens by itself. The coordinator mark and the read grants
     /// come back once every pane is open, since a grant names another pane.
     func reopenLast() {
         let panes = lastPanes
         guard !panes.isEmpty else { return }
         var errors: [String] = []
+        var restored: [SavedPane] = []
         let wasKeeping = keepingList
         keepingList = true
         for pane in panes {
             if let trouble = addPane(kind: pane.kind, host: pane.host, name: pane.name, directory: pane.directory,
-                                     unrestricted: pane.unrestricted, session: pane.session, reopened: true) {
+                                     unrestricted: pane.unrestricted, session: pane.session, reopened: true, claiming: pane.name) {
                 errors.append("\(pane.name): \(trouble)")
+            } else {
+                restored.append(pane)
             }
         }
-        for pane in panes {
+        for pane in restored {
             if pane.coordinator, let trouble = bus.setCoordinator(pane.name) {
                 errors.append("\(pane.name): \(trouble)")
             }
             for target in pane.mayRead {
-                if let trouble = bus.setRead(pane.name, of: target, allowed: true) {
+                if let trouble = changeRead(pane.name, of: target, allowed: true) {
                     errors.append("\(pane.name): \(trouble)")
                 }
             }
         }
+        errors += resolvePendingReads()
         keepingList = wasKeeping
-        if !errors.isEmpty { problem = errors.joined(separator: " ") }
+        let message = errors.joined(separator: " ")
+        if !message.isEmpty || problem == reopenProblem { problem = message }
+        reopenProblem = message
         // Preserve saved panes on disk when every pane failed to open.
         if !items.isEmpty { savePanes() }
     }
 
+    /// Only an explicit dismissal discards saved panes that have not opened.
+    func dismissLastPanes() {
+        lastPanes = []
+        pendingReads.removeAll()
+        if problem == reopenProblem { problem = "" }
+        reopenProblem = ""
+        savePanes()
+    }
+
     // MARK: roles (D21.2)
+
+    private func mapPendingReadTargets(_ transform: (String) -> String?) {
+        lastPanes = lastPanes.map { pane in
+            SavedPane(kind: pane.kind, host: pane.host, directory: pane.directory, name: pane.name,
+                      unrestricted: pane.unrestricted, session: pane.session, coordinator: pane.coordinator,
+                      mayRead: pane.mayRead.compactMap(transform))
+        }
+    }
+
+    private func discardPendingReads(for name: String) {
+        pendingReads.removeValue(forKey: name)
+        mapPendingReadTargets { $0 == name ? nil : $0 }
+    }
+
+    private func changeRead(_ name: String, of target: String, allowed: Bool) -> String? {
+        if bus.info(name) != nil, bus.info(target) == nil, lastPanes.contains(where: { $0.name == target }) {
+            if allowed { pendingReads[name, default: []].insert(target) }
+            else { pendingReads[name]?.remove(target) }
+            return nil
+        }
+        let trouble = bus.setRead(name, of: target, allowed: allowed)
+        if trouble == nil { pendingReads[name]?.remove(target) }
+        return trouble
+    }
+
+    private func resolvePendingReads() -> [String] {
+        var errors: [String] = []
+        for name in pendingReads.keys.sorted() {
+            for target in (pendingReads[name] ?? []).sorted() where bus.info(target) != nil {
+                if let trouble = changeRead(name, of: target, allowed: true) { errors.append("\(name): \(trouble)") }
+            }
+        }
+        return errors
+    }
 
     /// Marks `name` as the coordinator, or none with nil; a menu choice of the owner's.
     func markCoordinator(_ name: String?) {
@@ -644,7 +724,7 @@ final class AppModel: NSObject, ObservableObject {
 
     /// Lets the worker `name` read `target`, or no longer; a menu choice of the owner's.
     func setRead(_ name: String, of target: String, allowed: Bool) {
-        if let trouble = bus.setRead(name, of: target, allowed: allowed) { problem = trouble }
+        if let trouble = changeRead(name, of: target, allowed: allowed) { problem = trouble }
         savePanes()
     }
 
@@ -663,9 +743,10 @@ final class AppModel: NSObject, ObservableObject {
         let readBy = bus.all.filter { $0.reads.contains(item.name) }.map(\.name)
         let wasKeeping = keepingList
         keepingList = true
-        close(item.name)
+        close(item.name, preservingPendingReads: true)
         if let trouble = addPane(kind: item.kind, host: host, name: item.name, directory: item.directory, unrestricted: item.unrestricted,
                                  session: session, reopened: true) {
+            discardPendingReads(for: item.name)
             keepingList = wasKeeping
             problem = "\(item.name): \(trouble)"
             savePanes()
@@ -1169,7 +1250,7 @@ final class AppModel: NSObject, ObservableObject {
     }
 
     /// Two reopened agent panes, one with a session to resume: only the other says it started fresh.
-    /// DOJO_SMOKE_SHOT_REOPENED=<file.png>: a picture of the two headers.
+    /// DOJO_SMOKE_SHOT_REOPENED=<file.png>: then reopen one pane with another failing, for the saved-pane controls.
     private func smokeFreshHeader(in window: NSWindow?) async {
         addPane(kind: .claude, host: "", name: "resumed", session: "11111111-2222-3333-4444-555555555555", reopened: true)
         addPane(kind: .claude, host: "", name: "fresh", reopened: true)
@@ -1180,6 +1261,20 @@ final class AppModel: NSObject, ObservableObject {
             exit(1)
         }
         if let shot = ProcessInfo.processInfo.environment["DOJO_SMOKE_SHOT_REOPENED"], !shot.isEmpty {
+            closeAll()
+            let missing = state.root.appendingPathComponent("unavailable-folder").path
+            lastPanes = SavedPanes.load(state.panesFile).map { pane in
+                SavedPane(kind: pane.kind, host: pane.host,
+                          directory: pane.name == "fresh" ? missing : pane.directory,
+                          name: pane.name, unrestricted: pane.unrestricted, session: pane.session,
+                          coordinator: pane.coordinator, mayRead: pane.mayRead)
+            }
+            reopenLast()
+            guard items.map(\.name) == ["resumed"], lastPanes.map(\.name) == ["fresh"] else {
+                print("DOJO_SMOKE failed: partial reopen did not retain the unopened pane")
+                exit(1)
+            }
+            try? await Task.sleep(nanoseconds: 500_000_000)
             failIfSeen()
             write(shot: shot, of: window)
             try? await Task.sleep(nanoseconds: 600_000_000)

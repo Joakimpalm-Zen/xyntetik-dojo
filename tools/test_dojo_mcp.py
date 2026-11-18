@@ -99,6 +99,32 @@ def load_shim():
     return mod
 
 
+class CLIHelpTest(unittest.TestCase):
+    def test_the_send_tool_describes_a_report_without_a_pull_request(self):
+        send = next(tool for tool in load_shim().TOOLS if tool["name"] == "send")
+        description = send["inputSchema"]["properties"]["type"]["description"]
+        self.assertIn("omit pr or use none", description)
+        self.assertIn("pr=0 is refused", description)
+
+    def test_help_succeeds_without_contacting_a_bus_and_names_typed_fields(self):
+        mod = load_shim()
+        def no_bus(*args, **kwargs):
+            self.fail("help must not contact a bus")
+        mod.bus_call = mod.outside_send = no_bus
+        for argv in (["help"], ["--help"], ["send", "--help"]):
+            with self.subTest(argv=argv):
+                out, err = io.StringIO(), io.StringIO()
+                self.assertEqual(mod.cli(argv, out=out, err=err), 0)
+                self.assertEqual(err.getvalue(), "")
+                text = out.getvalue()
+                self.assertTrue(text.startswith("usage: dojo"))
+                for kind in ("assign", "report", "merged", "bug"):
+                    self.assertIn("--type " + kind, text)
+                for field in ("item", "what", "next", "by", "repo", "pr", "head", "checks",
+                              "mergeable", "note", "sha", "command", "observed", "expected", "cause", "where"):
+                    self.assertIn(field + "=", text)
+
+
 class ShimTest(unittest.TestCase):
     def setUp(self):
         self.bus = FakeBus()
@@ -417,8 +443,9 @@ class ShimTest(unittest.TestCase):
                                capture_output=True, text=True, env=env)
             self.assertEqual((r.returncode, r.stdout.strip()), (0, "3"), r.stderr)
             r = subprocess.run(["sh", os.path.join(bin_dir, "dojo")], capture_output=True, text=True, env=env)
-            self.assertEqual(r.returncode, 2, r.stderr)
-            self.assertIn("usage:", r.stderr)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("usage:", r.stdout)
+            self.assertEqual(r.stderr, "")
             r = subprocess.run(["sh", os.path.join(bin_dir, "dojo"), "panes"], capture_output=True, text=True, env=env)
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertIn("* claude-1", r.stdout)

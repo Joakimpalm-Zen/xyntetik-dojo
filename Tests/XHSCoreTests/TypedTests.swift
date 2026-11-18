@@ -55,6 +55,36 @@ import Testing
 
     // MARK: on the bus
 
+    @Test func reportsWithoutAPullRequestHaveNoNumberInTheCardOrRecord() throws {
+        let fields = ["repo": "r", "head": "abcdef1", "checks": "tests=pass", "mergeable": "unknown"]
+        for pr in [nil, "none"] as [String?] {
+            let rig = Rig()
+            defer { try? FileManager.default.removeItem(at: rig.folder) }
+            var report = fields
+            report["pr"] = pr
+            let (status, _) = rig.send(["pane": "idle-1", "type": "report", "fields": report])
+            #expect(status == 200)
+            let card = "report r\n  repo: r\n  head: abcdef1\n  checks: tests=pass\n  mergeable: unknown"
+            #expect(rig.idle.typed.contains("[from: fable] " + card))
+            let entry = try #require(rig.sends.last)
+            #expect(entry["text"] as? String == card)
+            #expect((entry["fields"] as? [String: String])?["pr"] == nil)
+        }
+    }
+
+    @Test func zeroIsNotAPullRequestForAReport() {
+        for pr in ["0", "#0", "000"] {
+            let rig = Rig()
+            defer { try? FileManager.default.removeItem(at: rig.folder) }
+            let (status, reply) = rig.send(["pane": "idle-1", "type": "report", "fields": [
+                "repo": "r", "pr": pr, "head": "abcdef1", "checks": "tests=pass", "mergeable": "unknown",
+            ]])
+            #expect(status == 400)
+            #expect((reply["error"] as? String)?.contains("leave pr out") == true)
+            #expect(rig.idle.written.isEmpty)
+        }
+    }
+
     @MainActor final class Rig {
         let bus = Bus()
         let idle = MockIO(), busy = MockIO()
