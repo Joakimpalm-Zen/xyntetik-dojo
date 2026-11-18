@@ -106,8 +106,9 @@ final class AppModel: NSObject, ObservableObject {
         notifier.onOpen = { [weak self] pane in self?.open(pane) }
         return notifier
     }()
-    /// The panes of the last run, for the button in the empty window, until a pane opens in this one.
+    /// Saved panes not opened yet, offered until they reopen or the owner dismisses them.
     @Published private(set) var lastPanes: [SavedPane] = []
+    private var reopenProblem = ""
     /// Set while quitting: the panes close, and the list of them must outlive that.
     private var keepingList = false
     private var piFlagCheck: Task<Bool, Never>?
@@ -394,11 +395,13 @@ final class AppModel: NSObject, ObservableObject {
         }
         var name = rawName.trimmingCharacters(in: .whitespaces).lowercased()
         if name.isEmpty {
-            name = PaneNames.next(for: kind, taken: Set(bus.names))
+            name = PaneNames.next(for: kind, taken: Set(bus.names + lastPanes.map(\.name)))
         } else if !PaneNames.isValid(name) {
             return PaneNames.rule
         } else if bus.names.contains(name) {
             return "\(name) is already open."
+        } else if !reopened, lastPanes.contains(where: { $0.name == name }) {
+            return "Reopen or dismiss the saved pane named \(name) first."
         }
         let view = TerminalPane(name: name)
         if fontSize != TerminalPane.defaultFont.pointSize { view.setTextSize(fontSize) }
@@ -417,7 +420,7 @@ final class AppModel: NSObject, ObservableObject {
         items.append(Item(name: name, kind: kind, unrestricted: unrestricted, view: view, directory: directory))
         syncPowerHold()
         if let session { bus.setSession(name, session) }
-        lastPanes = []
+        if reopened { lastPanes.removeAll { $0.name == name } }
         savePanes()
         Task { await launch(view, kind: kind, host: host, token: token, directory: directory, unrestricted: unrestricted, saved: session, reopened: reopened) }
         give(keys: view)
@@ -597,25 +600,28 @@ final class AppModel: NSObject, ObservableObject {
 
     private func savePanes() {
         guard !keepingList else { return }
-        SavedPanes.save(items.map { item in
+        let opened = items.map { item in
             SavedPane(kind: item.kind, host: bus.info(item.name)?.host ?? "", directory: item.directory, name: item.name,
                       unrestricted: item.unrestricted, session: bus.sessionId(item.name),
                       coordinator: bus.coordinatorName == item.name, mayRead: bus.info(item.name)?.reads ?? [])
-        }, to: state.panesFile)
+        }
+        SavedPanes.save(opened + lastPanes, to: state.panesFile)
     }
 
-    /// The button in the empty window. Nothing reopens by itself. The coordinator mark and the read grants
+    /// The saved-pane button. Nothing reopens by itself. The coordinator mark and the read grants
     /// come back once every pane is open, since a grant names another pane.
     func reopenLast() {
         let panes = lastPanes
         guard !panes.isEmpty else { return }
         var errors: [String] = []
+        var failed: [SavedPane] = []
         let wasKeeping = keepingList
         keepingList = true
         for pane in panes {
             if let trouble = addPane(kind: pane.kind, host: pane.host, name: pane.name, directory: pane.directory,
                                      unrestricted: pane.unrestricted, session: pane.session, reopened: true) {
                 errors.append("\(pane.name): \(trouble)")
+                failed.append(pane)
             }
         }
         for pane in panes {
@@ -629,9 +635,20 @@ final class AppModel: NSObject, ObservableObject {
             }
         }
         keepingList = wasKeeping
-        if !errors.isEmpty { problem = errors.joined(separator: " ") }
+        lastPanes = failed
+        let message = errors.joined(separator: " ")
+        if !message.isEmpty || problem == reopenProblem { problem = message }
+        reopenProblem = message
         // Preserve saved panes on disk when every pane failed to open.
         if !items.isEmpty { savePanes() }
+    }
+
+    /// Only an explicit dismissal discards saved panes that have not opened.
+    func dismissLastPanes() {
+        lastPanes = []
+        if problem == reopenProblem { problem = "" }
+        reopenProblem = ""
+        savePanes()
     }
 
     // MARK: roles (D21.2)
@@ -1169,7 +1186,7 @@ final class AppModel: NSObject, ObservableObject {
     }
 
     /// Two reopened agent panes, one with a session to resume: only the other says it started fresh.
-    /// DOJO_SMOKE_SHOT_REOPENED=<file.png>: a picture of the two headers.
+    /// DOJO_SMOKE_SHOT_REOPENED=<file.png>: then reopen one pane with another failing, for the saved-pane controls.
     private func smokeFreshHeader(in window: NSWindow?) async {
         addPane(kind: .claude, host: "", name: "resumed", session: "11111111-2222-3333-4444-555555555555", reopened: true)
         addPane(kind: .claude, host: "", name: "fresh", reopened: true)
@@ -1180,6 +1197,20 @@ final class AppModel: NSObject, ObservableObject {
             exit(1)
         }
         if let shot = ProcessInfo.processInfo.environment["DOJO_SMOKE_SHOT_REOPENED"], !shot.isEmpty {
+            closeAll()
+            let missing = state.root.appendingPathComponent("unavailable-folder").path
+            lastPanes = SavedPanes.load(state.panesFile).map { pane in
+                SavedPane(kind: pane.kind, host: pane.host,
+                          directory: pane.name == "fresh" ? missing : pane.directory,
+                          name: pane.name, unrestricted: pane.unrestricted, session: pane.session,
+                          coordinator: pane.coordinator, mayRead: pane.mayRead)
+            }
+            reopenLast()
+            guard items.map(\.name) == ["resumed"], lastPanes.map(\.name) == ["fresh"] else {
+                print("DOJO_SMOKE failed: partial reopen did not retain the unopened pane")
+                exit(1)
+            }
+            try? await Task.sleep(nanoseconds: 500_000_000)
             failIfSeen()
             write(shot: shot, of: window)
             try? await Task.sleep(nanoseconds: 600_000_000)

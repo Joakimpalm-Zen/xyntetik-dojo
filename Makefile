@@ -67,7 +67,7 @@ install: app
 # With HOST=user@box the pane runs `echo ok` on that host over ssh instead (POSIX or Windows).
 # With SHOT=file.png it also writes a picture of the window before quitting, to look at the chrome;
 # PICKER=file.png adds one of the picker sheet; EMPTY=file.png one of the empty window after a quit;
-# REOPENED=file.png one of two reopened panes, one with a session and one started fresh.
+# REOPENED=file.png one of a reopened pane beside an unopened saved pane, with Reopen and Dismiss.
 # It runs off screen, as a copy with its own bundle identifier: a Dojo that is open stays untouched, and the
 # preferences and the ~/.dojo of the installed app are neither read nor written.
 SMOKE_APP := build/smoke/XyntetikDojo.app
