@@ -174,7 +174,7 @@ To install the peer rule permanently as well (for sessions started outside the a
 `DOJO_PORT` overrides the bus port, `~/.dojo/relay` turns on the relay below, and `~/.dojo/outside` turns on sending from outside Dojo, also below. There is no other setting. Beside the tools the first run copies there, the only files the app keeps in `~/.dojo` are:
 
 - `hosts` and `folders`: the hosts and start folders you used, latest first, one per line;
-- `panes.json`: open panes and unopened saved panes offered to reopen, readable only by you, with no tokens;
+- `panes.json`: open panes and unopened saved panes offered to reopen, readable only by you, with no tokens. A read grant on a pending pane stays saved until that pane reopens or is dismissed;
 - `unrestricted`: the agents whose last pane skipped permission prompts, so the picker's box starts that way;
 - `notifications`: what macOS allows the app (alerts, the badge), written at launch and after each request;
 - `runner/`: Runner's binary, its roster copy, the 16 MiB model heads, the fits list and your model choice;
