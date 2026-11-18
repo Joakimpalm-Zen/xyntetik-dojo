@@ -1,6 +1,6 @@
 import Foundation
 
-/// D21.5: typed messages. Four shapes the panes already wrote by hand (an assignment, a report on a pull request, a
+/// D21.5: typed messages. Four shapes the panes already wrote by hand (an assignment, a work report, a
 /// merge notice, a bug report), checked by the bus and delivered as text that every harness reads alike: a first line
 /// with the type and what it is about, then one indented `key: value` line per field, in the schema's order. Free text
 /// is unchanged. A typed message is information for a peer like any other, never the owner's approval.
@@ -11,6 +11,8 @@ public enum Typed {
         case text
         /// A pull request number (a leading # is taken off).
         case number
+        /// A positive report PR number, or `none` to leave the number out.
+        case reportPR
         /// A commit SHA, 7 to 40 hex digits.
         case sha
         /// Checks as `name=state` words, the state pass, fail, pending or skipped.
@@ -32,7 +34,7 @@ public enum Typed {
     /// The four types and their fields, in the order the card shows them.
     public static let schemas: [(type: String, fields: [Field])] = [
         ("assign", [f("item"), f("what"), f("next", required: false), f("by", required: false)]),
-        ("report", [f("repo"), f("pr", .number), f("head", .sha), f("checks", .checks), f("mergeable", .yesNo),
+        ("report", [f("repo"), f("pr", .reportPR, required: false), f("head", .sha), f("checks", .checks), f("mergeable", .yesNo),
                     f("note", required: false)]),
         ("merged", [f("repo"), f("pr", .number), f("sha", .sha), f("item", required: false), f("note", required: false)]),
         ("bug", [f("command"), f("observed"), f("expected"), f("cause", required: false), f("where", required: false)]),
@@ -68,8 +70,10 @@ public enum Typed {
                 continue
             }
             switch checked(text, field.check) {
-            case .some(let ok): clean[field.name] = ok
-            case .none: return .failure(Refusal("field \(field.name) is not \(describe(field.check)): \(text)"))
+            case .some(let ok): if !ok.isEmpty { clean[field.name] = ok }
+            case .none:
+                let hint = field.check == .reportPR ? "; leave pr out or use none when there is no pull request" : ""
+                return .failure(Refusal("field \(field.name) is not \(describe(field.check)): \(text)\(hint)"))
             }
         }
         var lines = [summary(type, clean)]
@@ -86,7 +90,7 @@ public enum Typed {
     static func summary(_ type: String, _ f: [String: String]) -> String {
         switch type {
         case "assign": return "assign \(f["item"] ?? "")"
-        case "report": return "report \(f["repo"] ?? "") #\(f["pr"] ?? "")"
+        case "report": return "report \(f["repo"] ?? "")" + (f["pr"].map { " #\($0)" } ?? "")
         case "merged": return "merged \(f["repo"] ?? "") #\(f["pr"] ?? "") as \(String((f["sha"] ?? "").prefix(8)))"
         default: return f["where"].map { "bug in \($0)" } ?? "bug"
         }
@@ -99,6 +103,10 @@ public enum Typed {
         case .number:
             let digits = text.hasPrefix("#") ? String(text.dropFirst()) : text
             return !digits.isEmpty && digits.allSatisfy(\.isASCII) && digits.allSatisfy(\.isNumber) ? digits : nil
+        case .reportPR:
+            if text.lowercased() == "none" { return "" }
+            guard let digits = checked(text, .number), digits.contains(where: { $0 != "0" }) else { return nil }
+            return digits
         case .sha:
             let lower = text.lowercased()
             return (7...40).contains(lower.count) && lower.allSatisfy({ "0123456789abcdef".contains($0) }) ? lower : nil
@@ -121,6 +129,7 @@ public enum Typed {
         switch check {
         case .text: return "text"
         case .number: return "a pull request number"
+        case .reportPR: return "a pull request number greater than 0"
         case .sha: return "a commit SHA (7 to 40 hex digits)"
         case .checks: return "checks as name=pass|fail|pending|skipped"
         case .yesNo: return "yes, no or unknown"
