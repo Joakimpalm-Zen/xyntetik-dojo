@@ -112,7 +112,7 @@ Mark one pane as the coordinator (right-click its name) and the others become wo
 <a id="support-the-project"></a>
 ## <img src="packaging/readme/section.svg" width="8" height="24" alt=""> Support the project
 
-Xyntetik Dojo is independent, built in Sweden, and **free forever under Apache 2.0**, like [Xyntetik Runner](https://github.com/Joakimpalm-Zen/xyntetik-runner). A contribution funds the hardware and measurement time behind the next thing: one-off, through Stripe, with no tiers and no gated features. [What contributions enable](https://xyntetik.com/support/)
+Xyntetik Dojo is independent, built in Sweden, and **free whilst under development under Apache 2.0**. A contribution funds the hardware and measurement time behind the next thing: one-off, through Stripe, with no tiers and no gated features. [What contributions enable](https://xyntetik.com/support/)
 
 Found a problem? Open an [issue](https://github.com/Joakimpalm-Zen/xyntetik-dojo/issues/new) with the harness and its version, what the pane showed and what you expected; a bus question is best with the output of `dojo panes`.
 
